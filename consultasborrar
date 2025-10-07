@@ -1,0 +1,19 @@
+con-- Disponible = status 'idle' y visto en los últimos 5 min, con turno abierto
+SELECT d.id, d.name, d.phone, d.last_lat, d.last_lng, s.id AS shift_id, s.vehicle_id
+FROM drivers d
+JOIN driver_shifts s ON s.driver_id=d.id AND s.status='abierto'
+WHERE d.tenant_id=1
+  AND d.status='idle'
+  AND (d.last_seen_at IS NULL OR d.last_seen_at >= NOW() - INTERVAL 5 MINUTE);
+-- Sustituye :lat y :lng por tus valores
+SELECT d.id, d.name,
+       d.last_lat, d.last_lng,
+       (111.045 * SQRT( POW(d.last_lat - :lat, 2) + POW((d.last_lng - :lng) * COS(RADIANS(:lat)), 2) )) AS approx_km
+FROM drivers d
+JOIN driver_shifts s ON s.driver_id=d.id AND s.status='abierto'
+WHERE d.tenant_id=1
+  AND d.status='idle'
+  AND d.last_lat IS NOT NULL AND d.last_lng IS NOT NULL
+  AND (d.last_seen_at IS NULL OR d.last_seen_at >= NOW() - INTERVAL 5 MINUTE)
+ORDER BY approx_km ASC
+LIMIT 10;
