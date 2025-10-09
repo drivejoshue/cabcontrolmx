@@ -18,7 +18,7 @@ class TaxiStandController extends Controller
                 $q->on('s.id', '=', 't.sector_id')->where('s.tenant_id', '=', $tenantId);
             })
             ->where('t.tenant_id', $tenantId)
-            ->where('t.active', 1)
+            ->where('t.activo', 1)
             ->select(
                 't.id','t.nombre','t.latitud','t.longitud','t.capacidad','t.codigo',
                 't.qr_secret','t.sector_id',

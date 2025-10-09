@@ -5,13 +5,13 @@
 @section('content')
 <div class="dispatch-grid">
 
-  {{-- Panel izquierdo (form de orden) --}}
+  {{-- Panel izquierdo (form de viaje) --}}
   <aside class="dispatch-left">
     <div class="d-flex align-items-center justify-content-between mb-2">
-      <h6 class="mb-0">Nuevo servicio</h6>
+      <h6 class="mb-0">Nuevo viaje</h6>
       <div class="btn-group">
-        <button class="btn btn-sm btn-outline-secondary" title="Limpiar"><i data-feather="rotate-ccw"></i></button>
-        <button class="btn btn-sm btn-outline-primary"  title="Duplicar"><i data-feather="copy"></i></button>
+        <button class="btn btn-sm btn-outline-secondary" id="btnReset"   title="Limpiar"><i data-feather="rotate-ccw"></i></button>
+        <button class="btn btn-sm btn-outline-primary"  id="btnDuplicate" title="Duplicar"><i data-feather="copy"></i></button>
       </div>
     </div>
 
@@ -19,19 +19,21 @@
       <label class="form-label">Origen</label>
       <div class="input-group">
         <input id="inFrom" class="form-control" placeholder="Calle, número...">
-        <button class="btn btn-outline-secondary" title="Punto en mapa" id="btnPickFrom"><i data-feather="map-pin"></i></button>
+        <button class="btn btn-outline-secondary" title="Elegir en mapa" id="btnPickFrom"><i data-feather="map-pin"></i></button>
       </div>
+      <input type="hidden" id="fromLat"><input type="hidden" id="fromLng">
     </div>
 
     <div class="mb-2">
       <label class="form-label">Destino</label>
       <div class="input-group">
         <input id="inTo" class="form-control" placeholder="Calle, número...">
-        <button class="btn btn-outline-secondary" title="Punto en mapa" id="btnPickTo"><i data-feather="map-pin"></i></button>
+        <button class="btn btn-outline-secondary" title="Elegir en mapa" id="btnPickTo"><i data-feather="map-pin"></i></button>
       </div>
+      <input type="hidden" id="toLat"><input type="hidden" id="toLng">
     </div>
 
-    <div class="small text-muted mb-2" id="routeSummary">Ruta: —  ·  Zona: —  ·  Cuando: ahora</div>
+    <div class="small text-muted mb-2" id="routeSummary">Ruta: — · Zona: — · Cuando: ahora</div>
 
     <div class="mb-3">
       <div class="form-check form-check-inline">
@@ -52,7 +54,7 @@
       </div>
       <div class="col-4">
         <label class="form-label small">Teléfono</label>
-        <input class="form-control form-control-sm" id="pass-phone">
+        <input class="form-control form-control-sm" id="pass-phone" placeholder="Buscar últimos viajes">
       </div>
       <div class="col-4">
         <label class="form-label small">Cuenta</label>
@@ -64,13 +66,15 @@
       <div class="col-6">
         <label class="form-label small">Método de pago</label>
         <select class="form-select form-select-sm" id="pay-method">
-          <option>Efectivo</option>
-          <option>Crédito (cuenta)</option>
+          <option value="cash" selected>Efectivo</option>
+          <option value="transfer">Transferencia</option>
+          <option value="card">Tarjeta</option>
+          <option value="corp">Cuenta</option>
         </select>
       </div>
       <div class="col-6">
         <label class="form-label small">Notas</label>
-        <input class="form-control form-control-sm" id="job-notes" placeholder="Discapacidad, mascota, etc.">
+        <input class="form-control form-control-sm" id="ride-notes" placeholder="Discapacidad, mascota, etc.">
       </div>
     </div>
 
@@ -78,29 +82,26 @@
     <div class="row g-2">
       <div class="col-4">
         <label class="form-label small"># pax</label>
-        <input type="number" min="1" value="1" class="form-control form-control-sm">
+        <input id="pax" type="number" min="1" value="1" class="form-control form-control-sm">
       </div>
       <div class="col-4">
         <label class="form-label small">Vehículo</label>
-        <select class="form-select form-select-sm">
-          <option>No especificado</option>
-          <option>Sedán</option>
-          <option>Van</option>
-          <option>Mototaxi</option>
+        <select id="vehKind" class="form-select form-select-sm">
+          <option>No espec</option><option>Sedán</option><option>Van</option><option>Mototaxi</option>
         </select>
       </div>
       <div class="col-4">
-        <label class="form-label small">Extras</label>
-        <select class="form-select form-select-sm">
-          <option>Normal</option>
-          <option>Silla bebé</option>
+        <label class="form-label small">Tarifa</label>
+        <select id="fareMode" class="form-select form-select-sm">
+          <option value="meter" selected>Taxímetro</option>
+          <option value="fixed">Fija</option>
         </select>
       </div>
     </div>
 
     <div class="d-grid gap-2 mt-3">
       <button class="btn btn-outline-primary" id="btnQuote"><i data-feather="dollar-sign"></i> Cotizar</button>
-      <button class="btn btn-success" id="btnCreate"><i data-feather="check-circle"></i> Crear servicio</button>
+      <button class="btn btn-success" id="btnCreate"><i data-feather="check-circle"></i> Crear viaje</button>
       <button class="btn btn-outline-danger" id="btnClear"><i data-feather="trash-2"></i> Limpiar</button>
     </div>
 
@@ -111,56 +112,139 @@
     <div class="form-check"><input class="form-check-input" id="toggle-drivers" type="checkbox" checked><label class="form-check-label" for="toggle-drivers">Conductores</label></div>
   </aside>
 
-  {{-- Mapa centro --}}
-  <section class="dispatch-map">
-    <div id="map"></div>
-  </section>
+  {{-- Mapa --}}
+  <section class="dispatch-map"><div id="map"></div></section>
 
-  {{-- Panel derecho (colas / activos) --}}
+  {{-- Panel derecho --}}
+
+
+  <!-- Panel lateral para asignación -->
+<div id="assignPanel" class="offcanvas offcanvas-end" data-bs-backdrop="false" tabindex="-1">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title">Asignar conductor</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body">
+    <div id="assignPanelBody">Cargando…</div>
+    <div class="mt-3 d-flex justify-content-end">
+      <button id="btnDoAssign" class="btn btn-primary" disabled>Asignar</button>
+    </div>
+  </div>
+</div>
+
+
+
   <aside class="dispatch-right">
     <div class="d-flex align-items-center justify-content-between mb-2">
       <h6 class="mb-0">Colas por paradero</h6>
       <span class="badge bg-secondary" id="badgeColas">0</span>
     </div>
-    <div id="panel-queue" class="small mb-3">
-      {{-- aquí listaremos cada stand con su cola (Car 1, Car 2, ...) --}}
-    </div>
+    <div id="panel-queue" class="small mb-3"></div>
 
     <div class="d-flex align-items-center justify-content-between mb-2">
-      <h6 class="mb-0">Servicios activos</h6>
+      <h6 class="mb-0">Viajes activos</h6>
       <span class="badge bg-primary" id="badgeActivos">0</span>
     </div>
-    <div id="panel-active" class="small">
-      {{-- cards de servicios en curso --}}
-    </div>
+    <div id="panel-active" class="small"></div>
   </aside>
+
+
 
 </div>
 @endsection
 
 @push('styles')
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
 <style>
-  /* Layout tipo TaxiCaller */
+
+  
+
+
   .dispatch-wrapper { height: calc(100vh - 58px); }
-  .dispatch-grid {
-    position: relative; height: 100%; display: grid; gap: 0;
-    grid-template-columns: 340px 1fr 360px; /* izq - mapa - der */
+  .dispatch-grid{position:relative;height:100%;display:grid;gap:0;grid-template-columns:340px 1fr 360px}
+  .dispatch-left,.dispatch-right{overflow:auto;padding:12px}
+  .dispatch-left{border-right:1px solid var(--bs-border-color)}
+  .dispatch-right{border-left:1px solid var(--bs-border-color)}
+  .dispatch-map{position:relative}
+  .dispatch-map #map{position:absolute;inset:0}
+  /* en tu CSS global o el del dispatch */
+.leaflet-pane.routePane svg path.cc-route{
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+
+  /* Dark para tiles OSM sin afectar marcadores / polyline */
+  .map-dark .leaflet-tile{
+    filter: invert(90%) hue-rotate(180deg) saturate(80%) brightness(90%);
   }
-  .dispatch-left, .dispatch-right { overflow: auto; padding: 12px; }
-  .dispatch-left  { border-right: 1px solid var(--bs-border-color); }
-  .dispatch-right { border-left:  1px solid var(--bs-border-color); }
-  .dispatch-map #map { position:absolute; inset:0; }
-  .dispatch-map { position: relative; }
-  @media (max-width: 992px) {
-    .dispatch-grid { grid-template-columns: 1fr; grid-template-rows: 300px 400px 300px; }
-    .dispatch-left  { border-right: 0; border-bottom: 1px solid var(--bs-border-color); }
-    .dispatch-right { border-left: 0; border-top: 1px solid var(--bs-border-color); }
+
+  /* Panes para orden de capas */
+  .leaflet-pane.sectoresPane { z-index:350; }
+  .leaflet-pane.routePane    { z-index:460; }  /* por encima de sectores */
+  .leaflet-pane.markerPane   { z-index:470; }  /* marcadores arriba */
+
+  /* No invertir la ruta en dark */
+  svg path.cc-route { filter:none !important; }
+
+  .sector-tip{font-weight:600}
+  .stand-tip{font-size:.85rem}
+
+/* Imagen del coche en divIcon con rotación */
+.cc-car {
+  position:absolute; left:0; top:0;
+  width:52px; height:26px;           /* nítido en 1x; sube a 96x52 si tienes @2x */
+  transform: translate(-50%,-50%);   /* centrado sobre lat/lng */
+  transform-origin: 50% 50%;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+.leaflet-tooltip.cc-tip{ background:#fff;color:#111;border:0;border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.18);padding:8px 10px;}
+.leaflet-tooltip.cc-tip:before{display:none;}
+.cc-tip .tt-title{font-weight:700;margin-bottom:2px;}
+.cc-tip .tt-sub{font-size:.86rem;color:#6b7280;}
+.cc-tip .tt-meta{font-size:.82rem;color:#374151;margin-top:2px;}
+
+/* Icono nítido y estable (no se desplaza ni palpita) */
+.cc-car-box{
+  position: relative;
+  width: 48px;   /* mismo que CAR_W */
+  height: 26px;  /* mismo que CAR_H */
+}
+.cc-car-img{
+  position:absolute; left:0; top:0;
+  width: 52px;   /* fija el raster, evita reflow */
+  height: 46px;
+  transform-origin: 50% 50%;
+  backface-visibility: hidden;
+  will-change: transform;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+}
+
+
+  @media (max-width: 992px){
+    .dispatch-grid{grid-template-columns:1fr;grid-template-rows:300px 400px 300px}
+    .dispatch-left{border-right:0;border-bottom:1px solid var(--bs-border-color)}
+    .dispatch-right{border-left:0;border-top:1px solid var(--bs-border-color)}
   }
 </style>
 @endpush
 
 @push('scripts')
+{{-- Leaflet una sola vez (sin duplicar) --}}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  @vite(['resources/js/app.js', 'resources/js/pages/dispatch.js'])
+
+<script>
+  window.ccGoogleMapsKey = @json(config('services.google.maps.key', env('GOOGLE_MAPS_KEY','')));
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+
+{{-- Tu JS de la página (carga todo, incluido Google dinámico) --}}
+@vite(['resources/js/pages/dispatch.js'])
 @endpush

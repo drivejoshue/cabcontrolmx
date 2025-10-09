@@ -3,47 +3,44 @@ namespace App\Services\Geo;
 
 use Illuminate\Support\Facades\Http;
 
-class GoogleMapsService {
+class GoogleMapsService
+{
     public function geocode(string $q): array {
-        $r = Http::timeout(8)->get('https://maps.googleapis.com/maps/api/geocode/json',[
-            'address'=>$q,'key'=>config('services.google.key')
-        ])->throw()->json();
-        return collect($r['results'] ?? [])->map(fn($it)=>[
-            'label'=>$it['formatted_address'] ?? '',
-            'lat'=>$it['geometry']['location']['lat'] ?? null,
-            'lng'=>$it['geometry']['location']['lng'] ?? null,
-            'place_id'=>$it['place_id'] ?? null,
-        ])->values()->all();
+        $r = Http::timeout(8)
+            ->get('https://maps.googleapis.com/maps/api/geocode/json', [
+                'address'=>$q,
+                'key'=>config('services.google.key'),
+                'language'=>'es'
+            ])->throw()->json();
+
+        return collect($r['results'] ?? [])->map(function($it){
+            return [
+                'label' => $it['formatted_address'] ?? '',
+                'lat'   => data_get($it,'geometry.location.lat'),
+                'lng'   => data_get($it,'geometry.location.lng'),
+                'place_id' => $it['place_id'] ?? null,
+            ];
+        })->values()->all();
     }
 
-    public function reverse(float $lat,float $lng): ?array {
-        $r = Http::timeout(8)->get('https://maps.googleapis.com/maps/api/geocode/json',[
-            'latlng'=>"$lat,$lng",'key'=>config('services.google.key')
-        ])->throw()->json();
-        $it = $r['results'][0] ?? null;
-        if(!$it) return null;
-        return [
-            'label'=>$it['formatted_address'] ?? '',
-            'place_id'=>$it['place_id'] ?? null,
-        ];
-    }
+    public function route(float $olat,float $olng,float $dlat,float $dlng): array {
+        $resp = Http::timeout(8)
+            ->withHeaders([
+                'X-Goog-Api-Key' => config('services.google.key'),
+                'X-Goog-FieldMask' =>
+                  'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline'
+            ])->post('https://routes.googleapis.com/directions/v2:computeRoutes', [
+                'origin'      => ['location'=>['latLng'=>['latitude'=>$olat,'longitude'=>$olng]]],
+                'destination' => ['location'=>['latLng'=>['latitude'=>$dlat,'longitude'=>$dlng]]],
+                'travelMode'  => 'DRIVE',
+                'polylineEncoding' => 'ENCODED_POLYLINE'
+            ])->throw()->json();
 
-    public function route(array $o,array $d): array {
-        $r = Http::timeout(8)->post('https://routes.googleapis.com/directions/v2:computeRoutes',[
-            'origin'=>['location'=>['latLng'=>['latitude'=>$o['lat'],'longitude'=>$o['lng']]]],
-            'destination'=>['location'=>['latLng'=>['latitude'=>$d['lat'],'longitude'=>$d['lng']]]],
-            'travelMode'=>'DRIVE',
-            'polylineEncoding'=>'ENCODED_POLYLINE'
-        ])->withHeaders([
-            'X-Goog-Api-Key'=>config('services.google.key'),
-            'X-Goog-FieldMask'=>'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline'
-        ])->throw()->json();
-
-        $route = $r['routes'][0] ?? [];
+        $r = $resp['routes'][0] ?? [];
         return [
-            'distance_m'=>$route['distanceMeters'] ?? 0,
-            'duration_s'=> isset($route['duration']) ? (int)trim($route['duration'],'s') : 0,
-            'polyline'  => data_get($route,'polyline.encodedPolyline'),
+            'distance_m' => $r['distanceMeters'] ?? 0,
+            'duration_s' => isset($r['duration']) ? (int) trim($r['duration'],'s') : 0,
+            'polyline'   => data_get($r,'polyline.encodedPolyline'),
         ];
     }
 }

@@ -13,9 +13,9 @@ return [
 
     'apps' => [
         [
-            'app_id' => env('REVERB_APP_ID', 'cabcontrol'),
-            'key'    => env('REVERB_APP_KEY', 'localkey'),
-            'secret' => env('REVERB_APP_SECRET', 'localsecret'),
+             'app_id' => env('REVERB_APP_ID', 'cabcontrol'),
+        'key'    => env('REVERB_APP_KEY', 'localkey'),
+        'secret' => env('REVERB_APP_SECRET', 'localsecret'),
             'name'   => env('APP_NAME', 'Laravel'),
 
             // Opcionales

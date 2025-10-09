@@ -17,3 +17,30 @@ WHERE d.tenant_id=1
   AND (d.last_seen_at IS NULL OR d.last_seen_at >= NOW() - INTERVAL 5 MINUTE)
 ORDER BY approx_km ASC
 LIMIT 10;
+
+
+
+crear user tinker
+
+php artisan tinker
+
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+
+// buscar por si ya existe
+$user = User::where('email','admin@demo.local')->first();
+
+// si no existe, crearlo:
+if (!$user) {
+  $user = User::create([
+    'name' => 'Admin',
+    'email' => 'admin@demo.local',
+    'password' => Hash::make('Secret123!'),
+    'tenant_id' => 1,   // si su app lo usa
+  ]);
+} else {
+  // forzar nuevo password con hash
+  $user->password = Hash::make('Secret123!');
+  $user->save();
+}
+
