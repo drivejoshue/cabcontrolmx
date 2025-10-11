@@ -1,0 +1,365 @@
+{
+  "info": {
+    "_postman_id": "cabcontrolmx-1760075177",
+    "name": "CabControlMX – Dispatch & Passenger",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create ride",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/rides",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "rides"
+          ]
+        },
+        "description": "Create ride -> set route & quote via SPs",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"passenger_id\": 2,\n  \"payment_method\": \"cash\",\n  \"requested_channel\": \"dispatch\",\n  \"origin\": {\n    \"lat\": 19.173773,\n    \"lng\": -96.134224\n  },\n  \"destination\": {\n    \"lat\": 19.1805,\n    \"lng\": -96.1429\n  },\n  \"scheduled_for\": null\n}"
+        }
+      }
+    },
+    {
+      "name": "Set route",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/rides/:ride_id/route",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "rides",
+            ":ride_id",
+            "route"
+          ]
+        },
+        "description": "Persist route (sp_set_route_v1)",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"distance_m\": 5050,\n  \"duration_s\": 880,\n  \"polyline\": \"ENCODED_POLYLINE\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Re-quote",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/rides/:ride_id/quote",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "rides",
+            ":ride_id",
+            "quote"
+          ]
+        },
+        "description": "Quote fare (sp_quote_ride_v1)",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"quoted_at\": \"NOW\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Nearby drivers",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/dispatch/nearby-drivers?tenant_id=1&lat=19.173773&lng=-96.134224&km=5.0",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "dispatch",
+            "nearby-drivers"
+          ]
+        },
+        "description": "Candidates (sp_nearby_drivers)"
+      }
+    },
+    {
+      "name": "Offer wave (base priority)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/dispatch/offer-wave",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "dispatch",
+            "offer-wave"
+          ]
+        },
+        "description": "sp_offer_wave_base_prio_v2",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"ride_id\": \":ride_id\",\n  \"limit_n\": 3,\n  \"expires_sec\": 45\n}"
+        }
+      }
+    },
+    {
+      "name": "Accept offer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/offers/:offer_id/accept",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "offers",
+            ":offer_id",
+            "accept"
+          ]
+        },
+        "description": "sp_accept_offer_v3",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"offer_id\": \":offer_id\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Release ride",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/rides/:ride_id/release",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "rides",
+            ":ride_id",
+            "release"
+          ]
+        },
+        "description": "sp_release_ride_v1",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1\n}"
+        }
+      }
+    },
+    {
+      "name": "Cancel ride",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/rides/:ride_id/cancel",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "rides",
+            ":ride_id",
+            "cancel"
+          ]
+        },
+        "description": "sp_cancel_ride_v2",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"canceled_by\": \"dispatch\",\n  \"reason\": \"No show\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Complete ride",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/rides/:ride_id/complete",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "rides",
+            ":ride_id",
+            "complete"
+          ]
+        },
+        "description": "sp_complete_ride_v1",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"real_distance_m\": 5200,\n  \"real_duration_s\": 900\n}"
+        }
+      }
+    },
+    {
+      "name": "Join stand queue",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/queue/join",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "queue",
+            "join"
+          ]
+        },
+        "description": "sp_queue_join_stand_v1",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"stand_id\": \":stand_id\",\n  \"driver_id\": \":driver_id\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Leave stand queue",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/queue/leave",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "queue",
+            "leave"
+          ]
+        },
+        "description": "sp_queue_leave_stand_v1",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"stand_id\": \":stand_id\",\n  \"driver_id\": \":driver_id\",\n  \"status_to\": \"asignado\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Autodispatch tick",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/dispatch/tick",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "dispatch",
+            "tick"
+          ]
+        },
+        "description": "sp_autodispatch_tick_v2",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1\n}"
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "default"
+    }
+  ]
+}

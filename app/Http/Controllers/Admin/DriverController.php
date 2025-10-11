@@ -8,6 +8,10 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use App\Http\Controllers\AssignmentController;
+use App\Models\User;
+use Illuminate\Validation\Rule;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Hash;
 
 
 class DriverController extends Controller
@@ -37,40 +41,76 @@ class DriverController extends Controller
         return view('admin.drivers.create');
     }
 
-    public function store(Request $r)
-    {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+ public function store(Request $r)
+{
+    $tenantId = Auth::user()->tenant_id ?? 1;
 
-        $data = $r->validate([
-            'name'       => 'required|string|max:120',
-            'phone'      => 'nullable|string|max:30',
-            'email'      => 'nullable|email|max:120',
-            'document_id'=> 'nullable|string|max:60',
-            'active'     => 'nullable|boolean',
-            'foto'       => 'nullable|image|max:2048', // 2MB
-        ]);
+    $data = $r->validate([
+        'name'         => 'required|string|max:120',
+        'phone'        => 'nullable|string|max:30',
+        'document_id'  => 'nullable|string|max:60',
+        'active'       => 'nullable|boolean',
+        'foto'         => 'nullable|image|max:2048',
 
-        $fotoPath = null;
-        if ($r->hasFile('foto')) {
-            // Se guardan en storage/app/public/drivers
-            $fotoPath = $r->file('foto')->store('drivers', 'public');
+        // credenciales
+        'make_user'    => 'nullable|boolean',
+        'email'        => [
+            'nullable','email','max:120',
+            // único por tenant
+            Rule::unique('users','email')->where(fn($q)=>$q->where('tenant_id',$tenantId)),
+        ],
+        'password'     => 'nullable|string|min:6|confirmed',
+    ]);
+
+    $fotoPath = null;
+    if ($r->hasFile('foto')) {
+        $fotoPath = $r->file('foto')->store('drivers', 'public');
+    }
+
+    // === Usuario (solo si make_user on o si viene email)
+    $userId = null;
+    $passPlano = null;
+    $makeUser = (bool)($data['make_user'] ?? true);
+
+    if ($makeUser) {
+        if (empty($data['email'])) {
+            return back()->withErrors(['email'=>'Email requerido para crear usuario.'])->withInput();
         }
 
-        $id = DB::table('drivers')->insertGetId([
-            'tenant_id'   => $tenantId,
-            'name'        => $data['name'],
-            'phone'       => $data['phone'] ?? null,
-            'email'       => $data['email'] ?? null,
-            'document_id' => $data['document_id'] ?? null,
-            'status'      => 'offline',
-            'foto_path'   => $fotoPath,
-            'active'      => (int)($data['active'] ?? 1),
-            'created_at'  => now(),
-            'updated_at'  => now(),
+        // Crear user con rol=driver
+        $passPlano = $data['password'] ?? Str::password(10);
+        $user = User::create([
+            'name'      => $data['name'],
+            'email'     => $data['email'],
+            'password'  => Hash::make($passPlano),
+            'tenant_id' => $tenantId,
+            'role'      => 'driver',
         ]);
-
-        return redirect()->route('drivers.show', ['id'=>$id])->with('ok','Conductor creado.');
+        $userId = $user->id;
     }
+
+    $id = DB::table('drivers')->insertGetId([
+        'tenant_id'   => $tenantId,
+        'user_id'     => $userId,
+        'name'        => $data['name'],
+        'phone'       => $data['phone'] ?? null,
+        'email'       => $data['email'] ?? null,
+        'document_id' => $data['document_id'] ?? null,
+        'status'      => 'offline',
+        'foto_path'   => $fotoPath,
+        'active'      => (int)($data['active'] ?? 1),
+        'created_at'  => now(),
+        'updated_at'  => now(),
+    ]);
+
+    $msg = 'Conductor creado.';
+    if ($passPlano) {
+        $msg .= ' Usuario: '.$data['email'].' · Pass: '.$passPlano;
+    }
+
+    return redirect()->route('drivers.show', ['id'=>$id])->with('ok',$msg);
+}
+
 
     public function show(int $id)
     {
@@ -137,48 +177,116 @@ class DriverController extends Controller
         return view('admin.drivers.edit', compact('driver'));
     }
 
-    public function update(Request $r, int $id)
-    {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+ public function update(Request $r, int $id)
+{
+    $tenantId = Auth::user()->tenant_id ?? 1;
 
-        $data = $r->validate([
-            'name'       => 'required|string|max:120',
-            'phone'      => 'nullable|string|max:30',
-            'email'      => 'nullable|email|max:120',
-            'document_id'=> 'nullable|string|max:60',
-            'active'     => 'nullable|boolean',
-            'foto'       => 'nullable|image|max:2048',
-        ]);
+    $driver = DB::table('drivers')
+        ->where('tenant_id',$tenantId)
+        ->where('id',$id)
+        ->first();
+    abort_if(!$driver, 404);
 
-        $driver = DB::table('drivers')
-            ->where('tenant_id',$tenantId)
-            ->where('id',$id)
-            ->first();
-        abort_if(!$driver, 404);
+    $data = $r->validate([
+        'name'         => 'required|string|max:120',
+        'phone'        => 'nullable|string|max:30',
+        'document_id'  => 'nullable|string|max:60',
+        'active'       => 'nullable|boolean',
+        'foto'         => 'nullable|image|max:2048',
 
-        $fotoPath = $driver->foto_path;
-        if ($r->hasFile('foto')) {
-            if ($fotoPath && Storage::disk('public')->exists($fotoPath)) {
-                Storage::disk('public')->delete($fotoPath);
-            }
-            $fotoPath = $r->file('foto')->store('drivers', 'public');
+        // credenciales
+        'make_user'    => 'nullable|boolean',
+        'email'        => [
+            'nullable','email','max:120',
+            Rule::unique('users','email')
+                ->where(fn($q)=>$q->where('tenant_id',$tenantId))
+                ->ignore($driver->user_id),
+        ],
+        'password'     => 'nullable|string|min:6|confirmed',
+    ]);
+
+    // foto
+    $fotoPath = $driver->foto_path;
+    if ($r->hasFile('foto')) {
+        if ($fotoPath && Storage::disk('public')->exists($fotoPath)) {
+            Storage::disk('public')->delete($fotoPath);
+        }
+        $fotoPath = $r->file('foto')->store('drivers', 'public');
+    }
+
+    // === Usuario
+    $makeUser = (bool)($data['make_user'] ?? true);
+    $userId   = $driver->user_id;
+    $passPlano = null;
+
+    if ($makeUser) {
+        if (empty($data['email'])) {
+            return back()->withErrors(['email'=>'Email requerido para usuario.'])->withInput();
         }
 
-        DB::table('drivers')
-            ->where('tenant_id',$tenantId)
-            ->where('id',$id)
-            ->update([
-                'name'        => $data['name'],
-                'phone'       => $data['phone'] ?? null,
-                'email'       => $data['email'] ?? null,
-                'document_id' => $data['document_id'] ?? null,
-                'active'      => (int)($data['active'] ?? 1),
-                'foto_path'   => $fotoPath,
-                'updated_at'  => now(),
+        if ($userId) {
+            // actualizar user existente
+            $user = User::where('id',$userId)->where('tenant_id',$tenantId)->first();
+            if ($user) {
+                $user->name  = $data['name'];
+                $user->email = $data['email'];
+                if (!empty($data['password'])) {
+                    $user->password = Hash::make($data['password']);
+                }
+                if ($user->role !== 'driver') $user->role = 'driver';
+                $user->save();
+            } else {
+                // inconsistencia: crear uno nuevo
+                $passPlano = $data['password'] ?? Str::password(10);
+                $user = User::create([
+                    'name'      => $data['name'],
+                    'email'     => $data['email'],
+                    'password'  => Hash::make($passPlano),
+                    'tenant_id' => $tenantId,
+                    'role'      => 'driver',
+                ]);
+                $userId = $user->id;
+            }
+        } else {
+            // crear user nuevo
+            $passPlano = $data['password'] ?? Str::password(10);
+            $user = User::create([
+                'name'      => $data['name'],
+                'email'     => $data['email'],
+                'password'  => Hash::make($passPlano),
+                'tenant_id' => $tenantId,
+                'role'      => 'driver',
             ]);
-
-        return redirect()->route('drivers.show',['id'=>$id])->with('ok','Conductor actualizado.');
+            $userId = $user->id;
+        }
+    } else {
+        // switch apagado → no tocar usuario (conserva user_id actual)
+        // si quisieras “desvincular”, aquí podrías setear $userId = null
     }
+
+    DB::table('drivers')
+        ->where('tenant_id',$tenantId)
+        ->where('id',$id)
+        ->update([
+            'user_id'     => $userId,
+            'name'        => $data['name'],
+            'phone'       => $data['phone'] ?? null,
+            'email'       => $data['email'] ?? null,
+            'document_id' => $data['document_id'] ?? null,
+            'active'      => (int)($data['active'] ?? 1),
+            'foto_path'   => $fotoPath,
+            'updated_at'  => now(),
+        ]);
+
+    $msg = 'Conductor actualizado.';
+    if ($passPlano) {
+        $msg .= ' Usuario: '.$data['email'].' · Pass: '.$passPlano;
+    }
+
+    return redirect()->route('drivers.show',['id'=>$id])->with('ok',$msg);
+}
+
+
 
     public function destroy(int $id)
     {

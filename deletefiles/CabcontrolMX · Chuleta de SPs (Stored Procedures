@@ -1,0 +1,153 @@
+# CabcontrolMX · Chuleta de SPs (Stored Procedures)
+**Última actualización:** 2025-10-09
+
+Esta chuleta resume los procedimientos almacenados que definimos y cómo usarlos desde tu backend, panel de dispatch y apps (MAUI Driver/Passenger). Incluye parámetros, precondiciones, efectos colaterales, mensajes de error y ejemplos de uso.
+
+---
+
+## Convenciones del esquema (esperadas)
+- `rides.status` enum: `requested`, `offered`, `accepted`, `en_route`, `arrived`, `on_board`, `finished`, `canceled`
+- `ride_offers.status` enum: `offered`, `accepted`, `rejected`, `expired`, `canceled`, `released`
+- `ride_offers.response` enum: `accepted`, `rejected`, `expired`, `canceled`, `released`
+- `driver_shifts.status`: `abierto` (abierto) / `cerrado`
+- Normalizamos `canceled_by` a: `dispatch | driver | passenger | system` (fallback a `dispatch`)
+
+> Asegúrate de que los ENUMs de `ride_offers` estén ampliados así para evitar warnings `#1265 datos truncados`.
+
+---
+
+## Lista de SPs
+
+### 1) `sp_nearby_drivers(p_tenant_id, p_origin_lat, p_origin_lng, p_radius_km)`
+**Objetivo:** listar candidatos por radio (rápido) usando Haversine y `driver_shifts='abierto'`  
+**Precondiciones:** driver `idle` con `last_lat/lng` y shift `abierto`.  
+**Retorno:** *SELECT de filas* (este SP sí devuelve lista—it’s a finder).  
+**SQL ejemplo:**
+```sql
+CALL sp_nearby_drivers(1, 19.173773, -96.134224, 5.0);
+```
+
+---
+
+### 2) `sp_create_offer_v2(p_tenant_id, p_ride_id, p_driver_id, p_expires_sec)` (silencioso)
+**Objetivo:** crear una oferta **viva** a un driver.  
+**Precondiciones:**
+- Ride del tenant en `requested|offered` y **sin driver**.
+- Driver del tenant en `idle` con coords y shift `abierto` (toma `vehicle_id` del shift).
+**Efectos:**
+- Inserta en `ride_offers` con `status='offered'`, `expires_at=NOW()+expires`.
+- Si ride estaba `requested` → pasa a `offered`.
+**Errores comunes:** “Ride no ofertable…”, “Driver no está idle”, “Driver sin shift abierto/vehículo”.
+**Uso:**
+```sql
+CALL sp_create_offer_v2(1, @ride_id, 1, 45);
+SELECT LAST_INSERT_ID();
+```
+
+---
+
+### 3) `sp_accept_offer_v3(p_offer_id)` (silencioso)
+**Objetivo:** aceptar una oferta y **asignar** el ride.  
+**Precondiciones:** oferta `offered` y no expirada; ride en `requested|offered` sin driver.  
+**Efectos:** `rides.status='accepted'`, set `driver_id`, `vehicle_id`; oferta → `accepted`; otras ofertas → `rejected`.  
+**Errores:** “Oferta inexistente”, “Oferta expirada”, “Ride no ofertable o ya asignado”.  
+**Uso:**
+```sql
+CALL sp_accept_offer_v3(@offer_id);
+```
+
+---
+
+### 4) `sp_reject_offer_v2(p_offer_id)` (silencioso)
+**Objetivo:** rechazar una oferta (conductor o backend).  
+**Precondiciones:** oferta `offered` y no expirada.  
+**Efectos:** oferta → `rejected`.  
+**Uso:** `CALL sp_reject_offer_v2(123);`
+
+---
+
+### 5) `sp_expire_offers_v2(p_tenant_id, p_ride_id)` (silencioso)
+**Objetivo:** marcar expiradas ofertas `offered` con `expires_at < NOW()` de un ride.  
+**Uso:** `CALL sp_expire_offers_v2(1, @ride_id);`
+
+---
+
+### 6) `sp_offer_wave_v1(p_tenant_id, p_ride_id, p_radius_km, p_limit_n, p_expires_sec)` (silencioso)
+**Objetivo:** disparar **ola** por radio a top N drivers cercanos.  
+**Filtro:** `idle` + `shift='abierto'` dentro de `p_radius_km` ordenados por distancia.  
+**Efecto:** Llama internamente `sp_create_offer_v2` para cada driver (evita duplicados vivos).
+
+---
+
+### 7) `sp_offer_wave_v2(p_tenant_id, p_ride_id, p_driver_ids_csv, p_expires_sec)` (silencioso)
+**Objetivo:** disparar **ola** a una **lista explícita** de drivers `"1,5,9"`.  
+**Efectos/Validaciones:** iguales a v1; además evita dups para ese ride/driver.
+
+---
+
+### 8) `sp_release_ride_v1(p_tenant_id, p_ride_id)` (silencioso)
+**Objetivo:** **liberar** un ride asignado (no lo cancela).  
+**Precondiciones:** ride en `accepted` con driver.  
+**Efectos:** quita `driver_id/vehicle_id`, `status='requested'`; oferta aceptada → `released`; ofertas `offered` → `expired`.  
+**Errores:** “Ride no liberable…”, “No se pudo liberar (carrera de estado)”.
+
+---
+
+### 9) `sp_cancel_ride_v2(p_tenant_id, p_ride_id, p_canceled_by, p_reason)` (silencioso)
+**Objetivo:** **cancelar** ride desde dispatch/driver/passenger/system con auditoría.  
+**Normalización:** `p_canceled_by` se mapea a `dispatch|driver|passenger|system` (fallback `dispatch`).  
+**Efectos:** `rides.status='canceled'`, set `canceled_at/by/reason`; ofertas `offered|accepted` → `canceled`.
+
+---
+
+### 10) `sp_complete_ride_v1(p_tenant_id, p_ride_id, p_distance_m, p_duration_s)` (silencioso)
+**Objetivo:** **finalizar** ride (MAUI driver/backend).  
+**Precondiciones:** ride del tenant, con driver y en `accepted`.  
+**Efectos:** opcionalmente actualiza `distance_m/duration_s`; `status='finished'`, `finished_at=NOW()`.  
+**Uso:** `CALL sp_complete_ride_v1(1, @ride_id, 5050, 880);`
+
+---
+
+## Troubleshooting
+- **Datos truncados en `ride_offers.response/status`**: amplía los `ENUM` como arriba.
+- **commands out of sync**: usa SP **silenciosos** (ya lo hicimos) o ejecuta bloques completos en una pestaña.
+- **@vars NULL en phpMyAdmin**: ejecuta **todo el bloque** en una sola corrida; usa `SELECT LAST_INSERT_ID()` tras `CALL` que insertan.
+
+---
+
+## Flujos recomendados
+**Oferta → aceptación**  
+1) `CALL sp_offer_wave_v1` o `sp_offer_wave_v2`  
+2) `SELECT LAST_INSERT_ID()` → `@offer_id`  
+3) `CALL sp_accept_offer_v3(@offer_id)`
+
+**Autodespacho por olas**  
+- OLA: `sp_offer_wave_v1` → esperar `N` segundos → `sp_expire_offers_v2` → repetir.  
+- Si ninguna aceptación tras K olas: alertar a operador (fallback).
+
+**Liberación**  
+- `CALL sp_release_ride_v1` → vuelve a `requested` → reofertar ola o asignar directo.
+
+**Cancelación con auditoría**  
+- `CALL sp_cancel_ride_v2(tenant, ride, who, reason)`
+
+**Finalización (MAUI)**  
+- `CALL sp_complete_ride_v1(tenant, ride, distance, duration)`
+
+---
+
+## SQL de verificación útil
+```sql
+-- Ofertas por ride (estado resumido)
+SELECT id, driver_id, status, response, expires_at
+FROM ride_offers
+WHERE ride_id = @ride_id
+ORDER BY id DESC;
+
+-- Ride + identificadores visuales de vehículo
+SELECT r.id AS ride_id, r.status, r.driver_id,
+       v.id AS vehicle_id, v.economico, v.plate
+FROM rides r
+LEFT JOIN vehicles v ON v.id = r.vehicle_id
+WHERE r.id = @ride_id;
+```

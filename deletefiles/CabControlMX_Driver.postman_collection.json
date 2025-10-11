@@ -1,0 +1,249 @@
+{
+  "info": {
+    "_postman_id": "cabcontrolmx-1760075177",
+    "name": "CabControlMX – Driver (MAUI)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Open shift",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/driver/shifts/open",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "driver",
+            "shifts",
+            "open"
+          ]
+        },
+        "description": "Open shift",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"driver_id\": \":driver_id\",\n  \"vehicle_id\": \":vehicle_id\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Close shift",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/driver/shifts/close",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "driver",
+            "shifts",
+            "close"
+          ]
+        },
+        "description": "Close shift",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"driver_id\": \":driver_id\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Ping location",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/driver/location",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "driver",
+            "location"
+          ]
+        },
+        "description": "Update last_lat/lng + insert driver_locations",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"driver_id\": \":driver_id\",\n  \"lat\": 19.1739,\n  \"lng\": -96.134,\n  \"speed_kmh\": 18,\n  \"heading_deg\": 140\n}"
+        }
+      }
+    },
+    {
+      "name": "My offers",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/driver/offers?tenant_id=1&driver_id=:driver_id",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "driver",
+            "offers"
+          ]
+        },
+        "description": "List live offers"
+      }
+    },
+    {
+      "name": "Accept offer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/offers/:offer_id/accept",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "offers",
+            ":offer_id",
+            "accept"
+          ]
+        },
+        "description": "Accept",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"offer_id\": \":offer_id\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Reject offer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/offers/:offer_id/reject",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "offers",
+            ":offer_id",
+            "reject"
+          ]
+        },
+        "description": "Reject (status=rejected)",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"reason\": \"busy\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Join stand by name",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/queue/join-by-name",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "queue",
+            "join-by-name"
+          ]
+        },
+        "description": "sp_queue_join_by_name_v1",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"stand_name\": \"Base Centro\",\n  \"driver_id\": \":driver_id\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Complete my ride",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/rides/:ride_id/complete",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "rides",
+            ":ride_id",
+            "complete"
+          ]
+        },
+        "description": "sp_complete_ride_v1",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tenant_id\": 1,\n  \"real_distance_m\": 5000,\n  \"real_duration_s\": 850\n}"
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "default"
+    }
+  ]
+}

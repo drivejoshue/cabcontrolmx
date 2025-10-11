@@ -156,38 +156,12 @@ function pointsFromGoogleRoute(route){
   return [];
 }
 
-function setFrom(latlng, label){
-  if (fromMarker) fromMarker.remove();
-  fromMarker = L.marker(latlng, { draggable:true, icon:IconOrigin, zIndexOffset:1000 })
-    .addTo(map).bindTooltip('Origen');
-  setInput('#fromLat', latlng[0]); setInput('#fromLng', latlng[1]);
-  if (label) qs('#inFrom').value = label; else reverseGeocode(latlng, '#inFrom');
-  fromMarker.on('dragstart', ()=> map.dragging.disable());
-  fromMarker.on('dragend', (e)=>{
-    map.dragging.enable();
-    const ll = e.target.getLatLng();
-    setInput('#fromLat', ll.lat); setInput('#fromLng', ll.lng);
-    reverseGeocode([ll.lat,ll.lng], '#inFrom');
-    drawRoute({quiet:true});
-  });
-  drawRoute({quiet:true});
+function clearQuoteUi() {
+  const fa = qs('#fareAmount'); if (fa) fa.value = '';
+  const rs = document.getElementById('routeSummary');
+  if (rs) rs.innerText = `Ruta: — · Zona: — · Cuando: ${qs('#when-later')?.checked?'después':'ahora'}`;
 }
-function setTo(latlng, label){
-  if (toMarker) toMarker.remove();
-  toMarker = L.marker(latlng, { draggable:true, icon:IconDest, zIndexOffset:1000 })
-    .addTo(map).bindTooltip('Destino');
-  setInput('#toLat', latlng[0]); setInput('#toLng', latlng[1]);
-  if (label) qs('#inTo').value = label; else reverseGeocode(latlng, '#inTo');
-  toMarker.on('dragstart', ()=> map.dragging.disable());
-  toMarker.on('dragend', (e)=>{
-    map.dragging.enable();
-    const ll = e.target.getLatLng();
-    setInput('#toLat', ll.lat); setInput('#toLng', ll.lng);
-    reverseGeocode([ll.lat,ll.lng], '#inTo');
-    drawRoute({quiet:true});
-  });
-  drawRoute({quiet:true});
-}
+
 
 function reverseGeocode(latlng, inputSel){
   if(!gGeocoder) return;
@@ -201,10 +175,12 @@ async function drawRoute({ quiet=false } = {}){
     const { a,b,hasA,hasB } = getAB();
     const rs = document.getElementById('routeSummary');
 
-    if(!hasA || !hasB){
-      if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ' + (qs('#when-later')?.checked?'después':'ahora');
-      return;
-    }
+   if (!hasA || !hasB) {
+  clearQuoteUi(); // ← limpia tarifa y resumen
+  if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ' + (qs('#when-later')?.checked?'después':'ahora');
+  return;
+}
+
 
     // Si hay Directions, úsalo con tráfico actual
     if (gDirService && window.google?.maps){
@@ -233,6 +209,7 @@ async function drawRoute({ quiet=false } = {}){
           map.fitBounds(poly.getBounds().pad(0.15), {padding:[40,40]});
         } else {
           if(!quiet) console.debug('[ROUTE] Directions OK sin polyline → OSRM');
+          autoQuoteIfReady();
           await drawRouteWithOSRM(a,b,{quiet:true});
         }
 
@@ -241,6 +218,7 @@ async function drawRoute({ quiet=false } = {}){
           const dura = (leg?.duration_in_traffic || leg?.duration)?.text || '—';
           rs.innerText = `Ruta: ${dist} · ${dura} · Cuando: ${qs('#when-later')?.checked?'después':'ahora'}`;
         }
+        autoQuoteIfReady();
         return; // listo
       }catch(err){
         if(!quiet) console.warn('[Directions] fallo, fallback OSRM:', err?.status||err);
@@ -254,6 +232,110 @@ async function drawRoute({ quiet=false } = {}){
     console.error('drawRoute error', err);
   }
 }
+function setFrom(latlng, label){
+  if (fromMarker) fromMarker.remove();
+  fromMarker = L.marker(latlng, { draggable:true, icon:IconOrigin, zIndexOffset:1000 })
+    .addTo(map).bindTooltip('Origen');
+  setInput('#fromLat', latlng[0]); setInput('#fromLng', latlng[1]);
+  if (label) qs('#inFrom').value = label; else reverseGeocode(latlng, '#inFrom');
+  fromMarker.on('dragstart', ()=> map.dragging.disable());
+  fromMarker.on('dragend', (e)=>{
+    map.dragging.enable();
+    const ll = e.target.getLatLng();
+    setInput('#fromLat', ll.lat); setInput('#fromLng', ll.lng);
+    reverseGeocode([ll.lat,ll.lng], '#inFrom');
+    drawRoute({quiet:true});
+    autoQuoteIfReady();
+  });
+  drawRoute({quiet:true});
+  autoQuoteIfReady();
+}
+function setTo(latlng, label){
+  if (toMarker) toMarker.remove();
+  toMarker = L.marker(latlng, { draggable:true, icon:IconDest, zIndexOffset:1000 })
+    .addTo(map).bindTooltip('Destino');
+  setInput('#toLat', latlng[0]); setInput('#toLng', latlng[1]);
+  if (label) qs('#inTo').value = label; else reverseGeocode(latlng, '#inTo');
+  toMarker.on('dragstart', ()=> map.dragging.disable());
+  toMarker.on('dragend', (e)=>{
+    map.dragging.enable();
+    const ll = e.target.getLatLng();
+    setInput('#toLat', ll.lat); setInput('#toLng', ll.lng);
+    reverseGeocode([ll.lat,ll.lng], '#inTo');
+    drawRoute({quiet:true});
+    autoQuoteIfReady();
+  });
+  drawRoute({quiet:true});
+  autoQuoteIfReady();
+}
+
+// === Auto-cotización en cuanto hay ORIGEN y DESTINO ===
+
+let _quoteTimer = null;
+let __lastQuote = null;
+
+function _hasAB() {
+  const aLat = parseFloat(qs('#fromLat')?.value);
+  const aLng = parseFloat(qs('#fromLng')?.value);
+  const bLat = parseFloat(qs('#toLat')?.value);
+  const bLng = parseFloat(qs('#toLng')?.value);
+  return Number.isFinite(aLat) && Number.isFinite(aLng)
+      && Number.isFinite(bLat) && Number.isFinite(bLng);
+}
+
+async function _doAutoQuote() {
+  if (!_hasAB()) { return; }
+  const aLat = parseFloat(qs('#fromLat').value);
+  const aLng = parseFloat(qs('#fromLng').value);
+  const bLat = parseFloat(qs('#toLat').value);
+  const bLng = parseFloat(qs('#toLng').value);
+
+  try {
+    const r = await fetch('/api/dispatch/quote', {
+      method: 'POST',
+      headers: {
+        'Content-Type':'application/json',
+        'Accept':'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        origin: {lat:aLat, lng:aLng},
+        destination: {lat:bLat, lng:bLng},
+        round_to_step: 1.00  // pesos enteros
+      })
+    });
+    const j = await r.json();
+    if (!r.ok || j.ok===false) throw new Error(j?.msg || ('HTTP '+r.status));
+
+  __lastQuote = j; // 👈 guarda {amount, distance_m, duration_s}
+
+  const fa = qs('#fareAmount');
+  if (fa) fa.value = j.amount;
+
+    // Actualiza el resumen bajo los inputs
+    const rs = document.getElementById('routeSummary');
+    if (rs) {
+      const km  = (j.distance_m/1000).toFixed(1)+' km';
+      const min = Math.round(j.duration_s/60)+' min';
+      rs.innerText = `Ruta: ${km} · ${min} · Tarifa: $${j.amount}`;
+    }
+  } catch (e) {
+    // Silencioso: no molestamos al operador; deja la ruta y la UI
+    console.warn('[quote] fallo', e);
+  }
+}
+
+function autoQuoteIfReady() {
+  clearTimeout(_quoteTimer);
+  // debounce para no saturar al mover pines/arrastrar
+  _quoteTimer = setTimeout(_doAutoQuote, 450);
+}
+
+
+
+//*-----------termina quote 
+
+
 
 async function drawRouteWithOSRM(a,b,{quiet=false} = {}){
   try{
@@ -273,6 +355,7 @@ async function drawRouteWithOSRM(a,b,{quiet=false} = {}){
     const dist = j.routes[0].distance ? (j.routes[0].distance/1000).toFixed(1)+' km' : '—';
     const dura = j.routes[0].duration ? Math.round(j.routes[0].duration/60)+' min' : '—';
     if (rs) rs.innerText = `Ruta: ${dist} · ${dura} · Cuando: ${qs('#when-later')?.checked?'después':'ahora'}`;
+     autoQuoteIfReady();
   }catch(e){
     if(!quiet) console.warn('OSRM error', e);
   }
@@ -331,12 +414,7 @@ function rideColorByStatus(status){
     default:           return '#1db954';
   }
 }
-function driverColorByDriverStatus(st){
-  const s = String(st||'').toLowerCase();
-  if (s === 'busy') return '#e03131';
-  if (s === 'idle') return '#1db954';
-  return '#6c757d';
-}
+
 
 
 // === Iconos por tipo/estado (debes tener estos PNG en /public/images/vehicles) ===
@@ -374,14 +452,24 @@ const CAR_SPRITES = {
 function visualState({ ride_status, driver_status, shift_open }) {
   const r = String(ride_status || '').toLowerCase();
   const d = String(driver_status || '').toLowerCase();
-  const hasShift = !!shift_open || shift_open === undefined;
 
-  if (d.shift_open === false) { return false }
-  if (r === 'on_board') return 'onboard';
+  // 1) Si no tiene turno abierto → offline (no lo ocultes, muéstralo gris si lo estás listando)
+  if (shift_open === false) return 'offline';
+
+  // 2) Si el backend/cron lo marcó offline → sprite gris
+  if (d === 'offline') return 'offline';
+
+  // 3) Prioridad ride
+  if (r === 'on_board' || r === 'onboard') return 'onboard';
   if (['accepted','assigned','en_route','arrived','requested','offered','scheduled'].includes(r)) return 'assigned';
+
+  // 4) Estado del driver
   if (d === 'busy') return 'busy';
+
+  // 5) Default libre
   return 'free';
 }
+
 
 function statusLabel(rideStatus, driverStatus){
   const x = String(rideStatus || driverStatus || '').toLowerCase();
@@ -548,6 +636,7 @@ async function highlightRideOnMap(r){
       // marca clase para que cambie con theme switch
       trip.options.className = 'cc-route';
       trip.addTo(group);
+       autoQuoteIfReady();
       try { bounds.extend(trip.getBounds()); } catch {}
     } catch (e) { console.warn('trip suggested route error', e); }
   }
@@ -583,35 +672,62 @@ async function highlightRideOnMap(r){
 function renderActiveRides(rides){
   const el = document.getElementById('panel-active'); if(!el) return;
   el.innerHTML='';
-  const b = document.getElementById('badgeActivos'); if (b) b.innerText = rides.length;
+  const b = document.getElementById('badgeActivos'); if (b) b.innerText = (rides||[]).length;
 
-  rides.forEach(r=>{
-    const sRaw  = String(r.status||'').toLowerCase();
+  const STATUS = {
+    requested:{label:'Requerido',color:'primary'},
+    scheduled:{label:'Programado',color:'info'},
+    offered:{label:'Ofertado',color:'purple'},
+    accepted:{label:'Aceptado',color:'indigo'},
+    assigned:{label:'Asignado',color:'warning'},
+    en_route:{label:'En ruta',color:'teal'},
+    arrived:{label:'Llegó',color:'orange'},
+    boarding:{label:'Abordando',color:'warning'},
+    onboard:{label:'A bordo',color:'danger'},
+    finished:{label:'Terminado',color:'success'},
+    canceled:{label:'Cancelado',color:'secondary'},
+    cancelled:{label:'Cancelado',color:'secondary'},
+  };
 
+  (rides||[]).forEach(r=>{
+    const sRaw = String(r.status||'').toLowerCase();
+    const meta = STATUS[sRaw] || {label:(sRaw||'—'), color:'secondary'};
 
-    const color = rideColorByStatus(sRaw);
-    const label = sRaw.replace('_',' ').replace(/\b\w/g, m=>m.toUpperCase()); // "on_board" -> "On board"
-    const when  = r.scheduled_for ? `Prog: ${new Date(r.scheduled_for).toLocaleString()}` : 'Ahora';
+    // 👇 Coerción segura a número
+    const dm = Number(r.distance_m);
+    const ds = Number(r.duration_s);
+    const qa = Number(r.quoted_amount);
+
+    const km  = Number.isFinite(dm) ? (dm/1000).toFixed(1)+' km' : '—';
+    const min = Number.isFinite(ds) ? Math.round(ds/60)+' min'     : '—';
+    const fare= Number.isFinite(qa) ? ('$'+Math.round(qa))         : '—';
+
+    const when = r.scheduled_for ? `Prog: ${new Date(r.scheduled_for).toLocaleString()}` : 'Ahora';
 
     const card = document.createElement('div');
-    card.className = 'card card-body py-2 mb-2';
+    card.className = 'card mb-2 cc-ride-card';
     card.innerHTML = `
-      <div class="d-flex justify-content-between">
-        <div>
-          <div class="small text-muted">#${r.id} · <span class="badge" style="background:${color}">${label}</span></div>
-          <div><b>${r.passenger_name||'-'}</b> <span class="text-muted">(${r.passenger_phone||''})</span></div>
-          <div class="small">${r.origin_label||'—'}</div>
-          <div class="small">→ ${r.dest_label||'—'}</div>
-          <div class="small text-muted">${when}</div>
-        </div>
-        <div class="ms-2 d-flex flex-column align-items-end">
-          <button class="btn btn-sm btn-outline-primary mb-1" data-zoom>Ver</button>
-          <button class="btn btn-sm btn-outline-success mb-1" data-assign>Asignar</button>
-          <button class="btn btn-sm btn-outline-danger" data-cancel>Cancelar</button>
+      <div class="cc-ride-header bg-${meta.color}">
+        <div class="d-flex justify-content-between align-items-center">
+          <div class="text-white fw-semibold">#${r.id} · ${meta.label}</div>
+          <button class="btn btn-xs btn-light" data-zoom>Ver</button>
         </div>
       </div>
+      <div class="card-body py-2">
+        <div><b>${r.passenger_name||'-'}</b> <span class="text-muted">(${r.passenger_phone||''})</span></div>
+        <div class="small">${r.origin_label||'—'}</div>
+        <div class="small">→ ${r.dest_label||'—'}</div>
+        <div class="small text-muted mt-1">
+          Dist: <b>${km}</b> · Tiempo: <b>${min}</b> · Tarifa: <b>${fare}</b>
+        </div>
+        <div class="small text-muted">${when}</div>
+      </div>
+      <div class="card-footer py-2 d-flex justify-content-end gap-2">
+        <button class="btn btn-sm btn-outline-success" data-assign>Asignar</button>
+        <button class="btn btn-sm btn-outline-danger"  data-cancel>Cancelar</button>
+      </div>
     `;
-    card.querySelector('[data-zoom]').addEventListener('click', ()=> highlightRideOnMap(r));
+    card.querySelector('[data-zoom]')   .addEventListener('click', ()=> highlightRideOnMap(r));
     card.querySelector('[data-assign]').addEventListener('click', ()=> openAssignFlow(r));
     card.querySelector('[data-cancel]').addEventListener('click', async ()=>{
       if(!confirm('Cancelar este viaje?')) return;
@@ -625,13 +741,45 @@ function renderActiveRides(rides){
   });
 }
 
+
+
 function suggestedLineStyle(){
   return isDarkMode()
     ? { color:'#4DD9FF', weight:5, opacity:.95, dashArray:'6,8' } // oscuro
     : { color:'#0D6EFD', weight:4, opacity:.90, dashArray:'6,8' }; // claro
 }
 
+function suggestedLineSelectedStyle() {
+  return isDarkMode()
+    ? { color:'#22CC88', weight:6, opacity:.95 }     // sin guiones, más gruesa
+    : { color:'#16A34A', weight:5, opacity:.95 };
+}
 
+
+async function ensureDriverPreviewLine(driverId, ride) {
+  const e = driverPins.get(driverId);
+  if (!e) return null;
+
+  // Si ya hay línea, la dejamos (la vamos a restilar si hace falta)
+  if (e.previewLine) return e.previewLine;
+
+  // Crear nueva línea sugerida DRIVER -> ORIGEN
+  const line = await drawSuggestedRoute(
+    e.marker.getLatLng(),
+    L.latLng(ride.origin_lat, ride.origin_lng)
+  );
+  line.setStyle(suggestedLineStyle());
+  line.options.className = 'cc-suggested';
+  e.previewLine = line.addTo(layerRoute);
+  return e.previewLine;
+}
+
+function clearAllPreviews() {
+  driverPins.forEach(e => {
+    if (e.previewLine) { try { layerRoute.removeLayer(e.previewLine); } catch{} }
+    e.previewLine = null;
+  });
+}
 
 async function drawSuggestedRoute(fromLL, toLL){
   // 1) Google Directions (con tráfico)
@@ -764,106 +912,88 @@ function bearingBetween(a,b){
   return (Math.atan2(y,x)*180/Math.PI+360)%360;
 }
 
-function openAssignFlow(ride){
-  if (!ride || !Number.isFinite(ride.origin_lat) || !Number.isFinite(ride.origin_lng)) {
-    alert('Este ride no tiene origen válido'); return;
-  }
-  fetch(`/api/dispatch/nearby-drivers?lat=${ride.origin_lat}&lng=${ride.origin_lng}&km=5`,
-        { headers:{Accept:'application/json'} })
-    .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(list => {
-      let candidates = Array.isArray(list) ? list : [];
-      // Fallback local si vacío:
-      if (!candidates.length){
-        driverPins.forEach((e, id) => {
-          const ll = e.marker.getLatLng();
-          const dk = _distKm(ride.origin_lat, ride.origin_lng, ll.lat, ll.lng);
-          candidates.push({
-            id,
-            name: e.name || ('Driver '+id),
-            vehicle_type: e.type || 'sedan',
-            vehicle_plate: e.plate || '',
-            distance_km: dk
-          });
-        });
-        // filtra a 5 km (ajusta a gusto)
-        candidates = candidates.filter(c => c.distance_km <= 5);
-      }
-      renderAssignModal(ride, candidates);
 
-    })
-    .catch(e => { console.warn('nearby-drivers error', e); renderAssignDialog(ride, []); });
-}
 
 
 
 // ADD: util para crear/actualizar modal
 let _assignPanel, _assignSelected = null, _assignRide = null;
+let _assignOriginPin = null;
 
 function renderAssignPanel(ride, candidates){
   _assignRide = ride; _assignSelected = null;
+
+  try {
+  if (_assignOriginPin) { layerSuggested.removeLayer(_assignOriginPin); _assignOriginPin = null; }
+  if (Number.isFinite(ride.origin_lat) && Number.isFinite(ride.origin_lng)) {
+    _assignOriginPin = L.marker([ride.origin_lat, ride.origin_lng], {
+      icon: IconOrigin, zIndexOffset: 950
+    }).addTo(layerSuggested).bindTooltip('Pasajero', {offset:[0,-26]});
+  }
+} catch {}
 
   const el = document.getElementById('assignPanelBody');
   if (!candidates.length){
     el.innerHTML = `<div class="text-muted">No hay conductores cercanos.</div>`;
   } else {
-    el.innerHTML = `
-      <div class="list-group" id="assignList" style="max-height: 60vh; overflow:auto"></div>
-    `;
+    el.innerHTML = `<div class="list-group" id="assignList" style="max-height: 60vh; overflow:auto"></div>`;
     const list = el.querySelector('#assignList');
 
-    candidates
+    // ORDENAR por distancia y limitar a N para no saturar (ajusta N)
+    const TOP_N = 12;
+    const ordered = [...candidates]
       .sort((a,b)=> (a.distance_km??9e9) - (b.distance_km??9e9))
-      .forEach(c=>{
-        const id = c.id || c.driver_id;
-        const dist = (c.distance_km!=null) ? `${c.distance_km.toFixed(2)} km` : '';
-        const item = document.createElement('button');
-        item.type='button';
-        item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
-        item.innerHTML = `
-          <div>
-            <div><b>${c.name||('Driver '+id)}</b> <span class="text-muted">(${String(c.vehicle_type||'sedan')})</span></div>
-            <div class="small text-muted">${dist}</div>
-          </div>
-          <span class="badge bg-secondary">${id}</span>
-        `;
+      .slice(0, TOP_N);
 
-        // Previsualizar ruta al pasar el mouse (y al enfocar con teclado)
-        const preview = async () => {
-          try{
-            const e = driverPins.get(id);
-            if (!e) return;
-            const line = await drawSuggestedRoute(
-              e.marker.getLatLng(),
-              L.latLng(ride.origin_lat, ride.origin_lng)
-            );
-            line.setStyle(suggestedLineStyle());
-            line.options.className = 'cc-suggested';
-            // Guardamos en la entrada para limpiar fácilmente
-            if (e.previewLine) { try { layerRoute.removeLayer(e.previewLine); } catch{} }
-            e.previewLine = line.addTo(layerRoute);
-          }catch{}
-        };
-        const clearPreview = () => {
-          const e = driverPins.get(id);
-          if (e?.previewLine) { try { layerRoute.removeLayer(e.previewLine); } catch{} e.previewLine=null; }
-        };
+    // 1) Render de la lista + click handler
+    ordered.forEach(c=>{
+      const id = c.id || c.driver_id;
+      const dist = (c.distance_km!=null) ? `${c.distance_km.toFixed(2)} km` : '';
+      const item = document.createElement('button');
+      item.type='button';
+      item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+      item.dataset.driverId = id;
+      item.innerHTML = `
+        <div>
+          <div><b>${c.name||('Driver '+id)}</b> <span class="text-muted">(${String(c.vehicle_type||'sedan')})</span></div>
+          <div class="small text-muted">${dist}</div>
+        </div>
+        <span class="badge bg-secondary">${id}</span>
+      `;
 
-        item.addEventListener('mouseenter', preview);
-        item.addEventListener('focus', preview);
-        item.addEventListener('mouseleave', clearPreview);
-        item.addEventListener('blur', clearPreview);
+      item.addEventListener('click', async ()=>{
+        _assignSelected = id;
+        // activar visualmente
+        list.querySelectorAll('.active').forEach(n=> n.classList.remove('active'));
+        item.classList.add('active');
 
-        // Selección
-        item.addEventListener('click', ()=>{
-          _assignSelected = id;
-          list.querySelectorAll('.active').forEach(n=> n.classList.remove('active'));
-          item.classList.add('active');
-          document.getElementById('btnDoAssign').disabled = !_assignSelected;
+        // restilar todas a estilo “normal”
+        driverPins.forEach(e=>{
+          if (e.previewLine) try { e.previewLine.setStyle(suggestedLineStyle()); } catch{}
         });
+        // y esta a “seleccionado”
+        const line = await ensureDriverPreviewLine(id, ride);
+        if (line) try { line.setStyle(suggestedLineSelectedStyle()); line.bringToFront(); } catch{}
 
-        list.appendChild(item);
+        document.getElementById('btnDoAssign').disabled = !_assignSelected;
       });
+
+      list.appendChild(item);
+    });
+
+    // 2) DIBUJAR TODAS LAS LÍNEAS AL ABRIR (stagger para no saturar)
+    (async () => {
+      for (let i=0; i<ordered.length; i++) {
+        const c = ordered[i];
+        const id = c.id || c.driver_id;
+        try { await ensureDriverPreviewLine(id, ride); } catch {}
+        // pequeñísimo delay para repartir llamadas a Directions/OSRM
+        await new Promise(res => setTimeout(res, 90));
+      }
+      // Selecciona por defecto al más cercano (primero de la lista)
+      const firstBtn = list.querySelector('.list-group-item');
+      if (firstBtn) firstBtn.click();
+    })();
   }
 
   // botón Asignar
@@ -881,8 +1011,8 @@ function renderAssignPanel(ride, candidates){
       });
       const j = await r.json().catch(()=>({}));
       if (!r.ok || j.ok===false) throw new Error(j?.msg || ('HTTP '+r.status));
-      // Limpia previews y cierra
-      driverPins.forEach(e=>{ if (e.previewLine){ try{ layerRoute.removeLayer(e.previewLine); }catch{} e.previewLine=null; }});
+      clearAllPreviews();
+      if (_assignPickupMarker) { try { layerRoute.removeLayer(_assignPickupMarker); } catch{} _assignPickupMarker=null; }
       if (_assignPanel) _assignPanel.hide();
       refreshDispatch();
     }catch(e){
@@ -890,11 +1020,18 @@ function renderAssignPanel(ride, candidates){
     }
   };
 
-  // abre offcanvas
+  // abrir offcanvas + cleanup al cerrar
   const panelEl = document.getElementById('assignPanel');
   _assignPanel = _assignPanel || new bootstrap.Offcanvas(panelEl, {backdrop:false});
+
+  panelEl.addEventListener('hidden.bs.offcanvas', () => {
+    clearAllPreviews();
+    if (_assignPickupMarker) { try { layerRoute.removeLayer(_assignPickupMarker); } catch{} _assignPickupMarker=null; }
+  }, { once:false });
+
   _assignPanel.show();
 }
+
 
 function openAssignFlow(ride){
   if (!ride || !Number.isFinite(ride.origin_lat) || !Number.isFinite(ride.origin_lng)) {
@@ -1026,21 +1163,35 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // crear ride
   qs('#btnCreate')?.addEventListener('click', async ()=>{
-    const payload = {
-      passenger_name:  qs('#pass-name')?.value || null,
-      passenger_phone: qs('#pass-phone')?.value || null,
-      origin_lat: parseFloat(qs('#fromLat')?.value),
-      origin_lng: parseFloat(qs('#fromLng')?.value),
-      origin_label: qs('#inFrom')?.value || null,
-      dest_lat: parseFloat(qs('#toLat')?.value) || null,
-      dest_lng: parseFloat(qs('#toLng')?.value) || null,
-      dest_label: qs('#inTo')?.value || null,
-      payment_method: qs('#pay-method')?.value || 'cash',
-      fare_mode: (qs('#fareMode')?.value || 'meter'),
-      notes: qs('#ride-notes')?.value || null,
-      pax: parseInt(qs('#pax')?.value)||1,
-      scheduled_for: null
-    };
+  const payload = {
+  passenger_name:  qs('#pass-name')?.value || null,
+  passenger_phone: qs('#pass-phone')?.value || null,
+
+  origin_lat: parseFloat(qs('#fromLat')?.value),
+  origin_lng: parseFloat(qs('#fromLng')?.value),
+  origin_label: qs('#inFrom')?.value || null,
+
+  dest_lat: parseFloat(qs('#toLat')?.value) || null,
+  dest_lng: parseFloat(qs('#toLng')?.value) || null,
+  dest_label: qs('#inTo')?.value || null,
+
+  payment_method: qs('#pay-method')?.value || 'cash',
+  fare_mode: (qs('#fareMode')?.value || 'meter'), // si lo usas
+
+  notes: qs('#ride-notes')?.value || null,
+  pax: parseInt(qs('#pax')?.value)||1,
+  scheduled_for: null,
+
+  quoted_amount: (() => {
+    const v = Number(qs('#fareAmount')?.value);
+    return Number.isFinite(v) ? Math.round(v) : null; // enteros
+  })(),
+  distance_m: __lastQuote?.distance_m ?? null,
+  duration_s: __lastQuote?.duration_s ?? null,
+  route_polyline: __lastQuote?.polyline ?? null,   // si lo guardas
+  requested_channel: 'dispatch',
+};
+
     if(!Number.isFinite(payload.origin_lat) || !Number.isFinite(payload.origin_lng)){
       alert('Indica un origen válido.'); return;
     }
@@ -1073,6 +1224,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     const rs = document.getElementById('routeSummary');
     if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
   });
+
+
+  qs('#btnQuote')?.addEventListener('click', async () => {
+  const aLat = parseFloat(qs('#fromLat')?.value);
+  const aLng = parseFloat(qs('#fromLng')?.value);
+  const bLat = parseFloat(qs('#toLat')?.value);
+  const bLng = parseFloat(qs('#toLng')?.value);
+  if (!Number.isFinite(aLat) || !Number.isFinite(aLng)
+   || !Number.isFinite(bLat) || !Number.isFinite(bLng)) {
+    alert('Indica origen y destino para cotizar.'); return;
+  }
+  try {
+    const r = await fetch('/api/dispatch/quote', {
+      method: 'POST',
+      headers: {
+        'Content-Type':'application/json',
+        'Accept':'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+      },
+      body: JSON.stringify({
+        origin: {lat:aLat, lng:aLng},
+        destination: {lat:bLat, lng:bLng},
+        round_to_step: 1.00      // pesos enteros
+      })
+    });
+    const j = await r.json();
+    if (!r.ok || j.ok===false) throw new Error(j?.msg || ('HTTP '+r.status));
+
+    // Pinta resumen y pone la tarifa sugerida editable
+    const rs = document.getElementById('routeSummary');
+    if (rs) {
+      const km = (j.distance_m/1000).toFixed(1)+' km';
+      const min = Math.round(j.duration_s/60)+' min';
+      rs.innerText = `Ruta: ${km} · ${min} · Tarifa: $${j.amount}`;
+    }
+    qs('#fareAmount').value = j.amount;
+
+    // Si quieres dejar los campos ocultos listos:
+    // (ya tienes hidden lat/lng; no toco más)
+
+  } catch(e) {
+    console.error(e);
+    alert('No se pudo cotizar.');
+  }
+});
 
   // modo oscuro dinámico
  window.addEventListener('theme:changed', (e)=>{
@@ -1192,18 +1388,18 @@ function upsertDriver(d) {
   const lng = Number(d.lng ?? d.last_lng);
   if (!id || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
-  // ocultar si no hay turno
-  if (d.shift_open === false) {
-    const old = driverPins.get(id);
-    if (old) { try { layerDrivers.removeLayer(old.marker); } catch {} }
-    driverPins.delete(id);
-    return;
-  }
+ 
 
-  const type   = String(d.vehicle_type || 'sedan').toLowerCase();
-  const vstate = visualState(d);                  // free/assigned/onboard/busy
-  const icon   = makeCarIcon(type, vstate);       // <- DivIcon estable
-  const zScale = scaleForZoom(map ? map.getZoom() : DEFAULT_ZOOM);     // <- factor por zoom actual
+  const type    = String(d.vehicle_type || 'sedan').toLowerCase();
+  const drvSt   = String(d.driver_status || '').toLowerCase();
+
+  // estado visual base (free/assigned/onboard/busy)
+  let vstate = visualState(d);
+  // si el backend marca offline (y hay turno), mostrar PNG offline
+  if (drvSt === 'offline') vstate = 'offline';
+
+  const icon    = makeCarIcon(type, vstate); // usa tus PNG
+  const zScale  = scaleForZoom(map ? map.getZoom() : DEFAULT_ZOOM);
   const bearing = Number(d.bearing ?? d.heading_deg ?? 0);
 
   const econ  = d.vehicle_economico || '';
@@ -1212,18 +1408,26 @@ function upsertDriver(d) {
   const name  = d.name || 'Conductor';
   const label = econ ? `${name} (${econ})` : name;
 
+  // etiqueta de estado legible
+  const labelSt = statusLabel(d.ride_status, d.driver_status);
+
+  const seenTxt = d.reported_at ? `Visto ${fmtAgo(d.reported_at)}` : '—';
   const tip = `
     <div class="cc-tip">
       <div class="tt-title">${label}</div>
       <div class="tt-sub">${type.toUpperCase()}${plate ? ' · '+plate : ''}</div>
-      <div class="tt-meta">${d.speed ? d.speed+' km/h · ' : ''}${phone ? 'Tel: '+phone+' · ' : ''}Visto ${fmtAgo(d.reported_at)}</div>
+      <div class="tt-meta">${labelSt}${phone ? ' · Tel: '+phone : ''} · ${seenTxt}</div>
     </div>`;
+
+  // z-index: arriba si asignado/onboard, abajo si offline
+  const zIdx = (vstate === 'onboard' || vstate === 'assigned') ? 900
+            : (vstate === 'offline' ? 100 : 500);
 
   let entry = driverPins.get(id);
   if (!entry) {
     const marker = L.marker([lat, lng], {
       icon,
-      zIndexOffset: (vstate==='onboard'||vstate==='assigned') ? 900 : 500,
+      zIndexOffset: zIdx,
       riseOnHover: true
     })
     .bindTooltip(tip, { className:'cc-tip', direction:'top', offset:[0,-12], sticky:true })
@@ -1231,25 +1435,23 @@ function upsertDriver(d) {
 
     driverPins.set(id, { marker, type, vstate });
 
-    // aplicar rotación y escala iniciales
     setMarkerScale(marker, zScale);
     setMarkerBearing(marker, bearing);
 
   } else {
     entry.marker.setLatLng([lat, lng]);
 
-    // refrescar sprite sólo si cambia tipo/estado (evita saltos)
+    // refrescar sprite solo si cambia tipo/estado (incluye offline)
     if (entry.type !== type || entry.vstate !== vstate) {
       entry.type = type; entry.vstate = vstate;
       entry.marker.setIcon(makeCarIcon(type, vstate));
-      // re-aplicar escala y rotación tras cambiar el icono
       setMarkerScale(entry.marker, zScale);
-      setMarkerBearing(entry.marker, bearing);
-      entry.marker.setZIndexOffset((vstate==='onboard'||vstate==='assigned') ? 900 : 500);
+      //setMarkerBearing(entry.marker, bearing);
     } else {
-      // solo actualiza rotación (icono existente)
-      setMarkerBearing(entry.marker, bearing);
+      setMarkerScale(entry.marker, zScale);
     }
+
+    entry.marker.setZIndexOffset(zIdx);
 
     const tt = entry.marker.getTooltip();
     if (tt) tt.setContent(tip);
@@ -1261,8 +1463,32 @@ function upsertDriver(d) {
 function renderDrivers(list){
   layerDrivers.clearLayers();
   driverPins.clear();
-  (Array.isArray(list) ? list : []).forEach(upsertDriver);
+
+  const now = Date.now();
+  const FRESH_MS = 120 * 1000;
+
+  (Array.isArray(list) ? list : []).forEach(d=>{
+    const hasLL = Number.isFinite(Number(d.lat)) && Number.isFinite(Number(d.lng));
+    if (!hasLL) return; // sin ubicación, no se puede dibujar
+
+    const t = d.reported_at ? new Date(d.reported_at).getTime() : 0;
+    const isFresh = t && (now - t) <= FRESH_MS;
+
+    const drvSt  = String(d.driver_status || '').toLowerCase();
+    const rideSt = String(d.ride_status   || '').toLowerCase();
+
+    const hasActiveRide = ['requested','scheduled','offered','accepted','assigned','en_route','arrived','onboard','on_board','boarding'].includes(rideSt);
+
+    // Regla: pintamos si es fresh, o si está offline (para mostrar gris),
+    // o si tiene ride activo (no perderlo por ping “viejo”)
+    if (isFresh || drvSt === 'offline' || hasActiveRide) {
+      upsertDriver(d);
+    }
+    // Si quieres que los NO fresh/NO offline/NO ride activo se oculten, no hagas nada aquí.
+  });
 }
+
+
 
 
 async function updateSuggestedRoutes(rides){

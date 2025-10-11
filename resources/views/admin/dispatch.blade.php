@@ -87,16 +87,18 @@
       <div class="col-4">
         <label class="form-label small">Vehículo</label>
         <select id="vehKind" class="form-select form-select-sm">
-          <option>No espec</option><option>Sedán</option><option>Van</option><option>Mototaxi</option>
+          <option>Sedán</option><option>Van</option><option>Mototaxi</option>
         </select>
       </div>
-      <div class="col-4">
-        <label class="form-label small">Tarifa</label>
-        <select id="fareMode" class="form-select form-select-sm">
-          <option value="meter" selected>Taxímetro</option>
-          <option value="fixed">Fija</option>
-        </select>
-      </div>
+    <div class="col-4">
+  <label class="form-label small">Tarifa sugerida</label>
+  <div class="input-group input-group-sm">
+    <span class="input-group-text">$</span>
+    <input id="fareAmount" class="form-control" inputmode="numeric" pattern="[0-9]*" placeholder="0" />
+  </div>
+</div>
+
+
     </div>
 
     <div class="d-grid gap-2 mt-3">
@@ -224,6 +226,22 @@
   image-rendering: -webkit-optimize-contrast;
   image-rendering: crisp-edges;
 }
+
+
+.cc-ride-card .cc-ride-header{
+  padding:.35rem .5rem;
+  border-top-left-radius:.5rem;
+  border-top-right-radius:.5rem;
+}
+.cc-ride-card .card-body{ padding-top:.5rem; padding-bottom:.25rem; }
+.cc-ride-card .card-footer{ background:transparent; border-top:0; }
+.btn.btn-xs{ padding:.125rem .35rem; font-size:.75rem; line-height:1; }
+
+/* extras de color si no existen en tu theme */
+.bg-purple{ background:#6f42c1; }
+.bg-indigo{ background:#6610f2; }
+.bg-teal{   background:#20c997; }
+.bg-orange{ background:#fd7e14; }
 
 
   @media (max-width: 992px){

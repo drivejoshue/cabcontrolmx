@@ -8,7 +8,7 @@ class Driver extends Model
 {
     protected $fillable = [
         'tenant_id','name','phone','email','document_id','status',
-        'last_lat','last_lng','last_bearing','last_speed','last_seen_at',
+        'last_lat','last_lng','last_bearing','last_speed','last_seen_at','user_id',
     ];
 
     protected $casts = [
@@ -18,4 +18,12 @@ class Driver extends Model
         'last_speed' => 'float',
         'last_seen_at' => 'datetime',
     ];
+
+
+
+     public function user()   { return $this->belongsTo(\App\Models\User::class); }
+    public function tenant() { return $this->belongsTo(\App\Models\Tenant::class); }
+
+
+
 }

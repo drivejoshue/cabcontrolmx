@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\API;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
@@ -31,7 +31,7 @@ class DriverAuthController extends Controller
         $token = $user->createToken('driver-app')->plainTextToken;
         return response()->json([
             'token'   => $token,
-            'driver'  => ['id'=>$driver->id,'nombre'=>$driver->nombre,'telefono'=>$driver->telefono],
+            'driver'  => ['id'=>$driver->id,'name'=>$driver->name,'phone'=>$driver->phone],
             'tenant'  => $user->tenant_id ?? 1,
         ]);
     }
