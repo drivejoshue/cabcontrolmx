@@ -768,3 +768,198 @@ SELECT driver_id, position, status
 FROM taxi_stand_queue
 WHERE tenant_id=1 AND stand_id=@stand_id
 ORDER BY status DESC, position ASC;
+
+
+
+
+
+
+postman  
+
+
+{
+  "info": {
+    "name": "CabControl • Driver Flow",
+    "_postman_id": "c9c5e7b8-6f6b-4f4a-9b97-cc-driver-flow",
+    "description": "Login, turno, ubicación, ofertas, flujo del viaje",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 • Auth • Login (driver)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api","auth","login"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "let j = pm.response.json();",
+              "if (j && j.token) {",
+              "  pm.collectionVariables.set('token', j.token);",
+              "  pm.collectionVariables.set('tenantId', j.tenant || 1);",
+              "  if (j.driver && j.driver.id) pm.collectionVariables.set('driverId', j.driver.id);",
+              "}",
+              "pm.test('Login OK', ()=> pm.response.code===200);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 • Shift • Start (abrir turno)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-ID", "value": "{{tenantId}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/driver/shifts/start", "host": ["{{baseUrl}}"], "path": ["api","driver","shifts","start"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"vehicle_id\": {{vehicleId}}\n}"
+        }
+      }
+    },
+    {
+      "name": "03 • Location • Update (PUT) -> pasa a idle",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-ID", "value": "{{tenantId}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/driver/location", "host": ["{{baseUrl}}"], "path": ["api","driver","location"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"lat\": {{lat}},\n  \"lng\": {{lng}},\n  \"heading_deg\": {{bearing}}\n}"
+        }
+      }
+    },
+    {
+      "name": "04 • Dispatch • Nearby Drivers (para validar candidatos)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "X-Tenant-ID", "value": "{{tenantId}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/dispatch/nearby-drivers?lat={{lat}}&lng={{lng}}&km=5",
+          "host": ["{{baseUrl}}"],
+          "path": ["api","dispatch","nearby-drivers"],
+          "query": [
+            { "key": "lat", "value": "{{lat}}" },
+            { "key": "lng", "value": "{{lng}}" },
+            { "key": "km",  "value": "5" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "05 • Offers • Accept (driver)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-ID", "value": "{{tenantId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/driver/offers/{{offerId}}/accept", "host": ["{{baseUrl}}"], "path": ["api","driver","offers","{{offerId}}","accept"] }
+      }
+    },
+    {
+      "name": "06 • Offers • Reject (driver)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-ID", "value": "{{tenantId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/driver/offers/{{offerId}}/reject", "host": ["{{baseUrl}}"], "path": ["api","driver","offers","{{offerId}}","reject"] }
+      }
+    },
+    {
+      "name": "07 • Ride • Arrived (driver llegó al origen)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-ID", "value": "{{tenantId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/driver/rides/{{rideId}}/arrived", "host": ["{{baseUrl}}"], "path": ["api","driver","rides","{{rideId}}","arrived"] }
+      }
+    },
+    {
+      "name": "08 • Ride • Boarded (pasajero a bordo)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-ID", "value": "{{tenantId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/driver/rides/{{rideId}}/boarded", "host": ["{{baseUrl}}"], "path": ["api","driver","rides","{{rideId}}","boarded"] }
+      }
+    },
+    {
+      "name": "09 • Ride • Finish (terminar viaje)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-ID", "value": "{{tenantId}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/driver/rides/{{rideId}}/finish", "host": ["{{baseUrl}}"], "path": ["api","driver","rides","{{rideId}}","finish"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"distance_m\": 6300,\n  \"duration_s\": 900\n}"
+        }
+      }
+    },
+    {
+      "name": "10 • Shift • Finish (cerrar turno)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "X-Tenant-ID", "value": "{{tenantId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/driver/shifts/finish", "host": ["{{baseUrl}}"], "path": ["api","driver","shifts","finish"] }
+      }
+    },
+    {
+      "name": "11 • Auth • Logout",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/auth/logout", "host": ["{{baseUrl}}"], "path": ["api","auth","logout"] }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl",   "value": "https://e48ec4d72723.ngrok-free.app" },
+    { "key": "tenantId",  "value": "1" },
+    { "key": "email",     "value": "driver1@demo.local" },
+    { "key": "password",  "value": "password" },
+    { "key": "token",     "value": "4|T7MEp96F8jb21j0qjhab3HG4BOQRfmdjGhdTwuXJ000e7559" },
+    { "key": "vehicleId", "value": "1" },
+    { "key": "lat",       "value": "19.1723" },
+    { "key": "lng",       "value": "-96.1341" },
+    { "key": "bearing",   "value": "140" },
+    { "key": "rideId",    "value": "1" },
+    { "key": "offerId",   "value": "1" }
+  ]
+}

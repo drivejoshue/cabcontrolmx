@@ -218,8 +218,8 @@
 }
 .cc-car-img{
   position:absolute; left:0; top:0;
-  width: 52px;   /* fija el raster, evita reflow */
-  height: 46px;
+  width: 50px;   /* fija el raster, evita reflow */
+  height: 44px;
   transform-origin: 50% 50%;
   backface-visibility: hidden;
   will-change: transform;
@@ -262,6 +262,15 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
         crossorigin="anonymous"></script>
+
+        <script>
+window.ccDispatchSettings = {
+  auto_dispatch_enabled: @json($settings->auto_dispatch_enabled ?? true),
+  auto_dispatch_delay_s: @json($settings->auto_dispatch_delay_s ?? 10),
+  auto_dispatch_preview_n: @json($settings->auto_dispatch_preview_n ?? 8),
+  auto_dispatch_preview_radius_km: @json($settings->auto_dispatch_preview_radius_km ?? 5)
+};
+</script>
 
 {{-- Tu JS de la página (carga todo, incluido Google dinámico) --}}
 @vite(['resources/js/pages/dispatch.js'])

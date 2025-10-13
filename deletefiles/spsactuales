@@ -1,0 +1,1029 @@
+ima posición */
+  SELECT d.status
+    INTO v_driver_status
+  FROM drivers d
+  WHERE d.id = p_driver_id
+    AND d.tenant_id = p_tenant_id
+    AND d.last_lat IS NOT NULL
+    AND d.last_lng IS NOT NULL
+  LIMIT 1;
+
+  IF v_driver_status IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Driver inexistente o sin coordenadas';
+  END IF;
+  IF v_driver_status <> 'idle' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Driver no está idle';
+  END IF;
+
+  /* 3) Shift abierto y vehicle_id desde shift */
+  SELECT s.vehicle_id
+    INTO v_vehicle_id
+  FROM driver_shifts s
+  WHERE s.driver_id = p_driver_id
+    AND s.tenant_id = p_tenant_id
+    AND s.status = 'abierto'                  -- así está en tu tabla
+  ORDER BY s.id DESC
+  LIMIT 1;
+
+  IF v_vehicle_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Driver sin shift abierto (o sin vehículo activo)';
+  END IF;
+
+  /* 4) round_no = max+1 del mismo ride */
+  SELECT COALESCE(MAX(ro.round_no),0) + 1
+    INTO v_round_no
+  FROM ride_offers ro
+  WHERE ro.ride_id = p_ride_id;
+
+  /* 5) Distancia/ETA driver -> origen (aprox 25 km/h => ~6.94 m/s) */
+  SET v_distance_m = ROUND(
+    haversine_km(
+      v_origin_lat, v_origin_lng,
+      (SELECT d.last_lat FROM drivers d WHERE d.id=p_driver_id LIMIT 1),
+      (SELECT d.last_lng FROM drivers d WHERE d.id=p_driver_id LIMIT 1)
+    ) * 1000
+  );
+  SET v_eta_seconds = CASE WHEN v_distance_m IS NULL THEN NULL ELSE ROUND(v_distance_m / 6.94) END;
+
+  /* 6) Insertar oferta */
+  INSERT INTO ride_offers
+    (tenant_id, ride_id, driver_id, vehicle_id,
+     sent_at, responded_at, status, response,
+     eta_seconds, expires_at, distance_m, round_no, created_at)
+  VALUES
+    (p_tenant_id, p_ride_id, p_driver_id, v_vehicle_id,
+     NOW(), NULL, 'offered', NULL,
+     v_eta_seconds, DATE_ADD(NOW(), INTERVAL COALESCE(p_expires_sec,30) SECOND),
+     v_distance_m, v_round_no, NOW());
+
+  SET v_offer_id = LAST_INSERT_ID();
+
+  /* 7) Si el ride estaba 'requested', pásalo a 'offered' (optimista) */
+  IF v_ride_status = 'requested' THEN
+    UPDATE rides
+      SET status = 'offered'
+    WHERE id = p_ride_id
+      AND status = 'requested'
+      AND tenant_id = p_tenant_id;
+  END IF;
+
+  /* 8) Devolver oferta creada */
+  SELECT * FROM ride_offers WHERE id = v_offer_id;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_create_offer_v2`(
+  IN p_tenant_id   BIGINT UNSIGNED,
+  IN p_ride_id     BIGINT UNSIGNED,
+  IN p_driver_id   BIGINT UNSIGNED,
+  IN p_expires_sec INT
+)
+BEGIN
+  DECLARE v_origin_lat DOUBLE;
+  DECLARE v_origin_lng DOUBLE;
+  DECLARE v_ride_status VARCHAR(20);
+  DECLARE v_vehicle_id BIGINT UNSIGNED;
+  DECLARE v_driver_status VARCHAR(10);
+  DECLARE v_distance_m INT;
+  DECLARE v_eta_seconds INT;
+  DECLARE v_round_no INT;
+  DECLARE v_existing BIGINT UNSIGNED;
+
+  /* 0) ¿Ya hay una 'offered' viva para este driver/ride? -> RENOVAR (sin crear otra fila) */
+  SELECT id INTO v_existing
+  FROM ride_offers
+  WHERE tenant_id = p_tenant_id
+    AND ride_id   = p_ride_id
+    AND driver_id = p_driver_id
+    AND status    = 'offered'
+  ORDER BY id DESC
+  LIMIT 1;
+
+  IF v_existing IS NOT NULL THEN
+    UPDATE ride_offers
+       SET sent_at    = NOW(),
+           expires_at = DATE_ADD(NOW(), INTERVAL COALESCE(p_expires_sec,30) SECOND)
+     WHERE id = v_existing;
+
+    /* fija el LAST_INSERT_ID de la sesión al id renovado (sin devolver resultset) */
+    SET v_round_no = LAST_INSERT_ID(v_existing);
+  ELSE
+    /* 1) Ride ofertable y sin driver */
+    SELECT r.origin_lat, r.origin_lng, r.status
+      INTO v_origin_lat, v_origin_lng, v_ride_status
+    FROM rides r
+    WHERE r.id = p_ride_id
+      AND r.tenant_id = p_tenant_id
+      AND r.driver_id IS NULL
+      AND r.status IN ('requested','offered')
+    LIMIT 1;
+
+    IF v_origin_lat IS NULL OR v_origin_lng IS NULL THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride no ofertable (tenant/estado/driver_id/origen)';
+    END IF;
+
+    /* 2) Driver válido e idle con coords */
+    SELECT d.status
+      INTO v_driver_status
+    FROM drivers d
+    WHERE d.id = p_driver_id
+      AND d.tenant_id = p_tenant_id
+      AND d.last_lat IS NOT NULL
+      AND d.last_lng IS NOT NULL
+    LIMIT 1;
+
+    IF v_driver_status IS NULL THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Driver inexistente o sin coords';
+    END IF;
+    IF v_driver_status <> 'idle' THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Driver no está idle';
+    END IF;
+
+    /* 3) Shift abierto y vehículo */
+    SELECT s.vehicle_id INTO v_vehicle_id
+    FROM driver_shifts s
+    WHERE s.driver_id = p_driver_id
+      AND s.tenant_id = p_tenant_id
+      AND s.status = 'abierto'
+    ORDER BY s.id DESC
+    LIMIT 1;
+
+    IF v_vehicle_id IS NULL THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Driver sin shift abierto/vehículo';
+    END IF;
+
+    /* 4) Round, dist/ETA driver->origen (aprox por Haversine) */
+    SELECT COALESCE(MAX(ro.round_no),0) + 1
+      INTO v_round_no
+    FROM ride_offers ro
+    WHERE ro.ride_id = p_ride_id;
+
+    SET v_distance_m = ROUND(
+      haversine_km(
+        v_origin_lat, v_origin_lng,
+        (SELECT d.last_lat FROM drivers d WHERE d.id=p_driver_id LIMIT 1),
+        (SELECT d.last_lng FROM drivers d WHERE d.id=p_driver_id LIMIT 1)
+      ) * 1000
+    );
+    SET v_eta_seconds = CASE WHEN v_distance_m IS NULL THEN NULL ELSE ROUND(v_distance_m / 6.94) END;
+
+    /* 5) Insertar oferta */
+    INSERT INTO ride_offers
+      (tenant_id, ride_id, driver_id, vehicle_id,
+       sent_at, responded_at, status, response,
+       eta_seconds, expires_at, distance_m, round_no, created_at)
+    VALUES
+      (p_tenant_id, p_ride_id, p_driver_id, v_vehicle_id,
+       NOW(), NULL, 'offered', NULL,
+       v_eta_seconds, DATE_ADD(NOW(), INTERVAL COALESCE(p_expires_sec,30) SECOND),
+       v_distance_m, v_round_no, NOW());
+    /* LAST_INSERT_ID() quedará con el id insertado automáticamente */
+  END IF;
+
+  /* 6) Si el ride estaba requested -> offered (no rompe si ya estaba offered) */
+  IF v_ride_status = 'requested' THEN
+    UPDATE rides
+       SET status = 'offered'
+     WHERE id = p_ride_id
+       AND status = 'requested'
+       AND tenant_id = p_tenant_id;
+  END IF;
+
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_expire_offers_v2`(
+  IN p_tenant_id BIGINT UNSIGNED
+)
+BEGIN
+  UPDATE ride_offers
+     SET status='expired',
+         response=COALESCE(response, 'expired'),
+         responded_at=COALESCE(responded_at, NOW())
+   WHERE tenant_id=p_tenant_id
+     AND status='offered'
+     AND expires_at IS NOT NULL
+     AND expires_at < NOW();
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_nearby_drivers`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_origin_lat DOUBLE,
+  IN p_origin_lng DOUBLE,
+  IN p_radius_km DOUBLE
+)
+BEGIN
+  /*
+    - drivers.status: 'offline'|'idle'|'busy'
+    - driver_shifts.status: 'abierto'|'cerrado' (tu esquema)
+    - El vehículo activo viene de driver_shifts.vehicle_id, no de drivers
+  */
+  SELECT
+    d.id          AS driver_id,
+    s.vehicle_id  AS vehicle_id,
+    d.status,
+    d.last_lat,
+    d.last_lng,
+    ROUND(haversine_km(p_origin_lat, p_origin_lng, d.last_lat, d.last_lng), 3) AS distance_km
+  FROM drivers d
+  INNER JOIN driver_shifts s
+          ON s.driver_id = d.id
+         AND s.tenant_id = p_tenant_id
+         AND s.status = 'abierto'         -- según tu dump
+  WHERE d.tenant_id = p_tenant_id
+    AND d.status = 'idle'
+    AND d.last_lat IS NOT NULL
+    AND d.last_lng IS NOT NULL
+    AND haversine_km(p_origin_lat, p_origin_lng, d.last_lat, d.last_lng) <= p_radius_km
+  ORDER BY distance_km ASC
+  LIMIT 100;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_offer_wave_base_prio_v1`(
+  IN p_tenant_id        BIGINT UNSIGNED,
+  IN p_ride_id          BIGINT UNSIGNED,
+  IN p_stand_radius_km  DOUBLE,
+  IN p_radius_km        DOUBLE,
+  IN p_limit_n          INT,
+  IN p_expires_sec      INT
+)
+BEGIN
+  DECLARE v_lat DOUBLE; DECLARE v_lng DOUBLE;
+  DECLARE v_stand_id BIGINT UNSIGNED;
+  DECLARE v_count INT DEFAULT 0;
+  DECLARE v_driver_id BIGINT UNSIGNED;
+
+  SELECT origin_lat, origin_lng INTO v_lat, v_lng
+  FROM rides
+  WHERE id=p_ride_id AND tenant_id=p_tenant_id AND driver_id IS NULL
+    AND status IN ('requested','offered')
+  LIMIT 1;
+
+  IF v_lat IS NULL OR v_lng IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Ride no ofertable (tenant/estado/origen)';
+  END IF;
+
+  SELECT ts.id INTO v_stand_id
+  FROM taxi_stands ts
+  WHERE ts.tenant_id=p_tenant_id AND ts.activo=1
+    AND haversine_km(ts.latitud, ts.longitud, v_lat, v_lng) <= p_stand_radius_km
+  ORDER BY haversine_km(ts.latitud, ts.longitud, v_lat, v_lng) ASC, ts.id ASC
+  LIMIT 1;
+
+  DROP TEMPORARY TABLE IF EXISTS tmp_wave_candidates;
+  CREATE TEMPORARY TABLE tmp_wave_candidates (
+    driver_id    BIGINT UNSIGNED PRIMARY KEY,
+    priority_grp TINYINT,
+    order_key    DOUBLE,
+    distance_km  DOUBLE
+  ) ENGINE=MEMORY;
+
+  IF v_stand_id IS NOT NULL THEN
+    INSERT IGNORE INTO tmp_wave_candidates (driver_id, priority_grp, order_key, distance_km)
+    SELECT q.driver_id, 1, q.position,
+           haversine_km(d.last_lat, d.last_lng, v_lat, v_lng)
+    FROM taxi_stand_queue q
+    JOIN drivers d ON d.id=q.driver_id AND d.tenant_id=p_tenant_id AND d.status='idle'
+    JOIN driver_shifts s ON s.driver_id=q.driver_id AND s.tenant_id=p_tenant_id
+                        AND s.status='abierto' AND s.vehicle_id IS NOT NULL
+    WHERE q.tenant_id=p_tenant_id AND q.stand_id=v_stand_id AND q.status='en_cola'
+      AND NOT EXISTS (
+        SELECT 1 FROM ride_offers ro
+        WHERE ro.tenant_id=p_tenant_id AND ro.ride_id=p_ride_id
+          AND ro.driver_id=q.driver_id
+          AND ro.status IN ('offered','accepted')
+      )
+    ORDER BY q.position ASC
+    LIMIT p_limit_n;
+  END IF;
+
+  INSERT IGNORE INTO tmp_wave_candidates (driver_id, priority_grp, order_key, distance_km)
+  SELECT d.id, 2,
+         haversine_km(d.last_lat, d.last_lng, v_lat, v_lng),
+         haversine_km(d.last_lat, d.last_lng, v_lat, v_lng)
+  FROM drivers d
+  JOIN driver_shifts s ON s.driver_id=d.id AND s.tenant_id=p_tenant_id
+                      AND s.status='abierto' AND s.vehicle_id IS NOT NULL
+  WHERE d.tenant_id=p_tenant_id AND d.status='idle'
+    AND haversine_km(d.last_lat, d.last_lng, v_lat, v_lng) <= p_radius_km
+    AND NOT EXISTS (SELECT 1 FROM tmp_wave_candidates t WHERE t.driver_id=d.id)
+    AND NOT EXISTS (
+      SELECT 1 FROM ride_offers ro
+      WHERE ro.tenant_id=p_tenant_id AND ro.ride_id=p_ride_id
+        AND ro.driver_id=d.id
+        AND ro.status IN ('offered','accepted')
+    )
+  ORDER BY order_key ASC
+  LIMIT p_limit_n;
+
+  SET v_count = 0;
+  loop_emit: LOOP
+    SELECT t.driver_id INTO v_driver_id
+    FROM tmp_wave_candidates t
+    ORDER BY t.priority_grp ASC, t.order_key ASC
+    LIMIT 1 OFFSET v_count;
+
+    IF v_driver_id IS NULL THEN LEAVE loop_emit; END IF;
+
+    CALL sp_create_offer_v2(p_tenant_id, p_ride_id, v_driver_id, p_expires_sec);
+
+    SET v_count = v_count + 1;
+    IF v_count >= p_limit_n THEN LEAVE loop_emit; END IF;
+  END LOOP;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_offer_wave_base_prio_v2`(
+  IN p_tenant_id   BIGINT UNSIGNED,
+  IN p_ride_id     BIGINT UNSIGNED,
+  IN p_limit_n     INT,
+  IN p_expires_sec INT
+)
+BEGIN
+  DECLARE v_lat DOUBLE; DECLARE v_lng DOUBLE;
+  DECLARE v_stand_id BIGINT UNSIGNED;
+  DECLARE v_count INT DEFAULT 0;
+  DECLARE v_driver_id BIGINT UNSIGNED;
+  DECLARE v_stand_radius_km DOUBLE;
+  DECLARE v_radius_km DOUBLE;
+
+  /* radios desde columnas con fallback */
+  SELECT COALESCE(ds.stand_radius_km, 3.00),
+         COALESCE(ds.auto_dispatch_radius_km, 5.00)
+  INTO v_stand_radius_km, v_radius_km
+  FROM dispatch_settings ds
+  WHERE ds.tenant_id=p_tenant_id;
+
+  /* ride ofertable */
+  SELECT origin_lat, origin_lng INTO v_lat, v_lng
+  FROM rides
+  WHERE id=p_ride_id AND tenant_id=p_tenant_id AND driver_id IS NULL
+    AND status IN ('requested','offered')
+  LIMIT 1;
+
+  IF v_lat IS NULL OR v_lng IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Ride no ofertable (tenant/estado/origen)';
+  END IF;
+
+  /* base que cubre el origen */
+  SELECT ts.id INTO v_stand_id
+  FROM taxi_stands ts
+  WHERE ts.tenant_id=p_tenant_id AND ts.activo=1
+    AND haversine_km(ts.latitud, ts.longitud, v_lat, v_lng) <= v_stand_radius_km
+  ORDER BY haversine_km(ts.latitud, ts.longitud, v_lat, v_lng) ASC, ts.id ASC
+  LIMIT 1;
+
+  /* candidatos */
+  DROP TEMPORARY TABLE IF EXISTS tmp_wave_candidates;
+  CREATE TEMPORARY TABLE tmp_wave_candidates (
+    driver_id     BIGINT UNSIGNED PRIMARY KEY,
+    priority_grp  TINYINT,    -- 1 = en cola ; 2 = fuera de base
+    queue_pos     INT NULL,   -- posición en cola (NULL si fuera de base)
+    distance_km   DOUBLE NOT NULL
+  ) ENGINE=MEMORY;
+
+  /* en cola (si hay base) */
+  IF v_stand_id IS NOT NULL THEN
+    INSERT IGNORE INTO tmp_wave_candidates (driver_id, priority_grp, queue_pos, distance_km)
+    SELECT q.driver_id, 1 AS priority_grp, q.position AS queue_pos,
+           haversine_km(d.last_lat, d.last_lng, v_lat, v_lng) AS distance_km
+    FROM taxi_stand_queue q
+    JOIN drivers d ON d.id=q.driver_id AND d.tenant_id=p_tenant_id AND d.status='idle'
+    JOIN driver_shifts s ON s.driver_id=q.driver_id AND s.tenant_id=p_tenant_id
+                        AND s.status='abierto' AND s.vehicle_id IS NOT NULL
+    WHERE q.tenant_id=p_tenant_id
+      AND q.stand_id=v_stand_id
+      AND q.status='en_cola'
+      AND NOT EXISTS (
+        SELECT 1 FROM ride_offers ro
+        WHERE ro.tenant_id=p_tenant_id AND ro.ride_id=p_ride_id
+          AND ro.driver_id=q.driver_id
+          AND ro.status IN ('offered','accepted')
+      )
+    ORDER BY q.position ASC
+    LIMIT p_limit_n;
+  END IF;
+
+  /* fuera de base */
+  INSERT IGNORE INTO tmp_wave_candidates (driver_id, priority_grp, queue_pos, distance_km)
+  SELECT d.id, 2 AS priority_grp, NULL AS queue_pos,
+         haversine_km(d.last_lat, d.last_lng, v_lat, v_lng) AS distance_km
+  FROM drivers d
+  JOIN driver_shifts s ON s.driver_id=d.id AND s.tenant_id=p_tenant_id
+                      AND s.status='abierto' AND s.vehicle_id IS NOT NULL
+  WHERE d.tenant_id=p_tenant_id
+    AND d.status='idle'
+    AND haversine_km(d.last_lat, d.last_lng, v_lat, v_lng) <= v_radius_km
+    AND NOT EXISTS (SELECT 1 FROM tmp_wave_candidates t WHERE t.driver_id=d.id)
+    AND NOT EXISTS (
+      SELECT 1 FROM ride_offers ro
+      WHERE ro.tenant_id=p_tenant_id AND ro.ride_id=p_ride_id
+        AND ro.driver_id=d.id
+        AND ro.status IN ('offered','accepted')
+    )
+  ORDER BY distance_km ASC
+  LIMIT p_limit_n;
+
+  /* emitir ofertas: cola primero (por queue_pos), luego calle (por distancia) */
+  SET v_count = 0;
+  wave_loop: LOOP
+    SELECT t.driver_id
+      INTO v_driver_id
+    FROM tmp_wave_candidates t
+    ORDER BY
+      t.priority_grp ASC,
+      CASE WHEN t.queue_pos IS NULL THEN 999999 ELSE t.queue_pos END ASC,
+      t.distance_km ASC
+    LIMIT 1 OFFSET v_count;
+
+    IF v_driver_id IS NULL THEN
+      LEAVE wave_loop;
+    END IF;
+
+    CALL sp_create_offer_v2(p_tenant_id, p_ride_id, v_driver_id, p_expires_sec);
+
+    SET v_count = v_count + 1;
+    IF v_count >= p_limit_n THEN
+      LEAVE wave_loop;
+    END IF;
+  END LOOP;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_offer_wave_v1`(
+  IN p_tenant_id   BIGINT UNSIGNED,
+  IN p_ride_id     BIGINT UNSIGNED,
+  IN p_radius_km   DOUBLE,
+  IN p_limit_n     INT,
+  IN p_expires_sec INT
+)
+BEGIN
+  /* --- Declaraciones deben ir primero --- */
+  DECLARE v_origin_lat DOUBLE;
+  DECLARE v_origin_lng DOUBLE;
+  DECLARE v_driver_id  BIGINT UNSIGNED;
+  DECLARE done INT DEFAULT 0;
+
+  /* Cursor: top N conductores por distancia (idle + shift abierto) */
+  DECLARE cur_drivers CURSOR FOR
+    SELECT d.id
+    FROM drivers d
+    JOIN driver_shifts s
+      ON s.driver_id = d.id
+     AND s.tenant_id = p_tenant_id
+     AND s.status = 'abierto'
+    WHERE d.tenant_id = p_tenant_id
+      AND d.status = 'idle'
+      AND d.last_lat IS NOT NULL
+      AND d.last_lng IS NOT NULL
+      AND haversine_km(v_origin_lat, v_origin_lng, d.last_lat, d.last_lng) <= p_radius_km
+    ORDER BY haversine_km(v_origin_lat, v_origin_lng, d.last_lat, d.last_lng) ASC
+    LIMIT p_limit_n;
+
+  /* Handler de fin de cursor */
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+  /* --- Validación de ride ofertable y sin driver --- */
+  SELECT r.origin_lat, r.origin_lng
+    INTO v_origin_lat, v_origin_lng
+  FROM rides r
+  WHERE r.id = p_ride_id
+    AND r.tenant_id = p_tenant_id
+    AND r.driver_id IS NULL
+    AND r.status IN ('requested','offered')
+  LIMIT 1;
+
+  IF v_origin_lat IS NULL OR v_origin_lng IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride no ofertable (tenant/estado/driver_id/origen)';
+  END IF;
+
+  /* --- Ejecutar cursor y crear ofertas si no existen vivas --- */
+  OPEN cur_drivers;
+  read_loop: LOOP
+    FETCH cur_drivers INTO v_driver_id;
+    IF done = 1 THEN
+      LEAVE read_loop;
+    END IF;
+
+    /* Evitar duplicados para el mismo driver en este ride */
+    IF NOT EXISTS (
+      SELECT 1
+      FROM ride_offers ro
+      WHERE ro.tenant_id = p_tenant_id
+        AND ro.ride_id   = p_ride_id
+        AND ro.driver_id = v_driver_id
+        AND ro.status    IN ('offered','accepted')
+      LIMIT 1
+    ) THEN
+      CALL sp_create_offer_v2(p_tenant_id, p_ride_id, v_driver_id, p_expires_sec);
+    END IF;
+  END LOOP;
+  CLOSE cur_drivers;
+
+  /* Sin SELECT final */
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_offer_wave_v2`(
+  IN p_tenant_id      BIGINT UNSIGNED,
+  IN p_ride_id        BIGINT UNSIGNED,
+  IN p_driver_ids_csv TEXT,      -- ej: '1,5,9'
+  IN p_expires_sec    INT        -- ej: 30
+)
+BEGIN
+  DECLARE v_origin_lat DOUBLE;
+  DECLARE v_origin_lng DOUBLE;
+  DECLARE v_token      VARCHAR(50);
+  DECLARE v_csv        TEXT;
+  DECLARE v_pos        INT;
+  DECLARE v_driver_id  BIGINT UNSIGNED;
+
+  /* Ride ofertable y sin driver */
+  SELECT r.origin_lat, r.origin_lng
+    INTO v_origin_lat, v_origin_lng
+  FROM rides r
+  WHERE r.id = p_ride_id
+    AND r.tenant_id = p_tenant_id
+    AND r.driver_id IS NULL
+    AND r.status IN ('requested','offered')
+  LIMIT 1;
+
+  IF v_origin_lat IS NULL OR v_origin_lng IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride no ofertable (tenant/estado/driver_id/origen)';
+  END IF;
+
+  /* Recorrer CSV (sin tablas temporales) */
+  SET v_csv = TRIM(p_driver_ids_csv);
+
+  WHILE v_csv IS NOT NULL AND v_csv <> '' DO
+    SET v_pos = INSTR(v_csv, ',');
+    IF v_pos = 0 THEN
+      SET v_token = TRIM(v_csv);
+      SET v_csv   = '';
+    ELSE
+      SET v_token = TRIM(SUBSTRING(v_csv, 1, v_pos - 1));
+      SET v_csv   = TRIM(SUBSTRING(v_csv, v_pos + 1));
+    END IF;
+
+    IF v_token <> '' THEN
+      SET v_driver_id = CAST(v_token AS UNSIGNED);
+
+      /* Evitar duplicados vivos para este driver/ride */
+      IF NOT EXISTS (
+        SELECT 1 FROM ride_offers ro
+        WHERE ro.tenant_id = p_tenant_id
+          AND ro.ride_id   = p_ride_id
+          AND ro.driver_id = v_driver_id
+          AND ro.status IN ('offered','accepted')
+        LIMIT 1
+      ) THEN
+        /* Driver válido: idle + coords + shift abierto en tenant */
+        IF EXISTS (
+          SELECT 1
+          FROM drivers d
+          JOIN driver_shifts s
+            ON s.driver_id = d.id
+           AND s.tenant_id = p_tenant_id
+           AND s.status = 'abierto'
+          WHERE d.id = v_driver_id
+            AND d.tenant_id = p_tenant_id
+            AND d.status = 'idle'
+            AND d.last_lat IS NOT NULL
+            AND d.last_lng IS NOT NULL
+          LIMIT 1
+        ) THEN
+          CALL sp_create_offer_v2(p_tenant_id, p_ride_id, v_driver_id, p_expires_sec);
+        END IF;
+      END IF;
+
+    END IF;
+  END WHILE;
+
+  /* sin SELECT final */
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_queue_join_stand_v1`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_stand_id  BIGINT UNSIGNED,
+  IN p_driver_id BIGINT UNSIGNED
+)
+BEGIN
+  DECLARE v_maxpos INT;
+
+  /* normaliza si ya estaba en cola: lo deja en_cola al final */
+  UPDATE taxi_stand_queue
+     SET status='salio'
+   WHERE tenant_id=p_tenant_id
+     AND stand_id=p_stand_id
+     AND driver_id=p_driver_id
+     AND status='en_cola';
+
+  SELECT COALESCE(MAX(position),0) INTO v_maxpos
+  FROM taxi_stand_queue
+  WHERE tenant_id=p_tenant_id AND stand_id=p_stand_id AND status='en_cola';
+
+  INSERT INTO taxi_stand_queue (tenant_id, stand_id, driver_id, joined_at, position, status)
+  VALUES (p_tenant_id, p_stand_id, p_driver_id, NOW(), v_maxpos+1, 'en_cola');
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_queue_leave_stand_v1`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_stand_id  BIGINT UNSIGNED,
+  IN p_driver_id BIGINT UNSIGNED,
+  IN p_status_to VARCHAR(16)  -- 'salio' | 'asignado'
+)
+BEGIN
+  DECLARE v_pos INT;
+
+  SELECT position INTO v_pos
+  FROM taxi_stand_queue
+  WHERE tenant_id=p_tenant_id AND stand_id=p_stand_id
+    AND driver_id=p_driver_id AND status='en_cola'
+  ORDER BY id DESC LIMIT 1;
+
+  IF v_pos IS NOT NULL THEN
+    UPDATE taxi_stand_queue
+       SET status = CASE WHEN p_status_to IN ('salio','asignado') THEN p_status_to ELSE 'salio' END
+     WHERE tenant_id=p_tenant_id AND stand_id=p_stand_id
+       AND driver_id=p_driver_id AND status='en_cola';
+
+    UPDATE taxi_stand_queue
+       SET position = position - 1
+     WHERE tenant_id=p_tenant_id AND stand_id=p_stand_id
+       AND status='en_cola'
+       AND position > v_pos;
+  END IF;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_queue_on_accept_v1`(
+  IN p_tenant_id        BIGINT UNSIGNED,
+  IN p_ride_id          BIGINT UNSIGNED,
+  IN p_driver_id        BIGINT UNSIGNED,
+  IN p_stand_radius_km  DOUBLE  -- ej: 3.0
+)
+BEGIN
+  DECLARE v_lat DOUBLE; DECLARE v_lng DOUBLE; DECLARE v_stand_id BIGINT UNSIGNED;
+
+  SELECT origin_lat, origin_lng INTO v_lat, v_lng
+  FROM rides WHERE id=p_ride_id AND tenant_id=p_tenant_id LIMIT 1;
+
+  IF v_lat IS NULL OR v_lng IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Ride inválido';
+  END IF;
+
+  SELECT ts.id INTO v_stand_id
+  FROM taxi_stands ts
+  WHERE ts.tenant_id=p_tenant_id AND ts.activo=1
+    AND haversine_km(ts.latitud, ts.longitud, v_lat, v_lng) <= p_stand_radius_km
+  ORDER BY haversine_km(ts.latitud, ts.longitud, v_lat, v_lng) ASC, ts.id ASC
+  LIMIT 1;
+
+  IF v_stand_id IS NOT NULL THEN
+    CALL sp_queue_leave_stand_v1(p_tenant_id, v_stand_id, p_driver_id, 'asignado');
+  END IF;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_queue_rebalance_v1`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_stand_id  BIGINT UNSIGNED
+)
+BEGIN
+  DROP TEMPORARY TABLE IF EXISTS tmp_reb;
+  CREATE TEMPORARY TABLE tmp_reb (driver_id BIGINT UNSIGNED PRIMARY KEY, new_pos INT) ENGINE=MEMORY;
+
+  INSERT INTO tmp_reb (driver_id, new_pos)
+  SELECT driver_id, ROW_NUMBER() OVER (ORDER BY joined_at ASC)
+  FROM taxi_stand_queue
+  WHERE tenant_id=p_tenant_id AND stand_id=p_stand_id AND status='en_cola';
+
+  UPDATE taxi_stand_queue q
+  JOIN tmp_reb r ON r.driver_id=q.driver_id
+  SET q.position=r.new_pos
+  WHERE q.tenant_id=p_tenant_id AND q.stand_id=p_stand_id AND q.status='en_cola';
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_quote_ride_v1`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_ride_id   BIGINT UNSIGNED,
+  IN p_when_ts   DATETIME       -- timestamp de referencia; NULL=NOW() (para detectar noche)
+)
+BEGIN
+  DECLARE v_dist_m INT;
+  DECLARE v_dur_s  INT;
+  DECLARE v_km     DOUBLE;
+  DECLARE v_min    DOUBLE;
+
+  DECLARE v_base DECIMAL(10,2);
+  DECLARE v_per_km DECIMAL(10,4);
+  DECLARE v_per_min DECIMAL(10,4);
+  DECLARE v_night_multiplier DECIMAL(8,4);
+  DECLARE v_round_to INT;
+  DECLARE v_min_total DECIMAL(10,2);
+
+  DECLARE v_subtotal DECIMAL(12,4);
+  DECLARE v_mult DECIMAL(8,4);
+  DECLARE v_quoted DECIMAL(10,2);
+  DECLARE v_when DATETIME;
+
+  /* 0) Normalizar fecha */
+  SET v_when = COALESCE(p_when_ts, NOW());
+
+  /* 1) Ride válido + métricas presentes */
+  SELECT r.distance_m, r.duration_s
+    INTO v_dist_m, v_dur_s
+  FROM rides r
+  WHERE r.id = p_ride_id
+    AND r.tenant_id = p_tenant_id
+  LIMIT 1;
+
+  IF v_dist_m IS NULL OR v_dur_s IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride sin distancia/tiempo: fija ruta antes de cotizar';
+  END IF;
+
+  /* 2) Leer política más reciente del tenant */
+  SELECT base_fee, per_km, per_min, night_multiplier, round_to, min_total
+    INTO v_base, v_per_km, v_per_min, v_night_multiplier, v_round_to, v_min_total
+  FROM tenant_fare_policies
+  WHERE tenant_id = p_tenant_id
+  ORDER BY id DESC
+  LIMIT 1;
+
+  IF v_base IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No hay política de tarifa activa para el tenant';
+  END IF;
+
+  /* 3) Calcular */
+  SET v_km  = v_dist_m / 1000.0;
+  SET v_min = v_dur_s / 60.0;
+
+  SET v_subtotal = v_base + (v_km * v_per_km) + (v_min * v_per_min);
+  SET v_subtotal = GREATEST(v_subtotal, v_min_total);
+
+  /* Noche (22:00–05:59); ajusta si usas otra ventana */
+  SET v_mult = CASE WHEN (HOUR(v_when) >= 22 OR HOUR(v_when) < 6) THEN COALESCE(v_night_multiplier, 1.0) ELSE 1.0 END;
+
+  /* Redondeo a decimales (default 2 si viniera NULL) */
+  SET v_quoted = ROUND(v_subtotal * v_mult, COALESCE(v_round_to, 2));
+
+  /* 4) Persistir en rides: quoted_amount + snapshot JSON */
+  UPDATE rides
+     SET quoted_amount = v_quoted,
+         fare_snapshot = JSON_OBJECT(
+           'calc_at',        DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s'),
+           'policy',         JSON_OBJECT(
+                               'base_fee', v_base,
+                               'per_km', v_per_km,
+                               'per_min', v_per_min,
+                               'night_multiplier', v_night_multiplier,
+                               'round_to', v_round_to,
+                               'min_total', v_min_total
+                             ),
+           'input',          JSON_OBJECT(
+                               'distance_m', v_dist_m,
+                               'duration_s', v_dur_s,
+                               'when', DATE_FORMAT(v_when, '%Y-%m-%d %H:%i:%s')
+                             ),
+           'calc',           JSON_OBJECT(
+                               'km', v_km,
+                               'min', v_min,
+                               'subtotal', v_subtotal,
+                               'multiplier', v_mult
+                             ),
+           'quoted_amount',  v_quoted
+         )
+   WHERE id = p_ride_id
+     AND tenant_id = p_tenant_id;
+
+  /* SIN SELECT final */
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_quote_ride_v2`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_ride_id   BIGINT UNSIGNED,
+  IN p_when_ts   DATETIME   -- NULL = NOW()
+)
+BEGIN
+  DECLARE v_dist_m INT; DECLARE v_dur_s INT;
+  DECLARE v_km DOUBLE; DECLARE v_min DOUBLE;
+  DECLARE v_base DECIMAL(10,2);
+  DECLARE v_per_km DECIMAL(10,4); DECLARE v_per_min DECIMAL(10,4);
+  DECLARE v_night_mult DECIMAL(8,4);
+  DECLARE v_round_mode ENUM('decimals','step');
+  DECLARE v_round_decimals TINYINT; DECLARE v_round_step DECIMAL(10,2);
+  DECLARE v_min_total DECIMAL(10,2);
+  DECLARE v_subtotal DECIMAL(12,4); DECLARE v_mult DECIMAL(8,4);
+  DECLARE v_quoted DECIMAL(12,2);
+  DECLARE v_when DATETIME;
+  DECLARE v_nstart TINYINT; DECLARE v_nend TINYINT;
+  DECLARE v_partial BOOL DEFAULT FALSE;
+
+  SET v_when = COALESCE(p_when_ts, NOW());
+
+  /* 1) Ride */
+  SELECT distance_m, duration_s INTO v_dist_m, v_dur_s
+  FROM rides WHERE id=p_ride_id AND tenant_id=p_tenant_id LIMIT 1;
+  IF v_dist_m IS NULL AND v_dur_s IS NULL THEN
+    SET v_partial = TRUE; -- cotizaremos base/min_total
+  END IF;
+
+  /* 2) Política más reciente */
+  SELECT base_fee, per_km, per_min, night_multiplier,
+         COALESCE(night_start_hour,22), COALESCE(night_end_hour,6),
+         COALESCE(round_mode,'step'), COALESCE(round_decimals,0), COALESCE(round_step,1.00),
+         min_total
+    INTO v_base, v_per_km, v_per_min, v_night_mult,
+         v_nstart, v_nend,
+         v_round_mode, v_round_decimals, v_round_step,
+         v_min_total
+  FROM tenant_fare_policies
+  WHERE tenant_id = p_tenant_id
+  ORDER BY id DESC LIMIT 1;
+
+  IF v_base IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No hay política de tarifa activa para el tenant';
+  END IF;
+
+  /* 3) Calcular */
+  IF v_partial = FALSE THEN
+    SET v_km  = v_dist_m / 1000.0;
+    SET v_min = v_dur_s / 60.0;
+    SET v_subtotal = v_base + (v_km * v_per_km) + (v_min * v_per_min);
+  ELSE
+    SET v_km  = NULL; SET v_min = NULL;
+    SET v_subtotal = v_base;  -- sin destino: cobramos base/min
+  END IF;
+
+  SET v_subtotal = GREATEST(v_subtotal, v_min_total);
+
+  /* Ventana nocturna [start..23] ∪ [0..end-1] */
+  SET v_mult =
+    CASE
+      WHEN (v_nstart IS NOT NULL AND v_nend IS NOT NULL) AND
+           (HOUR(v_when) >= v_nstart OR HOUR(v_when) < v_nend)
+      THEN COALESCE(v_night_mult,1.0)
+      ELSE 1.0
+    END;
+
+  /* Redondeo */
+  IF v_round_mode = 'decimals' THEN
+    SET v_quoted = ROUND(v_subtotal * v_mult, COALESCE(v_round_decimals,0));
+  ELSE
+    SET v_quoted = round_to_step(v_subtotal * v_mult, COALESCE(v_round_step,1.00));
+  END IF;
+
+  /* 4) Persistir */
+  UPDATE rides
+     SET quoted_amount = v_quoted,
+         fare_snapshot = JSON_OBJECT(
+           'calc_at', DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s'),
+           'policy', JSON_OBJECT(
+             'base_fee', v_base, 'per_km', v_per_km, 'per_min', v_per_min,
+             'night_multiplier', v_night_mult,
+             'night_start_hour', v_nstart, 'night_end_hour', v_nend,
+             'round_mode', v_round_mode, 'round_decimals', v_round_decimals, 'round_step', v_round_step,
+             'min_total', v_min_total
+           ),
+           'input', JSON_OBJECT(
+             'distance_m', v_dist_m, 'duration_s', v_dur_s,
+             'when', DATE_FORMAT(v_when, '%Y-%m-%d %H:%i:%s')
+           ),
+           'calc', JSON_OBJECT(
+             'km', v_km, 'min', v_min,
+             'subtotal', v_subtotal, 'multiplier', v_mult,
+             'partial', v_partial
+           ),
+           'quoted_amount', v_quoted
+         )
+   WHERE id=p_ride_id AND tenant_id=p_tenant_id;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_reject_offer_v2`(
+  IN p_offer_id BIGINT UNSIGNED
+)
+BEGIN
+  DECLARE v_ride_id BIGINT UNSIGNED;
+  DECLARE v_tenant_id BIGINT UNSIGNED;
+  DECLARE v_status VARCHAR(20);
+  DECLARE v_expires DATETIME;
+
+  -- Cargar oferta
+  SELECT ro.ride_id, ro.tenant_id, ro.status, ro.expires_at
+    INTO v_ride_id, v_tenant_id, v_status, v_expires
+  FROM ride_offers ro
+  WHERE ro.id = p_offer_id
+  LIMIT 1;
+
+  IF v_ride_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Oferta inexistente';
+  END IF;
+
+  IF v_status <> 'offered' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Solo ofertas en estado offered pueden rechazarse';
+  END IF;
+
+  IF v_expires IS NOT NULL AND v_expires < NOW() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La oferta ya está expirada';
+  END IF;
+
+  -- Marcar rechazada
+  UPDATE ride_offers
+     SET responded_at = NOW(),
+         response    = 'rejected',
+         status      = 'rejected'
+   WHERE id = p_offer_id;
+
+  -- SIN SELECT final
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_release_ride_v1`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_ride_id   BIGINT UNSIGNED
+)
+BEGIN
+  DECLARE v_offer_id BIGINT UNSIGNED; DECLARE v_driver_id BIGINT UNSIGNED;
+  DECLARE v_prev_status VARCHAR(20); DECLARE v_economico VARCHAR(64); DECLARE v_plate VARCHAR(64);
+
+  SELECT status INTO v_prev_status
+  FROM rides WHERE id=p_ride_id AND tenant_id=p_tenant_id AND driver_id IS NOT NULL LIMIT 1;
+
+  IF v_prev_status IS NULL OR v_prev_status <> 'accepted' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Ride no liberable (tenant/driver/status)';
+  END IF;
+
+  SELECT ro.id, ro.driver_id INTO v_offer_id, v_driver_id
+  FROM ride_offers ro WHERE ro.tenant_id=p_tenant_id AND ro.ride_id=p_ride_id AND ro.status='accepted'
+  ORDER BY ro.id DESC LIMIT 1;
+
+  IF v_offer_id IS NOT NULL THEN
+    UPDATE ride_offers SET responded_at=NOW(), response='released', status='released'
+     WHERE id=v_offer_id AND tenant_id=p_tenant_id;
+  END IF;
+
+  UPDATE ride_offers
+     SET responded_at=COALESCE(responded_at,NOW()),
+         response=COALESCE(response,'expired'),
+         status=CASE WHEN status='offered' THEN 'expired' ELSE status END
+   WHERE tenant_id=p_tenant_id AND ride_id=p_ride_id AND status='offered';
+
+  SELECT v.economico, v.plate INTO v_economico, v_plate
+  FROM vehicles v JOIN rides r ON r.vehicle_id=v.id
+  WHERE r.id=p_ride_id AND r.tenant_id=p_tenant_id LIMIT 1;
+
+  UPDATE rides SET driver_id=NULL, vehicle_id=NULL, status='requested'
+   WHERE id=p_ride_id AND tenant_id=p_tenant_id AND status='accepted';
+
+  IF ROW_COUNT()=0 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='No se pudo liberar (carrera de estado)'; END IF;
+
+  INSERT INTO ride_status_history(tenant_id, ride_id, prev_status, new_status, meta, created_at)
+  VALUES (p_tenant_id, p_ride_id, v_prev_status, 'requested',
+          JSON_OBJECT('released_offer_id', v_offer_id, 'prev_driver_id', v_driver_id,
+                      'economico', v_economico, 'plate', v_plate),
+          NOW());
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_set_route_v1`(
+  IN p_tenant_id   BIGINT UNSIGNED,
+  IN p_ride_id     BIGINT UNSIGNED,
+  IN p_distance_m  INT,
+  IN p_duration_s  INT,
+  IN p_polyline    TEXT
+)
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM rides WHERE id=p_ride_id AND tenant_id=p_tenant_id LIMIT 1) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride inexistente o de otro tenant';
+  END IF;
+
+  UPDATE rides
+     SET distance_m = p_distance_m,
+         duration_s = p_duration_s,
+         route_polyline = p_polyline
+   WHERE id = p_ride_id AND tenant_id = p_tenant_id;
+END$$
+DELIMITER ;

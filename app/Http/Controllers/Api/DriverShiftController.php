@@ -55,7 +55,7 @@ class DriverShiftController extends Controller
             'assignment_id'=> $assignment->id,
             'started_at'   => now(),
             'ended_at'     => null,
-            'status'       => 'open',
+            'status'       => 'abierto',
             'created_at'   => now(),
             'updated_at'   => now(),
         ]);
@@ -76,7 +76,7 @@ class DriverShiftController extends Controller
             ->where('tenant_id',$tenantId)
             ->where('id',$data['shift_id'])
             ->whereNull('ended_at')
-            ->update(['ended_at'=>now(), 'status'=>'closed', 'updated_at'=>now()]);
+            ->update(['ended_at'=>now(), 'status'=>'cerrado', 'updated_at'=>now()]);
 
         return response()->json(['ok'=> (bool)$aff]);
     }

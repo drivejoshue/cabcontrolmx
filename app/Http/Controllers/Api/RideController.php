@@ -7,10 +7,18 @@ use App\Models\Passenger;
 use App\Models\Ride;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Services\AutoDispatchService;
 
 class RideController extends Controller
 {
     /** GET /api/rides */
+
+    private function tenantIdFrom(Request $req)
+{
+    return $req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1;
+}
+
+
     public function index(Request $req)
     {
         $q = Ride::query();
@@ -117,9 +125,78 @@ class RideController extends Controller
             $r->updated_at    = now();
 
             $r->save();
+            try {
+                // Lee del settings: delay y demás
+                AutoDispatchService::kickoff(
+                    tenantId: $tenantId,
+                    rideId:   $r->id,
+                    lat:      (float)$r->origin_lat,
+                    lng:      (float)$r->origin_lng,
+                    km:       5.0,           // será sobreescrito por settings
+                    windowSec: 30,           // será sobreescrito por settings
+                    autoAssignIfSingle: false
+                );
+            } catch (\Throwable $e) {
+                \Log::warning('autodispatch failed: '.$e->getMessage());
+            }
+
             return $r;
         });
 
         return response()->json($ride, 201);
+    }
+
+
+    private function touchRideStatus(int $tenantId, int $rideId, string $new)
+{
+    // Solo cambiamos status y updated_at (sin columnas polémicas tipo assigned_at)
+    $aff = DB::table('rides')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $rideId)
+        ->update([
+            'status'     => strtolower($new),
+            'updated_at' => now(),
+        ]);
+    if ($aff === 0) abort(404, 'Ride no encontrado o de otro tenant');
+}
+
+    /** POST /api/driver/rides/{ride}/arrive */
+    public function arrive(Request $req, int $ride)
+    {
+        $tenantId = $this->tenantIdFrom($req);
+
+        // Si tienes SP para arrived, intenta primero:
+        try {
+            DB::statement('CALL sp_ride_arrived_v1(?,?)', [$tenantId, $ride]);
+        } catch (\Throwable $e) {
+            // Fallback simple
+            $this->touchRideStatus($tenantId, $ride, 'arrived');
+        }
+
+        return response()->json(['ok'=>true, 'ride_id'=>$ride, 'status'=>'arrived']);
+    }
+
+    /** POST /api/driver/rides/{ride}/board  (inicio de viaje / pasajero abordo) */
+    public function board(Request $req, int $ride)
+    {
+        $tenantId = $this->tenantIdFrom($req);
+        try {
+            DB::statement('CALL sp_ride_board_v1(?,?)', [$tenantId, $ride]);
+        } catch (\Throwable $e) {
+            $this->touchRideStatus($tenantId, $ride, 'on_board'); // tu enum usa 'onboard'
+        }
+        return response()->json(['ok'=>true, 'ride_id'=>$ride, 'status'=>'on_board']);
+    }
+
+    /** POST /api/driver/rides/{ride}/finish  (fin de viaje) */
+    public function finish(Request $req, int $ride)
+    {
+        $tenantId = $this->tenantIdFrom($req);
+        try {
+            DB::statement('CALL sp_ride_finish_v1(?,?)', [$tenantId, $ride]);
+        } catch (\Throwable $e) {
+            $this->touchRideStatus($tenantId, $ride, 'finished');
+        }
+        return response()->json(['ok'=>true, 'ride_id'=>$ride, 'status'=>'finished']);
     }
 }

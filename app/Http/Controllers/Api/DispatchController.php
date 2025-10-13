@@ -9,6 +9,7 @@ use App\Models\TaxiStand;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Services\AutoDispatchService;
 
 class DispatchController extends Controller
 {
@@ -194,42 +195,78 @@ public function driversLive(Request $r)
 {
     $tenantId = $this->tenantId($r);
 
-    // 1) Última ubicación por driver (sin filtrar por recencia)
+    // Última ubicación por driver
     $latestPerDriver = DB::table('driver_locations as dl1')
         ->select('dl1.driver_id', DB::raw('MAX(dl1.id) as last_id'))
         ->groupBy('dl1.driver_id');
 
     $locs = DB::table('driver_locations as dl')
         ->joinSub($latestPerDriver,'last',function($j){
-            $j->on('dl.driver_id','=','last.driver_id')->on('dl.id','=','last.last_id');
+            $j->on('dl.driver_id','=','last.driver_id')
+              ->on('dl.id','=','last.last_id');
         })
         ->select(
             'dl.driver_id',
-            'dl.lat','dl.lng',
-            'dl.reported_at','dl.heading_deg',
-            // flag de frescura (120s)
+            'dl.lat','dl.lng','dl.reported_at','dl.heading_deg',
             DB::raw('CASE WHEN dl.reported_at >= (NOW() - INTERVAL 120 SECOND) THEN 1 ELSE 0 END AS is_fresh')
         );
 
-    // 2) Ride activo más reciente por driver (prioridad por estado)
-    $activeRide = DB::table('rides as r')
-        ->select('r.driver_id','r.status')
-        ->where('r.tenant_id',$tenantId)
-        ->whereIn('r.status', ['REQUESTED','SCHEDULED','ASSIGNED','EN_ROUTE','ARRIVED','BOARDING','ONBOARD'])
-        ->orderByRaw("FIELD(r.status,'ONBOARD','BOARDING','EN_ROUTE','ARRIVED','ASSIGNED','REQUESTED','SCHEDULED')")
-        ->orderByDesc('r.id');
+    // A) Rides con driver_id (asignados/en curso) → normaliza a canónico
+    $assignedOrInProgress = DB::table('rides as r')
+        ->select([
+            'r.driver_id',
+            DB::raw("
+                CASE
+                  WHEN UPPER(r.status) IN ('ON_BOARD','ONBOARD','BOARDING') THEN 'on_board'
+                  WHEN UPPER(r.status) = 'EN_ROUTE'                         THEN 'en_route'
+                  WHEN UPPER(r.status) = 'ARRIVED'                          THEN 'arrived'
+                  WHEN UPPER(r.status) IN ('ACCEPTED','ASSIGNED')           THEN 'accepted'
+                  WHEN UPPER(r.status) = 'REQUESTED'                        THEN 'requested'
+                  WHEN UPPER(r.status) = 'SCHEDULED'                        THEN 'scheduled'
+                  ELSE LOWER(r.status)
+                END AS ride_status
+            ")
+        ])
+        ->where('r.tenant_id', $tenantId)
+        ->whereNotNull('r.driver_id') // <- solo los que YA están ligados a driver
+        ->whereIn(DB::raw('UPPER(r.status)'), [
+            'ON_BOARD','ONBOARD','BOARDING','EN_ROUTE','ARRIVED','ACCEPTED','ASSIGNED','REQUESTED','SCHEDULED'
+        ]);
 
-    // 3) Listado de drivers: LEFT JOIN turno abierto y ubicación
+    // B) Ofertas vivas (offered) por driver (no expirada)
+    $liveOffers = DB::table('ride_offers as o')
+        ->join('rides as r','r.id','=','o.ride_id')
+        ->select([
+            'o.driver_id',
+            DB::raw("'offered' as ride_status")
+        ])
+        ->where('o.tenant_id', $tenantId)
+        ->whereRaw('o.expires_at IS NULL OR o.expires_at > NOW()')
+        ->where(DB::raw('LOWER(o.status)'),'offered');
+
+    // C) Unión con prioridad: primero estados “fuertes” del ride, luego offered
+    $activeForDriver = DB::query()
+        ->fromSub(
+            $assignedOrInProgress->unionAll($liveOffers),
+            'ar'
+        )
+        ->select('ar.driver_id','ar.ride_status')
+        ->orderByRaw("FIELD(ar.ride_status,'on_board','en_route','arrived','accepted','offered','requested','scheduled')")
+        ->orderBy('ar.driver_id')
+        // Nota: si hubiese múltiples filas por driver (p.ej. offered + accepted),
+        // luego haremos DISTINCT por driver con la SELECT exterior.
+    ;
+
+    // Ensamble final
     $drivers = DB::table('drivers')
         ->where('drivers.tenant_id',$tenantId)
-        // turno abierto opcional (para saber si está en shift)
         ->leftJoin('driver_shifts as ds', function($j){
             $j->on('ds.driver_id','=','drivers.id')->whereNull('ds.ended_at');
         })
         ->leftJoinSub($locs,'loc', function($j){
             $j->on('loc.driver_id','=','drivers.id');
         })
-        ->leftJoinSub($activeRide,'ar', function($j){
+        ->leftJoinSub($activeForDriver,'ar', function($j){
             $j->on('ar.driver_id','=','drivers.id');
         })
         ->leftJoin('vehicles as v','v.id','=','ds.vehicle_id')
@@ -243,10 +280,8 @@ public function driversLive(Request $r)
             DB::raw('COALESCE(v.type,"sedan") as vehicle_type'),
             DB::raw('v.plate as vehicle_plate'),
             DB::raw('v.economico as vehicle_economico'),
-            // mantener el status del driver (offline/idle/busy) tal cual:
-            DB::raw('drivers.status as driver_status'),
-            DB::raw('ar.status as ride_status'),
-            // shift_open real
+            DB::raw('LOWER(COALESCE(drivers.status,"offline")) as driver_status'),
+            DB::raw('ar.ride_status'),
             DB::raw('CASE WHEN ds.id IS NULL THEN 0 ELSE 1 END AS shift_open')
         )
         ->orderBy('drivers.id')
@@ -254,6 +289,7 @@ public function driversLive(Request $r)
 
     return response()->json($drivers);
 }
+
 
 
 
@@ -312,35 +348,82 @@ public function driversLive(Request $r)
     /* =======================
      *  Operaciones: asignar / cancelar
      * ======================= */
-   public function assign(Request $r)
+  // App/Http/Controllers/Api/DispatchController.php
+public function assign(Request $req)
 {
-    $v = $r->validate([
-        'ride_id'   => 'required|integer|exists:rides,id',
-        'driver_id' => 'required|integer|exists:drivers,id',
-        'expires'   => 'nullable|integer|min:10|max:300', // opcional
+    $v = $req->validate([
+        'ride_id'   => 'required|integer',
+        'driver_id' => 'required|integer',
     ]);
 
-    $tenantId  = $this->tenantId($r);
-    $rideId    = (int)$v['ride_id'];
-    $driverId  = (int)$v['driver_id'];
-    $expSec    = (int)($v['expires'] ?? 45);
+    $tenantId   = (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
+    $rideId     = (int)$v['ride_id'];
+    $driverId   = (int)$v['driver_id'];
+    $assignedBy = optional($req->user())->id ?? 0;
 
-    return DB::transaction(function () use ($tenantId,$rideId,$driverId,$expSec) {
-
-        // 1) Crear/renovar oferta “offered”
-        $offer = DB::selectOne('CALL sp_create_offer_v3(?,?,?,?)', [
-            $tenantId, $rideId, $driverId, $expSec
+    try {
+        // ✅ Usa v2 (es la que existe en tu dump)
+        $row = \DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [
+            $tenantId, $rideId, $driverId, 45   // expires_sec
         ]);
-        if (!$offer || empty($offer->offer_id)) {
-            return response()->json(['ok'=>false,'msg'=>'No se pudo ofertar'], 422);
+        return response()->json(['ok'=>true,'via'=>'sp_create_offer_v2','row'=>$row]);
+
+    } catch (\Throwable $e) {
+        $msg = $e->getMessage();
+        $isMissing = str_contains($msg, '1305') || str_contains($msg, 'does not exist');
+
+        if ($isMissing) {
+            // Fallback 1: asignación directa controlada por DB
+            try {
+                \DB::selectOne('CALL sp_assign_direct_v1(?,?,?)', [
+                    $tenantId, $rideId, $driverId
+                ]);
+                return response()->json(['ok'=>true,'via'=>'sp_assign_direct_v1']);
+            } catch (\Throwable $e2) {
+                // Fallback 2: último recurso (DEV) – sin 'assigned_at' y con estado válido
+                try {
+                    \DB::beginTransaction();
+
+                    $ride = \DB::table('rides')
+                        ->where('tenant_id',$tenantId)->where('id',$rideId)
+                        ->lockForUpdate()->first();
+
+                    if (!$ride) throw new \Exception('Ride no encontrado');
+                    if (in_array($ride->status, ['canceled','finished'])) {
+                        throw new \Exception('Ride no asignable en estado '.$ride->status);
+                    }
+
+                    \DB::table('rides')->where('id',$rideId)->update([
+                        'driver_id'   => $driverId,
+                        'status'      => 'accepted',        // 👈 minúsculas
+                        'accepted_at' => now(),             // 👈 existe
+                        'updated_at'  => now(),
+                    ]);
+
+                    \DB::table('ride_status_history')->insert([
+                        'tenant_id'  => $tenantId,
+                        'ride_id'    => $rideId,
+                        'prev_status'=> $ride->status,
+                        'new_status' => 'accepted',
+                        'meta'       => json_encode(['driver_id'=>$driverId,'assigned_by'=>$assignedBy]),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    \DB::commit();
+                    return response()->json(['ok'=>true,'via'=>'direct']);
+                } catch (\Throwable $e3) {
+                    \DB::rollBack();
+                    return response()->json(['ok'=>false,'msg'=>$e3->getMessage()], 500);
+                }
+            }
         }
 
-        // 2) Aceptar inmediatamente desde Dispatch
-        DB::statement('CALL sp_accept_offer_v3(?)', [ (int)$offer->offer_id ]);
-
-        return response()->json(['ok'=>true, 'offer_id'=>(int)$offer->offer_id]);
-    });
+        return response()->json(['ok'=>false,'msg'=>$msg], 500);
+    }
 }
+
+
 
 
     public function cancel(Request $r)
@@ -372,5 +455,43 @@ public function driversLive(Request $r)
 
         return response()->json(['ok'=>true]);
     }
+
+
+
+public function tick(\Illuminate\Http\Request $req)
+{
+    $v = $req->validate([
+        'ride_id' => 'required|integer',
+        'km'      => 'nullable|numeric',
+        'limit_n' => 'nullable|integer',
+        'expires' => 'nullable|integer',
+        'auto_assign_if_single' => 'nullable|boolean',
+    ]);
+
+    $tenantId = $req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1;
+
+    $ride = \DB::table('rides')
+        ->where('tenant_id',$tenantId)->where('id',$v['ride_id'])->first();
+    if (!$ride) return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'],404);
+
+    $cfg = \App\Services\AutoDispatchService::settings($tenantId);
+
+    $res = \App\Services\AutoDispatchService::kickoff(
+        tenantId: $tenantId,
+        rideId:   (int)$ride->id,
+        lat:      (float)$ride->origin_lat,
+        lng:      (float)$ride->origin_lng,
+        km:       (float)($v['km']      ?? $cfg->radius_km),
+        expires:  (int)  ($v['expires'] ?? $cfg->expires_s),
+        limitN:   (int)  ($v['limit_n'] ?? $cfg->limit_n),
+        autoAssignIfSingle: (bool)($v['auto_assign_if_single'] ?? $cfg->auto_assign_if_single)
+    );
+
+    return response()->json(['ok'=>true] + $res);
+}
+
+
+
+
   
 }

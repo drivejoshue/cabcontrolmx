@@ -421,54 +421,68 @@ function rideColorByStatus(status){
 const CAR_SPRITES = {
   sedan: {
     free:     '/images/vehicles/sedan-free.png',
-    assigned: '/images/vehicles/sedan-assigned.png',
-    onboard:  '/images/vehicles/sedan-onboard.png',
+    offered:  '/images/vehicles/sedan.png', // puedes renombrar a sedan-offered.png si prefieres
+    accepted: '/images/vehicles/sedan-acepted.png',
+    en_route: '/images/vehicles/sedan-assigned.png',
+    arrived:  '/images/vehicles/sedan-busy.png',
+    on_board: '/images/vehicles/sedan-assigned.png',
     busy:     '/images/vehicles/sedan-busy.png',
     offline:  '/images/vehicles/sedan-offline.png',
   },
   van: {
     free:     '/images/vehicles/van-free.png',
-    assigned: '/images/vehicles/van-assigned.png',
-    onboard:  '/images/vehicles/van-onboard.png',
+    offered:  '/images/vehicles/van-assigned.png',
+    accepted: '/images/vehicles/van-assigned.png',
+    en_route: '/images/vehicles/van-assigned.png',
+    arrived:  '/images/vehicles/van-assigned.png',
+    on_board: '/images/vehicles/van-onboard.png',
     busy:     '/images/vehicles/van-busy.png',
     offline:  '/images/vehicles/van-offline.png',
   },
   vagoneta: {
     free:     '/images/vehicles/vagoneta-free.png',
-    assigned: '/images/vehicles/vagoneta-assigned.png',
-    onboard:  '/images/vehicles/vagoneta-onboard.png',
+    offered:  '/images/vehicles/vagoneta-assigned.png',
+    accepted: '/images/vehicles/vagoneta-assigned.png',
+    en_route: '/images/vehicles/vagoneta-assigned.png',
+    arrived:  '/images/vehicles/vagoneta-assigned.png',
+    on_board: '/images/vehicles/vagoneta-onboard.png',
     busy:     '/images/vehicles/vagoneta-busy.png',
     offline:  '/images/vehicles/vagoneta-offline.png',
   },
   premium: {
     free:     '/images/vehicles/premium-free.png',
-    assigned: '/images/vehicles/premium-assigned.png',
-    onboard:  '/images/vehicles/premium-onboard.png',
+    offered:  '/images/vehicles/premium-assigned.png',
+    accepted: '/images/vehicles/premium-assigned.png',
+    en_route: '/images/vehicles/premium-assigned.png',
+    arrived:  '/images/vehicles/premium-assigned.png',
+    on_board: '/images/vehicles/premium-onboard.png',
     busy:     '/images/vehicles/premium-busy.png',
     offline:  '/images/vehicles/premium-offline.png',
   },
 };
 
-function visualState({ ride_status, driver_status, shift_open }) {
-  const r = String(ride_status || '').toLowerCase();
-  const d = String(driver_status || '').toLowerCase();
 
-  // 1) Si no tiene turno abierto → offline (no lo ocultes, muéstralo gris si lo estás listando)
-  if (shift_open === false) return 'offline';
+// Mapea TODOS los estados posibles a los sprites existentes
+function visualState(d) {
+  const r  = String(d.ride_status || '').toLowerCase();    // offered, accepted, en_route, arrived, on_board
+  const ds = String(d.driver_status || '').toLowerCase();  // offline, idle, busy
+  const shiftOpen = d.shift_open === 1 || d.shift_open === true;
 
-  // 2) Si el backend/cron lo marcó offline → sprite gris
-  if (d === 'offline') return 'offline';
+  // Sin turno abierto o driver offline -> gris
+  if (!shiftOpen || ds === 'offline') return 'offline';
 
-  // 3) Prioridad ride
-  if (r === 'on_board' || r === 'onboard') return 'onboard';
-  if (['accepted','assigned','en_route','arrived','requested','offered','scheduled'].includes(r)) return 'assigned';
+  // Prioridad por ride
+  if (r === 'on_board') return 'on_board';
+  if (r === 'arrived')  return 'arrived';
+  if (r === 'en_route') return 'en_route';
+  if (r === 'accepted') return 'accepted';
+  if (r === 'offered')  return 'offered';
 
-  // 4) Estado del driver
-  if (d === 'busy') return 'busy';
-
-  // 5) Default libre
+  // Sin ride: estado del driver
+  if (ds === 'busy') return 'busy';
   return 'free';
 }
+
 
 
 function statusLabel(rideStatus, driverStatus){
@@ -520,14 +534,14 @@ function makeCarIcon(type, state){
   const src = iconUrl(type, state);
   const html = `
     <div class="cc-car-box" style="width:${CAR_W}px;height:${CAR_H}px;position:relative">
-      <img class="cc-car-img" src="${src}" alt="${type}"
-           width="${CAR_W}" height="${CAR_H}" />
+      <img class="cc-car-img cc-a cc-active"   src="${src}" width="${CAR_W}" height="${CAR_H}" alt="${type}">
+      <img class="cc-car-img cc-b cc-inactive" src="${src}" width="${CAR_W}" height="${CAR_H}" alt="${type}">
     </div>`;
   return L.divIcon({
     className: 'cc-car-icon',
     html,
-    iconSize: [CAR_W, CAR_H],                 // <- contenedor constante
-    iconAnchor: [CAR_W/2, CAR_H/2],           // <- ancla centrada (no salta)
+    iconSize: [CAR_W, CAR_H],
+    iconAnchor: [CAR_W/2, CAR_H/2],
     tooltipAnchor: [0, -CAR_H/2]
   });
 }
@@ -558,10 +572,14 @@ function setMarkerScale(marker, scale){
       transform-origin:50% 50%;
       transform: rotate(var(--car-rot, 0deg)) scale(var(--car-scale, 1));
       image-rendering: -webkit-optimize-contrast;
-      transition: transform 120ms linear;  /* suave al rotar/escalar */
-    }`;
+      transition: opacity 160ms linear, transform 120ms linear;
+    }
+    .cc-active  { opacity: 1; }
+    .cc-inactive{ opacity: 0; }
+  `;
   document.head.appendChild(style);
 })();
+
 
 // Preload opcional (evita blur al primer swap)
 (function preloadCarIcons(){
@@ -574,6 +592,31 @@ function setMarkerScale(marker, scale){
 })();
 
 
+function setCarSprite(marker, nextSrc){
+  const el = marker.getElement();
+  if (!el) return;
+  const a = el.querySelector('.cc-car-img.cc-a');
+  const b = el.querySelector('.cc-car-img.cc-b');
+  if (!a || !b) return;
+
+  // la inactiva es la que no tiene .cc-active
+  const active   = el.querySelector('.cc-car-img.cc-active') || a;
+  const inactive = active === a ? b : a;
+
+  // si ya muestra ese src, no hagas nada
+  if (active.getAttribute('src') === nextSrc) return;
+
+  // precargar, luego crossfade
+  const img = new Image();
+  img.onload = () => {
+    inactive.setAttribute('src', nextSrc);
+    inactive.classList.remove('cc-inactive');
+    inactive.classList.add('cc-active');
+    active.classList.remove('cc-active');
+    active.classList.add('cc-inactive');
+  };
+  img.src = nextSrc;
+}
 
 
 //---------------- termina driver  inicia ruta  ----------------------------
@@ -667,8 +710,6 @@ async function highlightRideOnMap(r){
 }
 
 
-
-
 function renderActiveRides(rides){
   const el = document.getElementById('panel-active'); if(!el) return;
   el.innerHTML='';
@@ -740,7 +781,6 @@ function renderActiveRides(rides){
     el.appendChild(card);
   });
 }
-
 
 
 function suggestedLineStyle(){
@@ -860,10 +900,65 @@ function clearDriverRoute(driver_id){
 }
 
 
-function clearDriverRoute(driver_id){
-  const line = assignmentLines.get(driver_id);
-  if (line) { try { layerRoute.removeLayer(line); } catch {} }
-  assignmentLines.delete(driver_id);
+// === Bubble discreta de estado (autodespacho) ===
+let _bubbleEl = null, _bubbleTimer = null;
+
+function ensureBubble(){
+  if (_bubbleEl) return _bubbleEl;
+  _bubbleEl = document.createElement('div');
+  _bubbleEl.className = 'cc-bubble';
+  _bubbleEl.style.cssText = `
+    position:absolute; right:16px; bottom:16px; z-index:10000;
+    max-width:280px; background:rgba(0,0,0,.8); color:#fff;
+    padding:10px 12px; border-radius:12px; font-size:13px; box-shadow:0 6px 22px rgba(0,0,0,.25)
+  `;
+  _bubbleEl.textContent = '...';
+  document.body.appendChild(_bubbleEl);
+  return _bubbleEl;
+}
+function showBubble(text){ const el = ensureBubble(); el.style.display='block'; el.textContent = text||'...'; }
+function updateBubble(text){ if (_bubbleEl) _bubbleEl.textContent = text||'...'; }
+function hideBubble(){ if (_bubbleEl){ _bubbleEl.style.display='none'; } }
+
+// Cuenta regresiva con callbacks
+function startCountdown(totalSec, onTick, onDone){
+  clearInterval(_bubbleTimer);
+  let s = Math.max(0, Math.floor(totalSec||0));
+  (onTick||(()=>{}))(s);
+  _bubbleTimer = setInterval(()=>{
+    s -= 1;
+    if (s <= 0) {
+      clearInterval(_bubbleTimer);
+      (onTick||(()=>{}))(0);
+      (onDone||(()=>{}))();
+    } else {
+      (onTick||(()=>{}))(s);
+    }
+  }, 1000);
+}
+
+
+// Previsualiza hasta N candidatos alrededor del origen del ride
+async function previewCandidatesFor(ride, limit = 8, radiusKm = 5){
+  try {
+    const url = `/api/dispatch/nearby-drivers?lat=${ride.origin_lat}&lng=${ride.origin_lng}&km=${radiusKm}`;
+    const r = await fetch(url, { headers:{ Accept:'application/json' } });
+    const list = r.ok ? await r.json() : [];
+    // ordena por distancia y toma top N
+    const ordered = (Array.isArray(list) ? list : [])
+      .sort((a,b)=> (a.distance_km??9e9) - (b.distance_km??9e9))
+      .slice(0, Math.max(1, limit|0));
+
+    // pinta líneas punteadas para cada candidato
+    for (const c of ordered) {
+      const id = c.id || c.driver_id;
+      try { await ensureDriverPreviewLine(id, ride); } catch {}
+      // espaciar levemente las llamadas a Directions/OSRM
+      await new Promise(res=> setTimeout(res, 90));
+    }
+  } catch (e) {
+    console.warn('[previewCandidatesFor] error', e);
+  }
 }
 
 
@@ -918,19 +1013,21 @@ function bearingBetween(a,b){
 
 // ADD: util para crear/actualizar modal
 let _assignPanel, _assignSelected = null, _assignRide = null;
-let _assignOriginPin = null;
+let _assignOriginPin = null;let _assignPickupMarker = null;
 
 function renderAssignPanel(ride, candidates){
   _assignRide = ride; _assignSelected = null;
 
   try {
-  if (_assignOriginPin) { layerSuggested.removeLayer(_assignOriginPin); _assignOriginPin = null; }
-  if (Number.isFinite(ride.origin_lat) && Number.isFinite(ride.origin_lng)) {
-    _assignOriginPin = L.marker([ride.origin_lat, ride.origin_lng], {
-      icon: IconOrigin, zIndexOffset: 950
-    }).addTo(layerSuggested).bindTooltip('Pasajero', {offset:[0,-26]});
-  }
-} catch {}
+ if (_assignPickupMarker) { layerSuggested.removeLayer(_assignPickupMarker); _assignPickupMarker = null; }
+    if (Number.isFinite(ride.origin_lat) && Number.isFinite(ride.origin_lng)) {
+      const layer = (typeof layerSuggested !== 'undefined') ? layerSuggested : layerRoute;
+      const ic    = (typeof IconOrigin !== 'undefined') ? IconOrigin : (typeof IconDest !== 'undefined' ? IconDest : undefined);
+      _assignPickupMarker = L.marker([ride.origin_lat, ride.origin_lng], {
+        icon: ic, zIndexOffset: 950
+      }).addTo(layer).bindTooltip('Pasajero', {offset:[0,-26]});
+    }
+  } catch {}
 
   const el = document.getElementById('assignPanelBody');
   if (!candidates.length){
@@ -997,28 +1094,55 @@ function renderAssignPanel(ride, candidates){
   }
 
   // botón Asignar
-  document.getElementById('btnDoAssign').onclick = async ()=>{
-    if (!_assignSelected || !_assignRide) return;
-    try{
-      const r = await fetch('/api/dispatch/assign', {
-        method:'POST',
-        headers:{
-          'Content-Type':'application/json',
-          'Accept':'application/json',
-          'X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]')?.content || ''
-        },
-        body: JSON.stringify({ ride_id:_assignRide.id, driver_id:_assignSelected })
-      });
-      const j = await r.json().catch(()=>({}));
-      if (!r.ok || j.ok===false) throw new Error(j?.msg || ('HTTP '+r.status));
-      clearAllPreviews();
-      if (_assignPickupMarker) { try { layerRoute.removeLayer(_assignPickupMarker); } catch{} _assignPickupMarker=null; }
-      if (_assignPanel) _assignPanel.hide();
-      refreshDispatch();
-    }catch(e){
-      alert('No se pudo asignar: '+(e.message||e));
-    }
-  };
+// Helper para tenant (pon <meta name="tenant-id" content="1"> en tu layout)
+function getTenantId(){
+  return document.querySelector('meta[name="tenant-id"]')?.content
+      || window.__TENANT_ID__
+      || 1;
+}
+
+// Limpia todas las previsualizaciones
+function clearAllPreviews(){
+  try {
+    // líneas de cada driver
+    driverPins.forEach(e => { if (e.previewLine){ layerRoute.removeLayer(e.previewLine); e.previewLine = null; } });
+    // línea “general”
+    if (_assignPreviewLine){ layerRoute.removeLayer(_assignPreviewLine); _assignPreviewLine = null; }
+    // pin del pasajero
+    if (_assignPickupMarker){ (layerSuggested||layerRoute).removeLayer(_assignPickupMarker); _assignPickupMarker = null; }
+  } catch {}
+}
+
+
+// botón Asignar
+document.getElementById('btnDoAssign').onclick = async ()=>{
+  if (!_assignSelected || !_assignRide) return;
+  const btn = document.getElementById('btnDoAssign');
+  btn.disabled = true;
+  try{
+    const r = await fetch('/api/dispatch/assign', {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'Accept':'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+        'X-Tenant-ID': document.querySelector('meta[name="tenant-id"]')?.content || '1'
+      },
+      body: JSON.stringify({ ride_id:_assignRide.id, driver_id:_assignSelected })
+    });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok || j.ok===false) throw new Error(j?.msg || ('HTTP '+r.status));
+    clearAllPreviews();
+    if (_assignPickupMarker) { try { layerRoute.removeLayer(_assignPickupMarker); } catch{} _assignPickupMarker=null; }
+    if (_assignPanel) _assignPanel.hide();
+    refreshDispatch();
+  }catch(e){
+    alert('No se pudo asignar: '+(e.message||e));
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 
   // abrir offcanvas + cleanup al cerrar
   const panelEl = document.getElementById('assignPanel');
@@ -1026,8 +1150,7 @@ function renderAssignPanel(ride, candidates){
 
   panelEl.addEventListener('hidden.bs.offcanvas', () => {
     clearAllPreviews();
-    if (_assignPickupMarker) { try { layerRoute.removeLayer(_assignPickupMarker); } catch{} _assignPickupMarker=null; }
-  }, { once:false });
+     }, { once:false });
 
   _assignPanel.show();
 }
@@ -1080,6 +1203,7 @@ async function confirmAssign(ride, driver){
     // sube prioridad visual del driver y refresca panel
     const pin = driverPins.get(driver.id);
     if (pin) pin.marker.setZIndexOffset(900);
+    clearAllPreviews();
     refreshDispatch();
   }catch(e){
     console.error(e);
@@ -1207,8 +1331,43 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       if(!r.ok){ const t=await r.text(); throw new Error(t||('HTTP '+r.status)); }
       const ride = await r.json();
-      alert('Viaje creado #'+(ride.id||''));
-      refreshDispatch();
+
+      // === Autodespacho visual opcional (delay) ===
+      // lee settings expuestos por el backend en el layout (o defaults)
+      const ds = (window.ccDispatchSettings || {});
+      const enabled   = ds.auto_dispatch_enabled ?? true;
+      const delaySec  = Number(ds.auto_dispatch_delay_s ?? 0);
+      const prevN     = Number(ds.auto_dispatch_preview_n ?? 8);
+      const radiusKm  = Number(ds.auto_dispatch_preview_radius_km ?? 5);
+
+      if (enabled && delaySec > 0 && Number.isFinite(ride.origin_lat) && Number.isFinite(ride.origin_lng)) {
+        showBubble('Servicio detectado · buscando candidatos...');
+        previewCandidatesFor(ride, prevN, radiusKm);
+        startCountdown(delaySec, (s)=> {
+          updateBubble(`Asignando en ${s}s...`);
+        }, async ()=> {
+          hideBubble();
+          // Dispara la ola por API (extra: útil si no la lanzaste del backend)
+          try{
+            await fetch('/api/dispatch/tick', {
+              method:'POST',
+              headers:{
+                'Content-Type':'application/json',
+                'Accept':'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                'X-Tenant-ID': getTenantId()
+              },
+              body: JSON.stringify({ ride_id: ride.id })
+            });
+          }catch(e){ console.warn('tick error', e); }
+        });
+        }
+
+// feedback al operador
+//alert('Viaje creado #'+(ride.id||''));
+
+// refresca panel/mapa
+refreshDispatch();
     }catch(e){
       console.error(e); alert('No se pudo crear el viaje.');
     }
@@ -1388,17 +1547,13 @@ function upsertDriver(d) {
   const lng = Number(d.lng ?? d.last_lng);
   if (!id || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
- 
-
   const type    = String(d.vehicle_type || 'sedan').toLowerCase();
   const drvSt   = String(d.driver_status || '').toLowerCase();
 
-  // estado visual base (free/assigned/onboard/busy)
   let vstate = visualState(d);
-  // si el backend marca offline (y hay turno), mostrar PNG offline
   if (drvSt === 'offline') vstate = 'offline';
 
-  const icon    = makeCarIcon(type, vstate); // usa tus PNG
+  const icon    = makeCarIcon(type, vstate);
   const zScale  = scaleForZoom(map ? map.getZoom() : DEFAULT_ZOOM);
   const bearing = Number(d.bearing ?? d.heading_deg ?? 0);
 
@@ -1407,11 +1562,9 @@ function upsertDriver(d) {
   const phone = d.phone || '';
   const name  = d.name || 'Conductor';
   const label = econ ? `${name} (${econ})` : name;
-
-  // etiqueta de estado legible
   const labelSt = statusLabel(d.ride_status, d.driver_status);
-
   const seenTxt = d.reported_at ? `Visto ${fmtAgo(d.reported_at)}` : '—';
+
   const tip = `
     <div class="cc-tip">
       <div class="tt-title">${label}</div>
@@ -1419,8 +1572,8 @@ function upsertDriver(d) {
       <div class="tt-meta">${labelSt}${phone ? ' · Tel: '+phone : ''} · ${seenTxt}</div>
     </div>`;
 
-  // z-index: arriba si asignado/onboard, abajo si offline
-  const zIdx = (vstate === 'onboard' || vstate === 'assigned') ? 900
+  // ↑ prioridad visual si está en servicio
+  const zIdx = (['on_board','accepted','en_route','arrived'].includes(vstate)) ? 900
             : (vstate === 'offline' ? 100 : 500);
 
   let entry = driverPins.get(id);
@@ -1433,28 +1586,59 @@ function upsertDriver(d) {
     .bindTooltip(tip, { className:'cc-tip', direction:'top', offset:[0,-12], sticky:true })
     .addTo(layerDrivers);
 
-    driverPins.set(id, { marker, type, vstate });
+    // ⬇️ estado “estable” + buffers para histeresis
+    driverPins.set(id, {
+      marker,
+      type,
+      vstate,             // estado aplicado
+      wantState: vstate,  // último estado solicitado
+      mismatchCount: 0,   // cuántas veces seguidas se repite wantState
+      lastSwapAt: 0       // timestamp del último swap de icono
+    });
 
     setMarkerScale(marker, zScale);
     setMarkerBearing(marker, bearing);
+    return;
+  }
 
-  } else {
-    entry.marker.setLatLng([lat, lng]);
+  // mover/actualizar
+  entry.marker.setLatLng([lat, lng]);
+  setMarkerScale(entry.marker, zScale);
+  setMarkerBearing(entry.marker, bearing);
+  entry.marker.setZIndexOffset(zIdx);
+  const tt = entry.marker.getTooltip(); if (tt) tt.setContent(tip);
 
-    // refrescar sprite solo si cambia tipo/estado (incluye offline)
-    if (entry.type !== type || entry.vstate !== vstate) {
-      entry.type = type; entry.vstate = vstate;
-      entry.marker.setIcon(makeCarIcon(type, vstate));
-      setMarkerScale(entry.marker, zScale);
-      //setMarkerBearing(entry.marker, bearing);
+  // === HISTERESIS DE ICONO (evita parpadeo) ===
+  const now = Date.now();
+  if (entry.type !== type || entry.vstate !== vstate) {
+    // memoriza intención y cuenta repeticiones
+    const wantsChanged = (entry.wantState !== vstate || entry.type !== type);
+    if (wantsChanged) {
+      entry.wantState = vstate;
+      entry.wantType  = type;
+      entry.mismatchCount = 1;
     } else {
-      setMarkerScale(entry.marker, zScale);
+      entry.mismatchCount++;
     }
 
-    entry.marker.setZIndexOffset(zIdx);
+    const DWELL = 2;      // lecturas consecutivas necesarias
+    const MIN_MS = 200;   // tiempo mínimo entre swaps
+    const timeOk = (now - entry.lastSwapAt) >= MIN_MS;
 
-    const tt = entry.marker.getTooltip();
-    if (tt) tt.setContent(tip);
+    if (entry.mismatchCount >= DWELL && timeOk) {
+      entry.type = entry.wantType || type;
+      entry.vstate = entry.wantState || vstate;
+      entry.marker.setIcon(makeCarIcon(entry.type, entry.vstate)); // recrea ya estable
+      setMarkerScale(entry.marker, zScale); // re-aplica escala
+      setMarkerBearing(entry.marker, bearing);
+      entry.lastSwapAt = now;
+      entry.mismatchCount = 0;
+    }
+  } else {
+    // estado estable, limpia contadores
+    entry.wantState = vstate;
+    entry.wantType  = type;
+    entry.mismatchCount = 0;
   }
 }
 

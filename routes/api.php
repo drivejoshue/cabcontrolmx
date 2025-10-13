@@ -1,16 +1,17 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Http\Request;
 // ===== Controllers =====
 use App\Http\Controllers\Api\RideController;
 use App\Http\Controllers\Api\PassengerController;
-use App\Http\Controllers\Api\RideOfferController;
 
 use App\Http\Controllers\Api\SectorController as ApiSectorController;
 use App\Http\Controllers\Api\TaxiStandController;
 use App\Http\Controllers\Api\GeoController;
 
+use App\Http\Controllers\DriverController;
 use App\Http\Controllers\Api\DriverAuthController;
 use App\Http\Controllers\Api\DriverShiftController;
 use App\Http\Controllers\Api\DriverLocationController;
@@ -18,13 +19,14 @@ use App\Http\Controllers\Api\DriverLocationController;
 use App\Http\Controllers\Api\DispatchController;
 
 use App\Http\Controllers\Api\OfferController;
-use App\Http\Controllers\DriverController;
 use App\Http\Controllers\Api\QueueController;
 
 // ===== MAPA: capas estáticas =====
 
   
-   
+   Route::post('/dispatch/quote', [DispatchController::class, 'quote'])->name('api.dispatch.quote');
+    Route::post('/dispatch/tick', [DispatchController::class, 'tick']); // para pruebas
+
     Route::get('/sectores',   [ApiSectorController::class, 'index']);
     Route::get('/taxistands', [TaxiStandController::class, 'index']);
 
@@ -78,14 +80,14 @@ use App\Http\Controllers\Api\QueueController;
     Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
         Route::post('/shifts/start',  [DriverShiftController::class, 'start']);
         Route::post('/shifts/finish', [DriverShiftController::class, 'finish']);
-     
+        
+        Route::get('/offers', [OfferController::class, 'index']); // GETconductor autenticado
+        Route::post('/offers/{offer}/accept', [OfferController::class,'accept']);
+        Route::post('/offers/{offer}/reject', [OfferController::class,'reject']);
 
-        Route::post('/offers/{offer}/accept', [RideOfferController::class,'accept']);
-        Route::post('/offers/{offer}/reject', [RideOfferController::class,'reject']);
-
-        Route::post('/rides/{ride}/arrived', [RideController::class,'start']);
-        Route::post('/rides/{ride}/boarded', [RideController::class,'pickup']);
-        Route::post('/rides/{ride}/finish',  [RideController::class,'drop']);
+        Route::post('/rides/{ride}/arrived', [\App\Http\Controllers\Api\RideController::class,'arrive']);
+        Route::post('/rides/{ride}/board',  [\App\Http\Controllers\Api\RideController::class,'board']);
+        Route::post('/rides/{ride}/finish', [\App\Http\Controllers\Api\RideController::class,'finish']);
 
         Route::get ('/geo/geocode', [GeoController::class,'geocode']);
         Route::post('/geo/route',   [GeoController::class,'route']);

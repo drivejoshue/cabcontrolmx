@@ -151,3 +151,599 @@ FROM rides r
 LEFT JOIN vehicles v ON v.id = r.vehicle_id
 WHERE r.id = @ride_id;
 ```
+
+
+
+
+sps actuales     
+
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_accept_offer`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_offer_id  BIGINT UNSIGNED
+)
+BEGIN
+  DECLARE v_ride_id BIGINT UNSIGNED;
+  DECLARE v_driver_id BIGINT UNSIGNED;
+  DECLARE v_vehicle_id BIGINT UNSIGNED;
+  DECLARE v_status VARCHAR(20);
+  DECLARE v_expires DATETIME;
+  DECLARE v_updated_rows INT DEFAULT 0;
+
+  /* 1) Cargar y validar la oferta */
+  SELECT ro.ride_id, ro.driver_id, ro.vehicle_id, ro.status, ro.expires_at
+    INTO v_ride_id, v_driver_id, v_vehicle_id, v_status, v_expires
+  FROM ride_offers ro
+  WHERE ro.id = p_offer_id
+    AND ro.tenant_id = p_tenant_id
+  LIMIT 1;
+
+  IF v_ride_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Oferta inexistente o de otro tenant';
+  END IF;
+  IF v_status <> 'offered' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La oferta no está en estado offered';
+  END IF;
+  IF v_expires IS NOT NULL AND v_expires < NOW() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La oferta está expirada';
+  END IF;
+
+  /* 2) Amarrar driver al ride si está ofertable y sin driver */
+  UPDATE rides
+     SET driver_id   = v_driver_id,
+         vehicle_id  = COALESCE(v_vehicle_id, vehicle_id),
+         status      = 'accepted',
+         accepted_at = COALESCE(accepted_at, NOW())
+   WHERE id = v_ride_id
+     AND tenant_id = p_tenant_id
+     AND driver_id IS NULL
+     AND status IN ('requested','offered');
+
+  SET v_updated_rows = ROW_COUNT();
+  IF v_updated_rows = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride no ofertable o ya tenía driver asignado';
+  END IF;
+
+  /* 3) Marcar esta oferta como aceptada */
+  UPDATE ride_offers
+     SET responded_at = NOW(),
+         response    = 'accepted',
+         status      = 'accepted'
+   WHERE id = p_offer_id
+     AND tenant_id = p_tenant_id;
+
+  /* 4) Rechazar las demás ofertas del mismo ride (si quedaran) */
+  UPDATE ride_offers
+     SET responded_at = COALESCE(responded_at, NOW()),
+         response     = COALESCE(response, 'rejected'),
+         status       = CASE WHEN status='offered' THEN 'rejected' ELSE status END
+   WHERE ride_id   = v_ride_id
+     AND id       <> p_offer_id
+     AND tenant_id = p_tenant_id;
+
+  /* 5) Devolver estados finales */
+  SELECT * FROM ride_offers WHERE id = p_offer_id;
+  SELECT * FROM rides       WHERE id = v_ride_id;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_accept_offer_v2`(
+  IN p_offer_id BIGINT UNSIGNED
+)
+BEGIN
+  DECLARE v_tenant_id  BIGINT UNSIGNED;
+  DECLARE v_ride_id    BIGINT UNSIGNED;
+  DECLARE v_driver_id  BIGINT UNSIGNED;
+  DECLARE v_vehicle_id BIGINT UNSIGNED;
+  DECLARE v_status     VARCHAR(20);
+  DECLARE v_expires    DATETIME;
+  DECLARE v_updated_rows INT DEFAULT 0;
+
+  /* 1) Cargar oferta */
+  SELECT ro.tenant_id, ro.ride_id, ro.driver_id, ro.vehicle_id, ro.status, ro.expires_at
+    INTO v_tenant_id, v_ride_id, v_driver_id, v_vehicle_id, v_status, v_expires
+  FROM ride_offers ro
+  WHERE ro.id = p_offer_id
+  LIMIT 1;
+
+  IF v_ride_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Oferta inexistente';
+  END IF;
+
+  IF v_status <> 'offered' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La oferta no está en estado offered';
+  END IF;
+
+  IF v_expires IS NOT NULL AND v_expires < NOW() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La oferta está expirada';
+  END IF;
+
+  /* 2) Asignar driver al ride (si sigue ofertable) */
+  UPDATE rides
+     SET driver_id   = v_driver_id,
+         vehicle_id  = COALESCE(v_vehicle_id, vehicle_id),
+         status      = 'accepted',
+         accepted_at = COALESCE(accepted_at, NOW())
+   WHERE id = v_ride_id
+     AND tenant_id = v_tenant_id
+     AND driver_id IS NULL
+     AND status IN ('requested','offered');
+
+  SET v_updated_rows = ROW_COUNT();
+  IF v_updated_rows = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride no ofertable o ya tiene driver';
+  END IF;
+
+  /* 3) Marcar esta oferta aceptada */
+  UPDATE ride_offers
+     SET responded_at = NOW(),
+         response    = 'accepted',
+         status      = 'accepted'
+   WHERE id = p_offer_id;
+
+  /* 4) Rechazar el resto */
+  UPDATE ride_offers
+     SET responded_at = COALESCE(responded_at, NOW()),
+         response     = COALESCE(response, 'rejected'),
+         status       = CASE WHEN status='offered' THEN 'rejected' ELSE status END
+   WHERE ride_id   = v_ride_id
+     AND id       <> p_offer_id
+     AND tenant_id = v_tenant_id;
+
+  /* 5) Salida */
+  SELECT * FROM ride_offers WHERE id = p_offer_id;
+  SELECT * FROM rides       WHERE id = v_ride_id;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_accept_offer_v3`(
+  IN p_offer_id BIGINT UNSIGNED
+)
+BEGIN
+  DECLARE v_tenant_id  BIGINT UNSIGNED;
+  DECLARE v_ride_id    BIGINT UNSIGNED;
+  DECLARE v_driver_id  BIGINT UNSIGNED;
+  DECLARE v_vehicle_id BIGINT UNSIGNED;
+  DECLARE v_status     VARCHAR(20);
+  DECLARE v_expires    DATETIME;
+  DECLARE v_prev_status VARCHAR(20);
+
+  /* meta vehículo/driver */
+  DECLARE v_economico  VARCHAR(64);
+  DECLARE v_plate      VARCHAR(64);
+  DECLARE v_dlat DOUBLE; DECLARE v_dlng DOUBLE;
+
+  /* stand detectado en aceptación */
+  DECLARE v_lat DOUBLE;  DECLARE v_lng DOUBLE;
+  DECLARE v_stand_id BIGINT UNSIGNED;
+  DECLARE v_stand_name VARCHAR(128);
+  DECLARE v_radius_km DOUBLE;
+  DECLARE v_stand_dist_km DOUBLE;
+
+  /* 1) Oferta válida */
+  SELECT ro.tenant_id, ro.ride_id, ro.driver_id, ro.vehicle_id, ro.status, ro.expires_at
+    INTO v_tenant_id, v_ride_id, v_driver_id, v_vehicle_id, v_status, v_expires
+  FROM ride_offers ro
+  WHERE ro.id = p_offer_id
+  LIMIT 1;
+
+  IF v_ride_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Oferta inexistente';
+  END IF;
+  IF v_status <> 'offered' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Oferta no está en offered';
+  END IF;
+  IF v_expires IS NOT NULL AND v_expires < NOW() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Oferta expirada';
+  END IF;
+
+  /* 2) Status previo del ride y origen */
+  SELECT r.status, r.origin_lat, r.origin_lng
+    INTO v_prev_status, v_lat, v_lng
+  FROM rides r
+  WHERE r.id=v_ride_id AND r.tenant_id=v_tenant_id
+  LIMIT 1;
+
+  /* 3) Asignar ride */
+  UPDATE rides
+     SET driver_id  = v_driver_id,
+         vehicle_id = COALESCE(v_vehicle_id, vehicle_id),
+         status     = 'accepted'
+   WHERE id = v_ride_id
+     AND tenant_id = v_tenant_id
+     AND driver_id IS NULL
+     AND status IN ('requested','offered');
+
+  IF ROW_COUNT() = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride no ofertable o ya asignado';
+  END IF;
+
+  /* 4) Meta básica (vehículo/coords driver) */
+  SELECT v.economico, v.plate
+    INTO v_economico, v_plate
+  FROM vehicles v WHERE v.id=COALESCE(v_vehicle_id,(SELECT vehicle_id FROM rides WHERE id=v_ride_id)) LIMIT 1;
+
+  SELECT d.last_lat, d.last_lng
+    INTO v_dlat, v_dlng
+  FROM drivers d WHERE d.id=v_driver_id LIMIT 1;
+
+  /* 5) Detectar stand que cubre el origen y su distancia */
+  SET v_stand_id = NULL; SET v_stand_name = NULL; SET v_stand_dist_km = NULL;
+
+  IF v_lat IS NOT NULL AND v_lng IS NOT NULL THEN
+    SELECT COALESCE(ds.stand_radius_km, ds.auto_dispatch_radius_km, 3.00)
+      INTO v_radius_km
+    FROM dispatch_settings ds
+    WHERE ds.tenant_id = v_tenant_id
+    LIMIT 1;
+
+    SELECT ts.id, ts.nombre,
+           haversine_km(ts.latitud, ts.longitud, v_lat, v_lng) AS dist_km
+      INTO v_stand_id, v_stand_name, v_stand_dist_km
+    FROM taxi_stands ts
+    WHERE ts.tenant_id=v_tenant_id AND ts.activo=1
+      AND haversine_km(ts.latitud, ts.longitud, v_lat, v_lng) <= v_radius_km
+    ORDER BY dist_km ASC, ts.id ASC
+    LIMIT 1;
+
+    /* si estaba en cola de ese stand → salir por 'asignado' */
+    IF v_stand_id IS NOT NULL THEN
+      CALL sp_queue_leave_stand_v1(v_tenant_id, v_stand_id, v_driver_id, 'asignado');
+    END IF;
+  END IF;
+
+  /* 6) Historial extendido */
+  INSERT INTO ride_status_history
+    (tenant_id, ride_id, prev_status, new_status, meta, created_at)
+  VALUES
+    (v_tenant_id, v_ride_id, v_prev_status, 'accepted',
+     JSON_OBJECT(
+       'offer_id', p_offer_id,
+       'driver_id', v_driver_id,
+       'vehicle_id', v_vehicle_id,
+       'economico', v_economico,
+       'plate', v_plate,
+       'driver_last_lat', v_dlat,
+       'driver_last_lng', v_dlng,
+       'stand_id_on_accept', v_stand_id,
+       'stand_name_on_accept', v_stand_name,
+       'stand_dist_km', v_stand_dist_km
+     ),
+     NOW());
+
+  /* 7) Marcar aceptación y rechazar el resto */
+  UPDATE ride_offers
+     SET responded_at = NOW(),
+         response    = 'accepted',
+         status      = 'accepted'
+   WHERE id = p_offer_id;
+
+  UPDATE ride_offers
+     SET responded_at = COALESCE(responded_at, NOW()),
+         response     = COALESCE(response, 'rejected'),
+         status       = CASE WHEN status='offered' THEN 'rejected' ELSE status END
+   WHERE ride_id   = v_ride_id
+     AND id       <> p_offer_id
+     AND tenant_id = v_tenant_id;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_assign_direct_v1`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_ride_id   BIGINT UNSIGNED,
+  IN p_driver_id BIGINT UNSIGNED
+)
+BEGIN
+  DECLARE v_vehicle_id BIGINT UNSIGNED;
+  DECLARE v_driver_status VARCHAR(10);
+
+  -- Validar ride ofertable y sin driver
+  IF NOT EXISTS (
+    SELECT 1 FROM rides r
+     WHERE r.id = p_ride_id
+       AND r.tenant_id = p_tenant_id
+       AND r.driver_id IS NULL
+       AND r.status IN ('requested','offered')
+     LIMIT 1
+  ) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride no ofertable o ya asignado';
+  END IF;
+
+  -- Validar driver del tenant, idle, con coords
+  SELECT d.status
+    INTO v_driver_status
+  FROM drivers d
+  WHERE d.id = p_driver_id
+    AND d.tenant_id = p_tenant_id
+    AND d.last_lat IS NOT NULL
+    AND d.last_lng IS NOT NULL
+  LIMIT 1;
+
+  IF v_driver_status IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Driver inexistente o sin coordenadas';
+  END IF;
+  IF v_driver_status <> 'idle' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Driver no está idle';
+  END IF;
+
+  -- Shift abierto y vehículo activo
+  SELECT s.vehicle_id
+    INTO v_vehicle_id
+  FROM driver_shifts s
+  WHERE s.driver_id = p_driver_id
+    AND s.tenant_id = p_tenant_id
+    AND s.status = 'abierto'
+  ORDER BY s.id DESC
+  LIMIT 1;
+
+  IF v_vehicle_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Driver sin shift abierto/vehículo';
+  END IF;
+
+  -- Asignar ride (directo)
+  UPDATE rides
+     SET driver_id  = p_driver_id,
+         vehicle_id = COALESCE(v_vehicle_id, vehicle_id),
+         status     = 'accepted'
+   WHERE id = p_ride_id
+     AND tenant_id = p_tenant_id
+     AND driver_id IS NULL
+     AND status IN ('requested','offered');
+
+  IF ROW_COUNT() = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No se pudo asignar (carrera de estado)';
+  END IF;
+
+  -- SIN SELECT final
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_autodispatch_tick_v2`(
+  IN p_tenant_id BIGINT UNSIGNED
+)
+BEGIN
+  DECLARE v_offer_expires INT DEFAULT 30;
+  DECLARE v_wave_n        INT DEFAULT 3;
+  DECLARE v_lead_min      INT DEFAULT 5;
+
+  /* Lee settings (con fallback) */
+  SELECT COALESCE(offer_expires_sec,30),
+         COALESCE(wave_size_n,3),
+         COALESCE(lead_time_min,5)
+    INTO v_offer_expires, v_wave_n, v_lead_min
+  FROM dispatch_settings
+  WHERE tenant_id = p_tenant_id
+  LIMIT 1;
+
+  /* Candidatos: programados en ventana + inmediatos recientes */
+  DROP TEMPORARY TABLE IF EXISTS tmp_autod_rides;
+  CREATE TEMPORARY TABLE tmp_autod_rides (
+    ride_id BIGINT UNSIGNED PRIMARY KEY
+  ) ENGINE=MEMORY;
+
+  /* Programados dentro del lead time */
+  INSERT IGNORE INTO tmp_autod_rides(ride_id)
+  SELECT r.id
+  FROM rides r
+  WHERE r.tenant_id = p_tenant_id
+    AND r.driver_id IS NULL
+    AND r.status IN ('requested','offered')
+    AND r.scheduled_for IS NOT NULL
+    AND r.scheduled_for BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL v_lead_min MINUTE)
+  LIMIT 50;
+
+  /* Inmediatos (creados hace <=10 min) */
+  INSERT IGNORE INTO tmp_autod_rides(ride_id)
+  SELECT r.id
+  FROM rides r
+  WHERE r.tenant_id = p_tenant_id
+    AND r.driver_id IS NULL
+    AND r.status IN ('requested','offered')
+    AND r.scheduled_for IS NULL
+    AND TIMESTAMPDIFF(MINUTE, r.created_at, NOW()) <= 10
+  LIMIT 50;
+
+  /* Expira ofertas vencidas antes de disparar la siguiente ola */
+  CALL sp_expire_offers_v2(p_tenant_id);
+
+  /* ===== Sub-bloque para el cursor (DECLAREs al inicio del bloque) ===== */
+  BEGIN
+    DECLARE v_ride_id BIGINT UNSIGNED;
+    DECLARE done INT DEFAULT 0;
+
+    DECLARE cur_rides CURSOR FOR
+      SELECT ride_id FROM tmp_autod_rides ORDER BY ride_id;
+
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+    OPEN cur_rides;
+    read_loop: LOOP
+      FETCH cur_rides INTO v_ride_id;
+      IF done = 1 THEN
+        LEAVE read_loop;
+      END IF;
+
+      /* Si no hay accepted y el ride sigue sin driver → lanzar ola v2 */
+      IF (SELECT COUNT(*) FROM ride_offers WHERE ride_id=v_ride_id AND status='accepted') = 0
+         AND (SELECT driver_id FROM rides WHERE id=v_ride_id) IS NULL THEN
+        CALL sp_offer_wave_base_prio_v2(p_tenant_id, v_ride_id, v_wave_n, v_offer_expires);
+      END IF;
+    END LOOP;
+    CLOSE cur_rides;
+  END;
+
+  DROP TEMPORARY TABLE IF EXISTS tmp_autod_rides;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_cancel_ride_v1`(
+  IN p_tenant_id BIGINT UNSIGNED,
+  IN p_ride_id   BIGINT UNSIGNED
+  -- , IN p_reason   VARCHAR(255)  -- si luego agregas rides.cancel_reason, podemos usar este parámetro
+)
+BEGIN
+  DECLARE v_status VARCHAR(20);
+
+  /* 1) Validar ride del tenant */
+  SELECT r.status
+    INTO v_status
+  FROM rides r
+  WHERE r.id = p_ride_id
+    AND r.tenant_id = p_tenant_id
+  LIMIT 1;
+
+  IF v_status IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride inexistente o de otro tenant';
+  END IF;
+
+  /* 2) Validar estado cancelable (ajusta tu política si quieres restringir más) */
+  IF v_status NOT IN ('requested','offered','accepted') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride no cancelable en su estado actual';
+  END IF;
+
+  /* 3) Cancelar ride */
+  UPDATE rides
+     SET status = 'canceled'
+   WHERE id = p_ride_id
+     AND tenant_id = p_tenant_id;
+
+  /* 4) Cancelar ofertas vivas o aceptadas */
+  UPDATE ride_offers
+     SET responded_at = COALESCE(responded_at, NOW()),
+         response     = 'canceled',
+         status       = 'canceled'
+   WHERE tenant_id = p_tenant_id
+     AND ride_id   = p_ride_id
+     AND status IN ('offered','accepted');
+
+  /* SIN SELECT final */
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_cancel_ride_v2`(
+  IN p_tenant_id   BIGINT UNSIGNED,
+  IN p_ride_id     BIGINT UNSIGNED,
+  IN p_canceled_by VARCHAR(32),
+  IN p_reason      VARCHAR(255)
+)
+BEGIN
+  DECLARE v_status VARCHAR(20); DECLARE v_by_lc VARCHAR(32); DECLARE v_by_norm VARCHAR(32);
+  DECLARE v_economico VARCHAR(64); DECLARE v_plate VARCHAR(64);
+
+  SELECT r.status INTO v_status FROM rides r WHERE r.id=p_ride_id AND r.tenant_id=p_tenant_id LIMIT 1;
+  IF v_status IS NULL THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Ride inexistente o de otro tenant'; END IF;
+  IF v_status NOT IN ('requested','offered','accepted','en_route','arrived','on_board') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Ride no cancelable en su estado actual';
+  END IF;
+
+  SET v_by_lc = LOWER(TRIM(COALESCE(p_canceled_by,'')));
+  SET v_by_norm = CASE
+    WHEN v_by_lc IN ('dispatch','ops','operator') THEN 'dispatch'
+    WHEN v_by_lc IN ('driver','conductor') THEN 'driver'
+    WHEN v_by_lc IN ('passenger','cliente','rider') THEN 'passenger'
+    WHEN v_by_lc IN ('system','sistema') THEN 'system'
+    ELSE 'dispatch'
+  END;
+
+  SELECT v.economico, v.plate INTO v_economico, v_plate
+  FROM vehicles v JOIN rides r ON r.vehicle_id=v.id
+  WHERE r.id=p_ride_id AND r.tenant_id=p_tenant_id LIMIT 1;
+
+  UPDATE rides
+     SET status='canceled',
+         canceled_at=NOW(),
+         canceled_by=v_by_norm,
+         cancel_reason=NULLIF(TRIM(COALESCE(p_reason,'')),'')
+   WHERE id=p_ride_id AND tenant_id=p_tenant_id;
+
+  INSERT INTO ride_status_history(tenant_id, ride_id, prev_status, new_status, meta, created_at)
+  VALUES (p_tenant_id, p_ride_id, v_status, 'canceled',
+          JSON_OBJECT('canceled_by', v_by_norm, 'reason', NULLIF(TRIM(COALESCE(p_reason,'')),''), 
+                      'economico', v_economico, 'plate', v_plate),
+          NOW());
+
+  UPDATE ride_offers
+     SET responded_at=COALESCE(responded_at,NOW()), response='canceled', status='canceled'
+   WHERE tenant_id=p_tenant_id AND ride_id=p_ride_id AND status IN ('offered','accepted');
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_complete_ride_v1`(
+  IN p_tenant_id   BIGINT UNSIGNED,
+  IN p_ride_id     BIGINT UNSIGNED,
+  IN p_distance_m  INT,
+  IN p_duration_s  INT
+)
+BEGIN
+  DECLARE v_prev_status VARCHAR(20);
+  DECLARE v_economico VARCHAR(64); DECLARE v_plate VARCHAR(64);
+
+  SELECT status INTO v_prev_status
+  FROM rides
+  WHERE id=p_ride_id AND tenant_id=p_tenant_id AND driver_id IS NOT NULL AND status='accepted'
+  LIMIT 1;
+  IF v_prev_status IS NULL THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Ride no finalizable (tenant/driver/status)'; END IF;
+
+  IF p_distance_m IS NOT NULL THEN
+    UPDATE rides SET distance_m=p_distance_m WHERE id=p_ride_id AND tenant_id=p_tenant_id;
+  END IF;
+  IF p_duration_s IS NOT NULL THEN
+    UPDATE rides SET duration_s=p_duration_s WHERE id=p_ride_id AND tenant_id=p_tenant_id;
+  END IF;
+
+  SELECT v.economico, v.plate INTO v_economico, v_plate
+  FROM vehicles v JOIN rides r ON r.vehicle_id=v.id
+  WHERE r.id=p_ride_id AND r.tenant_id=p_tenant_id LIMIT 1;
+
+  UPDATE rides SET status='finished', finished_at=NOW()
+   WHERE id=p_ride_id AND tenant_id=p_tenant_id;
+
+  INSERT INTO ride_status_history(tenant_id, ride_id, prev_status, new_status, meta, created_at)
+  VALUES (p_tenant_id, p_ride_id, v_prev_status, 'finished',
+          JSON_OBJECT('distance_m', p_distance_m, 'duration_s', p_duration_s,
+                      'economico', v_economico, 'plate', v_plate),
+          NOW());
+END$$
+DELIMITER ;
+
+DELIMITER $$
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_create_offer`(
+  IN p_tenant_id   BIGINT UNSIGNED,
+  IN p_ride_id     BIGINT UNSIGNED,
+  IN p_driver_id   BIGINT UNSIGNED,
+  IN p_expires_sec INT  -- NULL => 30s
+)
+BEGIN
+  DECLARE v_origin_lat DOUBLE;
+  DECLARE v_origin_lng DOUBLE;
+  DECLARE v_ride_status VARCHAR(20);
+  DECLARE v_vehicle_id BIGINT UNSIGNED;
+  DECLARE v_driver_status VARCHAR(10);
+  DECLARE v_distance_m INT;
+  DECLARE v_eta_seconds INT;
+  DECLARE v_round_no INT;
+  DECLARE v_offer_id BIGINT UNSIGNED;
+
+  /* 1) Validar ride del tenant, ofertable y sin driver */
+  SELECT r.origin_lat, r.origin_lng, r.status
+    INTO v_origin_lat, v_origin_lng, v_ride_status
+  FROM rides r
+  WHERE r.id = p_ride_id
+    AND r.tenant_id = p_tenant_id
+    AND r.driver_id IS NULL
+    AND r.status IN ('requested','offered')   -- estados reales en tu enum
+  LIMIT 1;
+
+  IF v_origin_lat IS NULL OR v_origin_lng IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ride no ofertable (tenant/estado/driver_id/origen inválidos)';
+  END IF;
+
+  /* 2) Validar driver del tenant + estado + últ
