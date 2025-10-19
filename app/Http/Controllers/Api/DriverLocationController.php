@@ -11,66 +11,41 @@ class DriverLocationController
         return $this->update($req, $driver);
     }
 
-    public function update(Request $req, ?int $driver = null)
+      public function update(Request $r)
     {
-        $data = $req->validate([
-            'lat'          => 'required|numeric',
-            'lng'          => 'required|numeric',
-            'heading_deg'  => 'nullable|numeric',
-            'speed'        => 'nullable|numeric',   // alias
-            'speed_kmh'    => 'nullable|numeric',   // nativo si lo mandas
+        $user = $r->user();
+        $tenantId = $r->header('X-Tenant-ID') ?: ($user->tenant_id ?? 1);
+
+        $data = $r->validate([
+            'lat'  => 'required|numeric',
+            'lng'  => 'required|numeric',
+            'busy' => 'nullable|boolean',
+            'speed_kmh' => 'nullable|numeric',
         ]);
 
-        // --- quién es el driver / tenant ---
-        $driverId = $this->resolveDriverId($req, $driver);
-        if (!$driverId) abort(400, 'No driver bound');
+        $driver = DB::table('drivers')
+            ->where('tenant_id',$tenantId)->where('user_id',$user->id)->first();
+        if(!$driver) return response()->json(['ok'=>false,'msg'=>'No driver'], 403);
 
-        $tenantId = $this->resolveTenantId($req, $driverId);
-        if (!$tenantId) abort(400, 'No tenant bound');
-
-        $now   = now();
-        $speed = $data['speed_kmh'] ?? $data['speed'] ?? null;
-
-        // --- 1) guarda ping crudo ---
         DB::table('driver_locations')->insert([
-            'tenant_id'   => $tenantId,
-            'driver_id'   => $driverId,
-            'lat'         => (float)$data['lat'],
-            'lng'         => (float)$data['lng'],
-            'speed_kmh'   => $speed,
-            'heading_deg' => $data['heading_deg'] ?? null,
-            'reported_at' => $now,
-            'created_at'  => $now,
+            'tenant_id' => $tenantId, 'driver_id'=>$driver->id,
+            'lat'=>$data['lat'], 'lng'=>$data['lng'],
+            'speed_kmh'=>$data['speed_kmh'] ?? null,
+            'reported_at'=>now(), 'created_at'=>now(), 
         ]);
 
-        // --- 2) ¿tiene viaje activo? (para status busy/idle) ---
-        $hasRide = DB::table('rides')
-            ->where('tenant_id', $tenantId)
-            ->where('driver_id', $driverId)
-            ->whereIn('status', ['ASSIGNED','EN_ROUTE','ARRIVED','BOARDING','ONBOARD'])
-            ->exists();
-
-        // --- 3) actualiza “last_*” en drivers (esto es lo que requieren tus SPs) ---
-        DB::table('drivers')
-            ->where('tenant_id', $tenantId)
-            ->where('id', $driverId)
-            ->update([
-                'last_lat'     => (float)$data['lat'],
-                'last_lng'     => (float)$data['lng'],
-                'last_ping_at' => $now,                  // DATETIME
-                'last_bearing' => $data['heading_deg'] ?? null,
-                'last_speed'   => $speed,
-                'last_seen_at' => $now,                  // TIMESTAMP
-                'status'       => $hasRide ? 'busy' : 'idle',
-                'updated_at'   => $now,
+        // Ajusta estado manual si viene busy explícito
+        if (array_key_exists('busy',$data)) {
+            $new = $data['busy'] ? 'busy' : 'idle';
+            DB::table('drivers')->where('id',$driver->id)->update([
+                'status'=>$new, 
             ]);
+        } else {
+            // si no mandan busy y el driver no tiene ride activo, lo mantenemos como está
+        }
 
-        return response()->json([
-            'ok'        => true,
-            'driver_id' => $driverId,
-            'tenant_id' => $tenantId,
-            'status'    => $hasRide ? 'busy' : 'idle',
-        ]);
+        // Mantén el watchdog aparte para offline por inactividad
+        return response()->json(['ok'=>true]);
     }
 
     private function resolveDriverId(Request $req, ?int $driverParam): ?int

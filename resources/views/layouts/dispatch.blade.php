@@ -1,25 +1,32 @@
 <?php /* resources/views/layouts/dispatch.blade.php */ ?>
 <!doctype html>
 <html lang="es" data-theme="light">
+
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>@yield('title','Dispatch') · CabcontrolMx</title>
+  <title>@yield('title','Dispatch') · Athera</title>
 {{-- Feather por CDN (iconos) --}}
  <!-- choose one -->
-<script src="https://unpkg.com/feather-icons"></script>
+<!-- <script src="https://unpkg.com/feather-icons"></script> -->
 <script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
 
   {{-- Hoja dinámica (light/dark) de AdminKit --}}
   <link id="themeStylesheet" rel="stylesheet" href="{{ Vite::asset('resources/css/adminkit/light.css') }}">
   @vite('resources/css/app.css')
   @stack('styles')
+
+ <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+
 </head>
 <body>
 
   {{-- Topbar compacta para Dispatch --}}
   <nav class="navbar navbar-expand px-3 border-bottom bg-body">
-    <a href="{{ route('admin.dashboard') }}" class="navbar-brand fw-semibold me-3">CabcontrolMx</a>
+    <a href="{{ route('admin.dashboard') }}" class="navbar-brand fw-semibold me-3">Athera-Dispatch</a>
 
     <ul class="navbar-nav me-auto">
       <li class="nav-item">
@@ -73,5 +80,12 @@
 
   @vite('resources/js/adminkit.js')
   @stack('scripts')
+
+  <script>
+  // helper único para todo el JS de Dispatch
+  window.getTenantId = function () {
+    return {{ (int) (auth()->user()->tenant_id ?? 1) }};
+  };
+</script>
 </body>
 </html>

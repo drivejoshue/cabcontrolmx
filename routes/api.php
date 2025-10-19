@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\QueueController;
 
     Route::post('/auth/login',  [DriverAuthController::class, 'login']);
     Route::post('/auth/logout', [DriverAuthController::class, 'logout'])->middleware('auth:sanctum');
+    Route::get('/auth/me',      [DriverAuthController::class, 'me'])->middleware('auth:sanctum'); // ← AQUÍ
 
 
     // ===== RIDES CRUD =====
@@ -71,13 +72,16 @@ use App\Http\Controllers\Api\QueueController;
     Route::get ('/dispatch/active',         [DispatchController::class,'active']);
     Route::get ('/dispatch/drivers',        [DispatchController::class,'driversLive']);
     Route::post('/dispatch/assign',         [DispatchController::class,'assign']);
-    Route::post('/dispatch/cancel',         [DispatchController::class,'cancel']);
+
+    Route::post('/dispatch/rides/{ride}/cancel', [DispatchController::class,'cancel']);
+
+    Route::get('/cancel-reasons', [\App\Http\Controllers\Api\RideController::class,'cancelReasons']);
     Route::get ('/dispatch/nearby-drivers', [DispatchController::class,'nearbyDrivers']);
 
 
 
-    // ===== DRIVER (móvil) con Sanctum =====
-    Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
+   // ===== DRIVER (móvil) con Sanctum =====
+        Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
         Route::post('/shifts/start',  [DriverShiftController::class, 'start']);
         Route::post('/shifts/finish', [DriverShiftController::class, 'finish']);
         
@@ -89,12 +93,17 @@ use App\Http\Controllers\Api\QueueController;
         Route::post('/rides/{ride}/board',  [\App\Http\Controllers\Api\RideController::class,'board']);
         Route::post('/rides/{ride}/finish', [\App\Http\Controllers\Api\RideController::class,'finish']);
 
+           Route::post('/rides/{ride}/cancel', [RideController::class,'cancelByDriver']);
+
+
+
+         Route::get('/rides/active', [\App\Http\Controllers\Api\RideController::class, 'activeForDriver']);
+
         Route::get ('/geo/geocode', [GeoController::class,'geocode']);
         Route::post('/geo/route',   [GeoController::class,'route']);
 
-        Route::match(['put','post'], '/location',
-    [DriverLocationController::class, 'update']
-);
+        Route::match(['put','post'], '/location',[DriverLocationController::class, 'update']
+); 
 
 
     });

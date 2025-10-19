@@ -7,7 +7,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class DriverShiftController extends Controller
-{
+{   
+
+
+
+
+
     public function start(Request $r)
     {
         $user = $r->user();
@@ -63,21 +68,96 @@ class DriverShiftController extends Controller
         return response()->json(['ok'=>true, 'shift_id'=>$shiftId]);
     }
 
-    public function finish(Request $r)
+  public function finish(Request $r)
     {
-        $user = $r->user();
+        $user     = $r->user();
         $tenantId = $user->tenant_id ?? 1;
 
+        // Driver primero (lo usas abajo)
+        $driver = DB::table('drivers')
+            ->where('user_id', $user->id)
+            ->where('tenant_id', $tenantId)
+            ->first();
+
+        if (!$driver) {
+            return response()->json(['message' => 'No driver'], 403);
+        }
+
+        // shift_id OPCIONAL
         $data = $r->validate([
-            'shift_id' => 'required|integer',
+            'shift_id' => 'nullable|integer',
         ]);
 
-        $aff = DB::table('driver_shifts')
-            ->where('tenant_id',$tenantId)
-            ->where('id',$data['shift_id'])
-            ->whereNull('ended_at')
-            ->update(['ended_at'=>now(), 'status'=>'cerrado', 'updated_at'=>now()]);
+        if (empty($data['shift_id'])) {
+            $openShift = DB::table('driver_shifts')
+                ->where('tenant_id', $tenantId)
+                ->where('driver_id', $driver->id)
+                ->whereNull('ended_at')
+                ->where('status', 'abierto')
+                ->orderByDesc('started_at')
+                ->first();
+            if (!$openShift) {
+                return response()->json(['ok'=>false,'message'=>'No hay turno abierto'], 404);
+            }
+            $data['shift_id'] = $openShift->id;
+        }
 
-        return response()->json(['ok'=> (bool)$aff]);
+        try {
+            $result = DB::transaction(function () use ($tenantId, $driver, $data) {
+                $shift = DB::table('driver_shifts')
+                    ->where('tenant_id', $tenantId)
+                    ->where('id', $data['shift_id'])
+                    ->where('driver_id', $driver->id)
+                    ->whereNull('ended_at')
+                    ->where('status', 'abierto')
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$shift) {
+                    return ['ok' => false, 'http' => 404, 'msg' => 'Turno no encontrado o ya cerrado'];
+                }
+
+                $hasActiveRide = DB::table('rides')
+                    ->where('tenant_id', $tenantId)
+                    ->where('driver_id', $driver->id)
+                    ->whereIn('status', ['accepted','en_route','arrived','on_board'])
+                    ->exists();
+
+                if ($hasActiveRide) {
+                    return ['ok' => false, 'http' => 422, 'msg' => 'No puedes cerrar turno con un servicio activo'];
+                }
+
+                DB::table('driver_shifts')->where('id', $shift->id)->update([
+                    'ended_at'   => now(),
+                    'status'     => 'cerrado',
+                    'updated_at' => now(),
+                ]);
+
+                $hasOtherOpenShift = DB::table('driver_shifts')
+                    ->where('tenant_id', $tenantId)
+                    ->where('driver_id', $driver->id)
+                    ->whereNull('ended_at')
+                    ->where('status', 'abierto')
+                    ->exists();
+
+                if (!$hasOtherOpenShift) {
+                    DB::table('drivers')->where('id', $driver->id)->update([
+                        'status'     => 'offline',
+                        'updated_at' => now(),
+                    ]);
+                }
+
+                return ['ok' => true, 'http' => 200, 'msg' => 'Turno cerrado'];
+            });
+
+            return response()->json(['ok' => $result['ok'], 'message' => $result['msg']], $result['http']);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'Error al cerrar turno',
+                'error'   => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
     }
+
 }

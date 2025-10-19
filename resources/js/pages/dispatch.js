@@ -715,72 +715,127 @@ function renderActiveRides(rides){
   el.innerHTML='';
   const b = document.getElementById('badgeActivos'); if (b) b.innerText = (rides||[]).length;
 
-  const STATUS = {
-    requested:{label:'Requerido',color:'primary'},
-    scheduled:{label:'Programado',color:'info'},
-    offered:{label:'Ofertado',color:'purple'},
-    accepted:{label:'Aceptado',color:'indigo'},
-    assigned:{label:'Asignado',color:'warning'},
-    en_route:{label:'En ruta',color:'teal'},
-    arrived:{label:'Llegó',color:'orange'},
-    boarding:{label:'Abordando',color:'warning'},
-    onboard:{label:'A bordo',color:'danger'},
-    finished:{label:'Terminado',color:'success'},
-    canceled:{label:'Cancelado',color:'secondary'},
-    cancelled:{label:'Cancelado',color:'secondary'},
-  };
+  // índice rápido para acciones (assign/view) sin pedir el detalle
+  window._ridesIndex = new Map();
 
   (rides||[]).forEach(r=>{
-    const sRaw = String(r.status||'').toLowerCase();
-    const meta = STATUS[sRaw] || {label:(sRaw||'—'), color:'secondary'};
+    // guarda en índice
+    try { window._ridesIndex.set(r.id, r); } catch {}
 
-    // 👇 Coerción segura a número
-    const dm = Number(r.distance_m);
-    const ds = Number(r.duration_s);
-    const qa = Number(r.quoted_amount);
+    // usa las helpers de la sección //----helpers  card------
+    const html = renderRideCard(r);
+    if (!html) return; // oculto solo si terminal
 
-    const km  = Number.isFinite(dm) ? (dm/1000).toFixed(1)+' km' : '—';
-    const min = Number.isFinite(ds) ? Math.round(ds/60)+' min'     : '—';
-    const fare= Number.isFinite(qa) ? ('$'+Math.round(qa))         : '—';
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    const card = wrapper.firstElementChild;
 
-    const when = r.scheduled_for ? `Prog: ${new Date(r.scheduled_for).toLocaleString()}` : 'Ahora';
+    // wire del botón "Ver" (si tu renderRideCard no lo enlaza solo)
+    card.querySelector('[data-act="view"]')?.addEventListener('click', ()=> highlightRideOnMap(r));
 
-    const card = document.createElement('div');
-    card.className = 'card mb-2 cc-ride-card';
-    card.innerHTML = `
-      <div class="cc-ride-header bg-${meta.color}">
-        <div class="d-flex justify-content-between align-items-center">
-          <div class="text-white fw-semibold">#${r.id} · ${meta.label}</div>
-          <button class="btn btn-xs btn-light" data-zoom>Ver</button>
-        </div>
-      </div>
-      <div class="card-body py-2">
-        <div><b>${r.passenger_name||'-'}</b> <span class="text-muted">(${r.passenger_phone||''})</span></div>
-        <div class="small">${r.origin_label||'—'}</div>
-        <div class="small">→ ${r.dest_label||'—'}</div>
-        <div class="small text-muted mt-1">
-          Dist: <b>${km}</b> · Tiempo: <b>${min}</b> · Tarifa: <b>${fare}</b>
-        </div>
-        <div class="small text-muted">${when}</div>
-      </div>
-      <div class="card-footer py-2 d-flex justify-content-end gap-2">
-        <button class="btn btn-sm btn-outline-success" data-assign>Asignar</button>
-        <button class="btn btn-sm btn-outline-danger"  data-cancel>Cancelar</button>
-      </div>
-    `;
-    card.querySelector('[data-zoom]')   .addEventListener('click', ()=> highlightRideOnMap(r));
-    card.querySelector('[data-assign]').addEventListener('click', ()=> openAssignFlow(r));
-    card.querySelector('[data-cancel]').addEventListener('click', async ()=>{
-      if(!confirm('Cancelar este viaje?')) return;
-      await fetch('/api/dispatch/cancel',{method:'POST',
-        headers:{'Content-Type':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').content},
-        body: JSON.stringify({ride_id:r.id})
-      });
-      refreshDispatch();
-    });
     el.appendChild(card);
   });
 }
+
+// ===== CANCELACIÓN CON SWEETALERT2 (event delegation + no duplicar handler) =====
+if (!window.__cancelHandlerBound) {
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.btn-cancel');
+    if (!btn) return;
+
+    const rideId = btn.getAttribute('data-ride-id');
+    if (!rideId) return;
+
+    // 1) Modal de confirmación
+    const result = await Swal.fire({
+      title: '¿Cancelar el servicio?',
+      text: 'Esta acción no se puede deshacer.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Sí, cancelar',
+      cancelButtonText: 'No',
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      reverseButtons: true,
+      focusCancel: true
+    });
+
+    if (!result.isConfirmed) return;
+
+    // 2) (Opcional) Motivo de cancelación: si tienes una lista en window.cancelReasons, muéstrala.
+    //    Si aún no la tienes, omitimos este paso y mandamos 'null'.
+    let chosenReason = null;
+    if (Array.isArray(window.cancelReasons) && window.cancelReasons.length > 0) {
+      const { value: reasonId } = await Swal.fire({
+        title: 'Motivo de cancelación',
+        input: 'select',
+        inputOptions: window.cancelReasons.reduce((acc, r) => {
+          acc[r.id] = r.label;
+          return acc;
+        }, {}),
+        inputPlaceholder: 'Selecciona un motivo',
+        showCancelButton: true,
+        confirmButtonText: 'Continuar',
+        cancelButtonText: 'Volver',
+      });
+      if (reasonId === undefined) return; // canceló el select
+      const item = window.cancelReasons.find(r => String(r.id) === String(reasonId));
+      chosenReason = item ? item.label : null;
+    }
+
+    // 3) Evitar doble click
+    const prevText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Cancelando…';
+
+    try {
+      const res = await fetch(`/api/dispatch/rides/${rideId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-ID': window.currentTenantId || 1,
+        },
+        body: JSON.stringify({ reason: chosenReason }) // null o label del motivo
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.ok === false) {
+        await Swal.fire({
+          icon: 'error',
+          title: 'No se pudo cancelar',
+          text: json.msg || `HTTP ${res.status}`
+        });
+        return;
+      }
+
+      await Swal.fire({
+        icon: 'success',
+        title: 'Cancelado',
+        timer: 1200,
+        showConfirmButton: false
+      });
+
+      if (typeof loadActiveRides === 'function') {
+        await loadActiveRides();
+      } else {
+        location.reload();
+      }
+    } catch (err) {
+      console.error('cancel error', err);
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error de red',
+        text: 'No se pudo contactar al servidor.'
+      });
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prevText;
+    }
+  });
+
+  window.__cancelHandlerBound = true;
+}
+
 
 
 function suggestedLineStyle(){
@@ -813,6 +868,31 @@ async function ensureDriverPreviewLine(driverId, ride) {
   e.previewLine = line.addTo(layerRoute);
   return e.previewLine;
 }
+
+// Traza DRIVER->ORIGEN usando el pin si existe; si no, usa lat/lng del candidato
+async function ensurePreviewLineForCandidate(candidate, ride) {
+  const id = candidate.id || candidate.driver_id;
+  const e  = driverPins.get(Number(id));
+
+  let fromLL = null;
+  if (e?.marker) {
+    fromLL = e.marker.getLatLng();
+  } else if (Number.isFinite(candidate.lat) && Number.isFinite(candidate.lng)) {
+    fromLL = L.latLng(candidate.lat, candidate.lng);
+  } else {
+    return null; // sin pin ni coords del candidato
+  }
+  const toLL = L.latLng(ride.origin_lat, ride.origin_lng);
+
+  const line = await drawSuggestedRoute(fromLL, toLL);
+  line.setStyle(suggestedLineStyle());
+  line.options.className = 'cc-suggested';
+
+  if (e) e.previewLine = line; // recuerda la línea en el pin si existe
+  line.addTo(layerRoute);
+  return line;
+}
+
 
 function clearAllPreviews() {
   driverPins.forEach(e => {
@@ -858,6 +938,33 @@ async function drawSuggestedRoute(fromLL, toLL){
   const latlngs = coords.map(c => [c[1], c[0]]);
   return L.polyline(latlngs, { pane:'routePane', className:'cc-suggested', ...suggestedLineStyle() });
 
+}
+
+// Dibuja TODAS las líneas driver->pickup para un ride (sin abrir panel)
+async function drawAllPreviewLinesFor(ride, candidates) {
+  // ordena por distancia y limita a TOP_N
+  const TOP_N = 12;
+  const ordered = [...(candidates || [])]
+    .sort((a,b)=> (a.distance_km??9e9) - (b.distance_km??9e9))
+    .slice(0, TOP_N);
+
+  // dibuja con stagger para no saturar Directions/OSRM
+  for (let i=0; i<ordered.length; i++) {
+    const c = ordered[i];
+    const id = c.id || c.driver_id;
+    try { await ensureDriverPreviewLine(id, ride); } catch {}
+    await new Promise(res => setTimeout(res, 90));
+  }
+
+  // (opcional) resaltar el más cercano
+  const best = ordered[0];
+  if (best) {
+    const id = best.id || best.driver_id;
+    const pin = driverPins.get(id);
+    if (pin?.previewLine) {
+      try { pin.previewLine.setStyle(suggestedLineSelectedStyle()); pin.previewLine.bringToFront(); } catch {}
+    }
+  }
 }
 
 
@@ -944,21 +1051,67 @@ async function previewCandidatesFor(ride, limit = 8, radiusKm = 5){
     const url = `/api/dispatch/nearby-drivers?lat=${ride.origin_lat}&lng=${ride.origin_lng}&km=${radiusKm}`;
     const r = await fetch(url, { headers:{ Accept:'application/json' } });
     const list = r.ok ? await r.json() : [];
-    // ordena por distancia y toma top N
+
     const ordered = (Array.isArray(list) ? list : [])
       .sort((a,b)=> (a.distance_km??9e9) - (b.distance_km??9e9))
       .slice(0, Math.max(1, limit|0));
 
-    // pinta líneas punteadas para cada candidato
     for (const c of ordered) {
-      const id = c.id || c.driver_id;
-      try { await ensureDriverPreviewLine(id, ride); } catch {}
-      // espaciar levemente las llamadas a Directions/OSRM
+      try { await ensurePreviewLineForCandidate(c, ride); } catch {}
       await new Promise(res=> setTimeout(res, 90));
     }
   } catch (e) {
     console.warn('[previewCandidatesFor] error', e);
   }
+}
+async function drawPreviewLinesStagger(ride, candidates, topN = 12) {
+  const ordered = [...(candidates||[])]
+    .sort((a,b)=>(a.distance_km??9e9)-(b.distance_km??9e9))
+    .slice(0, topN);
+
+  for (let i=0; i<ordered.length; i++) {
+    const c = ordered[i];
+    try { await ensurePreviewLineForCandidate(c, ride); } catch {}
+    await new Promise(res => setTimeout(res, 90));
+  }
+
+  const best = ordered[0];
+  if (best) {
+    const id = best.id || best.driver_id;
+    const pin = driverPins.get(Number(id));
+    if (pin?.previewLine) {
+      try { pin.previewLine.setStyle(suggestedLineSelectedStyle()); pin.previewLine.bringToFront(); } catch {}
+    }
+  }
+}
+
+// Dibuja TODAS las líneas driver->pickup (stagger) SIN DOM del panel
+async function drawPreviewLinesStagger(ride, candidates, topN = 12) {
+  const ordered = [...(candidates||[])]
+    .sort((a,b)=>(a.distance_km??9e9)-(b.distance_km??9e9))
+    .slice(0, topN);
+
+  for (let i=0; i<ordered.length; i++) {
+    const c = ordered[i];
+    const id = c.id || c.driver_id;
+    try { await ensureDriverPreviewLine(id, ride); } catch {}
+    await new Promise(res => setTimeout(res, 90)); // reparte llamadas a Directions
+  }
+
+  // Resalta el más cercano (opcional)
+  const best = ordered[0];
+  if (best) {
+    const id = best.id || best.driver_id;
+    const pin = driverPins.get(id);
+    if (pin?.previewLine) {
+      try { pin.previewLine.setStyle(suggestedLineSelectedStyle()); pin.previewLine.bringToFront(); } catch {}
+    }
+  }
+}
+async function focusRideOnMap(rideId){
+  const ride = window._ridesIndex?.get?.(rideId)
+    || (await fetch(`/api/dispatch/rides/${rideId}`, { headers:{ Accept:'application/json' } }).then(r=>r.json()));
+  return highlightRideOnMap(ride);
 }
 
 
@@ -1015,6 +1168,190 @@ function bearingBetween(a,b){
 let _assignPanel, _assignSelected = null, _assignRide = null;
 let _assignOriginPin = null;let _assignPickupMarker = null;
 
+//----helpers  card------
+
+function shouldHideRideCard(ride) {
+  const st = String(ride.status || '').toLowerCase();
+  return st === 'completed' || st === 'canceled';
+}
+
+// Intenta tomar resumen de ofertas (si tu API lo trae en el ride)
+function summarizeOffers(ride) {
+  const offers = Array.isArray(ride.offers) ? ride.offers : [];
+  const anyAccepted = offers.some(o => o.status === 'accepted');
+  const anyOffered  = offers.some(o => o.status === 'offered');
+  const rejectedBy  = offers.filter(o => o.status === 'rejected')
+                            .map(o => o.driver_name || `#${o.driver_id}`);
+  return { offers, anyAccepted, anyOffered, rejectedBy };
+}
+
+function deriveRideUi(ride) {
+  const st = String(ride.status || '').toLowerCase();
+  const { anyAccepted, anyOffered, rejectedBy } = summarizeOffers(ride);
+
+  let badge = '';
+  let showAssign = false;
+  let showReoffer = false;
+  let showRelease = false;
+  let showCancel = true; // casi siempre, salvo terminal
+
+  if (st === 'requested') {
+    badge = 'Pendiente';
+    showAssign  = true;
+    showReoffer = true;
+  } else if (st === 'offered' || (anyOffered && !anyAccepted)) {
+    badge = 'Oferta enviada';
+    showAssign  = false; // <- lo importante: NO ocultar la card, solo el botón
+    showReoffer = true;
+  } else if (st === 'accepted' || st === 'assigned') {
+    badge = 'Aceptada';
+    showRelease = true;
+  } else if (st === 'en_route') {
+    badge = 'En ruta';
+    showRelease = true;
+  } else if (st === 'arrived') {
+    badge = 'Llegó al punto';
+    showRelease = true;
+  } else if (st === 'on_board' || st === 'onboard') {
+    badge = 'En viaje';
+    showRelease = false;
+  } else if (st === 'completed') {
+    badge = 'Completada'; showCancel = false;
+  } else if (st === 'canceled') {
+    badge = 'Cancelada';  showCancel = false;
+  } else {
+    badge = st; // fallback
+  }
+
+  return { badge, showAssign, showReoffer, showRelease, showCancel, rejectedBy };
+}
+
+
+function renderRideCard(ride) {
+  if (shouldHideRideCard(ride)) return '';
+
+  const ui = deriveRideUi(ride);
+
+  const rejectedHint = ui.rejectedBy?.length
+    ? `<div class="text-muted small mt-1">Rechazada por: ${ui.rejectedBy.join(', ')}</div>`
+    : '';
+
+  const km  = (ride.km != null && !isNaN(ride.km)) ? Number(ride.km).toFixed(1)
+            : (ride.distance_m ? (ride.distance_m / 1000).toFixed(1) : '-');
+
+  const min = (ride.min != null) ? ride.min
+            : (ride.duration_s ? Math.round(ride.duration_s / 60) : '-');
+
+  const amt = (ride.quoted_amount != null) ? ride.quoted_amount
+            : (ride.amount ?? '-');
+
+  const passName  = ride.passenger_name || '—';
+  const passPhone = ride.passenger_phone || '';
+  const originLbl = ride.origin_label
+                 || (Number.isFinite(ride.origin_lat) ? `${ride.origin_lat.toFixed(5)}, ${ride.origin_lng.toFixed(5)}` : '—');
+  const destLbl   = ride.dest_label
+                 || (Number.isFinite(ride.dest_lat)   ? `${ride.dest_lat.toFixed(5)}, ${ride.dest_lng.toFixed(5)}`     : '—');
+
+  return `
+  <div class="card mb-2" data-ride-id="${ride.id}">
+    <div class="card-body">
+      <!-- Header -->
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+          <div><strong>Ride #${ride.id}</strong> • <span class="badge bg-info">${ui.badge}</span></div>
+          <div class="small mt-1">
+            <span class="me-2"><i class="bi bi-person"></i> ${passName}</span>
+            ${passPhone ? `<span class="text-muted">${passPhone}</span>` : ''}
+          </div>
+        </div>
+        <div class="text-end small text-muted">
+          ${km} km · ${min} min · $${amt}
+        </div>
+      </div>
+
+      <!-- Origen/Destino -->
+      <div class="small mb-2">
+        <div><span class="text-muted">Origen:</span> ${originLbl}</div>
+        ${destLbl !== '—' ? `<div><span class="text-muted">Destino:</span> ${destLbl}</div>` : ''}
+        ${rejectedHint}
+      </div>
+
+      <!-- Botonera -->
+      <div class="d-flex justify-content-end">
+        <div class="btn-group">
+          ${ui.showAssign  ? `<button class="btn btn-sm btn-primary" data-act="assign">Asignar</button>` : ''}
+          ${ui.showReoffer ? `<button class="btn btn-sm btn-outline-primary" data-act="reoffer">Re-ofertar</button>` : ''}
+          ${ui.showRelease ? `<button class="btn btn-sm btn-warning" data-act="release">Liberar</button>` : ''}
+          ${ui.showCancel  ? `<button class="btn btn-outline-danger btn-sm btn-cancel" data-ride-id="${ride.id}">Cancelar</button>` : ''}
+          <button class="btn btn-sm btn-outline-secondary" data-act="view">Ver</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+
+
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type':'application/json',
+      'Accept':'application/json',
+      'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+      'Authorization': localStorage.getItem('auth_token') || ''
+    },
+    body: JSON.stringify(body || {})
+  });
+ if (!res.ok) {
+    const text = await res.text().catch(()=> '');
+    console.error('POST', url, '→', res.status, res.statusText, text);
+    throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+  }
+  return await res.json();
+}
+
+
+
+async function onRideAction(e) {
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  const card = btn.closest('[data-ride-id]');
+  if (!card) return;
+  const rideId = Number(card.dataset.rideId);
+  const act = btn.dataset.act;
+
+  try {
+    if (act === 'assign') {
+      // Abre tu flujo actual de asignación (offcanvas)
+      const ride = window._ridesIndex?.get?.(rideId) || (await fetch(`/api/dispatch/rides/${rideId}`, {headers:{Accept:'application/json'}}).then(r=>r.json()));
+      openAssignFlow(ride);
+      return; // no refresques todavía
+    }
+    if (act === 'reoffer') {
+      await postJSON('/api/dispatch/tick', { ride_id: rideId });
+    }
+    if (act === 'release') {
+      await postJSON('/api/dispatch/release', { ride_id: rideId });
+    }
+    if (act === 'cancel') {
+     await postJSON(`/api/dispatch/rides/${rideId}/cancel`);
+    }
+    if (act === 'view') {
+      focusRideOnMap(rideId); // tu helper para centrar/pintar
+      return; // sin refresh
+    }
+
+    // Tras acciones que cambian estado, refresca la lista
+    await refreshDispatch();
+  } catch (err) {
+    console.error(err);
+    alert('Acción fallida: ' + (err.message||err));
+  }
+}
+document.addEventListener('click', onRideAction);
+  
+  
 function renderAssignPanel(ride, candidates){
   _assignRide = ride; _assignSelected = null;
 
@@ -1102,15 +1439,54 @@ function getTenantId(){
 }
 
 // Limpia todas las previsualizaciones
-function clearAllPreviews(){
+function clearSuggestedLines() {
   try {
-    // líneas de cada driver
-    driverPins.forEach(e => { if (e.previewLine){ layerRoute.removeLayer(e.previewLine); e.previewLine = null; } });
-    // línea “general”
-    if (_assignPreviewLine){ layerRoute.removeLayer(_assignPreviewLine); _assignPreviewLine = null; }
-    // pin del pasajero
-    if (_assignPickupMarker){ (layerSuggested||layerRoute).removeLayer(_assignPickupMarker); _assignPickupMarker = null; }
-  } catch {}
+    // 1) Remueve TODAS las líneas de preview del layer (por className)
+    const toRemove = [];
+    layerRoute.eachLayer(l => {
+      try {
+        if (l instanceof L.Polyline) {
+          const cls = (l.options && l.options.className) || '';
+          if (String(cls).includes('cc-suggested')) toRemove.push(l);
+        }
+      } catch {}
+    });
+    toRemove.forEach(l => { try { layerRoute.removeLayer(l); } catch {} });
+
+    // 2) Limpia referencias por driver
+    driverPins.forEach(e => {
+      if (e.previewLine) {
+        try { layerRoute.removeLayer(e.previewLine); } catch {}
+        e.previewLine = null;
+      }
+    });
+
+    // 3) Limpia cualquier “preview” general/pickup marker del flujo de asignación
+    try {
+      if (typeof _assignPreviewLine !== 'undefined' && _assignPreviewLine) {
+        layerRoute.removeLayer(_assignPreviewLine); _assignPreviewLine = null;
+      }
+    } catch {}
+    try {
+      if (typeof _assignPickupMarker !== 'undefined' && _assignPickupMarker) {
+        (layerSuggested || layerRoute).removeLayer(_assignPickupMarker);
+        _assignPickupMarker = null;
+      }
+    } catch {}
+
+  } catch (err) {
+    console.warn('[clearSuggestedLines] error', err);
+  }
+}
+
+function onRideAssigned(ride) {
+  // 1) limpia todas las previsualizaciones
+  clearSuggestedLines();
+
+  // 2) dibuja la línea “real” driver→pickup (si ya hay driver_id)
+  if (ride?.driver_id && Number.isFinite(ride.origin_lat) && Number.isFinite(ride.origin_lng)) {
+    showDriverToPickup(ride.driver_id, ride.origin_lat, ride.origin_lng);
+  }
 }
 
 
@@ -1149,12 +1525,11 @@ document.getElementById('btnDoAssign').onclick = async ()=>{
   _assignPanel = _assignPanel || new bootstrap.Offcanvas(panelEl, {backdrop:false});
 
   panelEl.addEventListener('hidden.bs.offcanvas', () => {
-    clearAllPreviews();
+  onRideAssigned(_assignRide);
      }, { once:false });
 
   _assignPanel.show();
 }
-
 
 function openAssignFlow(ride){
   if (!ride || !Number.isFinite(ride.origin_lat) || !Number.isFinite(ride.origin_lng)) {
@@ -1178,7 +1553,6 @@ function openAssignFlow(ride){
     })
     .catch(e => { console.warn('nearby-drivers error', e); renderAssignPanel(ride, []); });
 }
-
 
 
 // ADD: POST de asignación + UI
@@ -1341,27 +1715,37 @@ document.addEventListener('DOMContentLoaded', async () => {
       const radiusKm  = Number(ds.auto_dispatch_preview_radius_km ?? 5);
 
       if (enabled && delaySec > 0 && Number.isFinite(ride.origin_lat) && Number.isFinite(ride.origin_lng)) {
-        showBubble('Servicio detectado · buscando candidatos...');
-        previewCandidatesFor(ride, prevN, radiusKm);
-        startCountdown(delaySec, (s)=> {
-          updateBubble(`Asignando en ${s}s...`);
-        }, async ()=> {
-          hideBubble();
-          // Dispara la ola por API (extra: útil si no la lanzaste del backend)
-          try{
-            await fetch('/api/dispatch/tick', {
-              method:'POST',
-              headers:{
-                'Content-Type':'application/json',
-                'Accept':'application/json',
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
-                'X-Tenant-ID': getTenantId()
-              },
-              body: JSON.stringify({ ride_id: ride.id })
-            });
-          }catch(e){ console.warn('tick error', e); }
-        });
-        }
+      showBubble('Servicio detectado · buscando candidatos...');
+      previewCandidatesFor(ride, prevN, radiusKm);
+
+      // <<< NUEVO: dibuja líneas un poco antes del tick, sin abrir panel >>>
+      const PAD_MS = 1200; // 1.2s antes del tick
+      setTimeout(async () => {
+        try {
+          const candidates = await getCandidatesFor(ride, radiusKm);
+          await drawPreviewLinesStagger(ride, candidates, prevN);
+        } catch(e) { console.warn('auto preview lines error', e); }
+      }, Math.max(0, delaySec*1000 - PAD_MS));
+
+      startCountdown(delaySec, (s)=> {
+        updateBubble(`Asignando en ${s}s...`);
+      }, async ()=> {
+        hideBubble();
+        try {
+          await fetch('/api/dispatch/tick', {
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json',
+              'Accept':'application/json',
+              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+              'X-Tenant-ID': getTenantId()
+            },
+            body: JSON.stringify({ ride_id: ride.id })
+          });
+        } catch(e) { console.warn('tick error', e); }
+      });
+}
+
 
 // feedback al operador
 //alert('Viaje creado #'+(ride.id||''));
@@ -1466,76 +1850,11 @@ refreshDispatch();
 
 
 
-  // ==== Helpers para pruebas en consola ====
-function _llFromMap(id){
-  const entry = driverPins.get(id);
-  if (entry) {
-    const ll = entry.marker.getLatLng();
-    return { lat: ll.lat, lng: ll.lng };
-  }
-  // fallback: centro del mapa
-  const c = (window.__map || map).getCenter();
-  return { lat: c.lat, lng: c.lng };
-}
-upsertDriver({ id: 1, lat: 19.20, lng: -96.14, vehicle_type:'van', driver_status:'busy', ride_status:'ASSIGNED', bearing: 135, shift_open:true, name:'Demo', vehicle_economico:'A-12' });
-
-// Reemplazo del viejo setDriverState(id, rideStatus, driverStatus, shiftOpen)
-function setDriverState(id, rideStatus = null, driverStatus = null, shiftOpen = true){
-  const { lat, lng } = _llFromMap(id);
-  upsertDriver({ id, lat, lng, ride_status: rideStatus, driver_status: driverStatus, shift_open: shiftOpen });
-}
-
-// Cambiar tipo/vehículo del driver
-function setDriverType(id, type){
-  const { lat, lng } = _llFromMap(id);
-  upsertDriver({ id, lat, lng, vehicle_type: String(type||'sedan').toLowerCase() });
-}
-
-// Rotar el icono
-function setDriverBearing(id, bearingDeg){
-  const { lat, lng } = _llFromMap(id);
-  upsertDriver({ id, lat, lng, bearing: bearingDeg });
-}
-
-// Mover en el mapa
-function moveDriver(id, lat, lng){
-  upsertDriver({ id, lat, lng });
-}
-
-// Crear/insertar rápido un driver de prueba
-function addDriver(o = {}){
-  const c = (window.__map || map).getCenter();
-  upsertDriver({
-    id: o.id ?? 1,
-    name: o.name ?? 'Conductor ' + (o.id ?? 1),
-    vehicle_type: o.type ?? 'sedan',
-    lat: o.lat ?? c.lat,
-    lng: o.lng ?? c.lng,
-    driver_status: o.ds ?? 'idle',
-    ride_status: o.rs ?? '',
-    bearing: o.b ?? 0,
-    vehicle_economico: o.eco ?? '0001',
-    vehicle_plate: o.pla ?? 'XYZ-123',
-    speed: o.spd ?? 0,
-    reported_at: new Date().toISOString(),
-    shift_open: (o.shift_open ?? true)
-  });
-}
-
-
-// Exponer en window para usarlos desde la consola
-window.setDriverState   = setDriverState;
-window.setDriverType    = setDriverType;
-window.setDriverBearing = setDriverBearing;
-window.moveDriver       = moveDriver;
-window.addDriver        = addDriver;
-window.showDriverToPickup = showDriverToPickup;
-window.clearDriverRoute   = clearDriverRoute;
-window.openAssignFlow= openAssignFlow;
-
-
+ 
 });
 
+// Evita ReferenceError si todavía no definiste el módulo de drivers
+window.getCandidatesFor ||= function _noopGetCandidatesFor() { return []; };
 
 // dentro del IIFE de dispatch.js, cerca de donde declaras capas:
 // driverPins: Map<driver_id, { marker, type, vstate }>
@@ -1642,7 +1961,19 @@ function upsertDriver(d) {
   }
 }
 
+function removeDriverById(id) {
+  const pin = driverPins.get(id);
+  if (pin) {
+    try { layerDrivers.removeLayer(pin.marker); } catch {}
+    driverPins.delete(id);
+  }
+}
 
+// Llama esto al confirmar logout del propio chofer
+// (después de POST /api/auth/logout 200 OK)
+function onSelfLogout(driverId) {
+  removeDriverById(driverId);
+}
 
 function renderDrivers(list){
   layerDrivers.clearLayers();

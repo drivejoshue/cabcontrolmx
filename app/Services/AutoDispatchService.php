@@ -15,11 +15,11 @@ class AutoDispatchService
 
         // OJO: usa los nombres reales de tus columnas. Si cambian, ajusta aquí.
         return (object)[
-            'enabled'               => (bool)($row->auto_dispatch_enabled ?? true),
+            'enabled'               => (bool)($row->auto_enabled  ?? true),
             'delay_s'               => (int) ($row->auto_dispatch_delay_s ?? 0),
             'radius_km'             => (float)($row->auto_dispatch_radius_km ?? 5.0),
-            'limit_n'               => (int) ($row->auto_dispatch_limit_n ?? 6),
-            'expires_s'             => (int) ($row->auto_dispatch_expires_s ?? 45),
+            'limit_n'               => (int) ($row->wave_size_n  ?? 6),
+            'expires_s'             => (int) ($row->offer_expires_sec  ?? 45),
             'auto_assign_if_single' => (bool)($row->auto_assign_if_single ?? false),
         ];
     }
@@ -61,6 +61,15 @@ class AutoDispatchService
             DB::statement('CALL sp_offer_wave_v1(?, ?, ?, ?, ?)', [
                 $tenantId, $rideId, $km, $limitN, $expires
             ]);
+
+             DB::table('ride_offers')
+            ->where('tenant_id', $tenantId)
+            ->where('ride_id',   $rideId)
+            ->where('status',    'offered')
+            ->whereNull('responded_at')
+            ->update(['is_direct' => 0]);
+
+
             return ['ok'=>true,'via'=>'sp_offer_wave_v1'];
         } catch (\Throwable $e) {
             $msg = $e->getMessage();
@@ -122,6 +131,13 @@ class AutoDispatchService
                     // ignora duplicado/driver sin shift, etc.
                 }
             }
+            DB::table('ride_offers')
+              ->where('tenant_id', $tenantId)
+              ->where('ride_id',   $rideId)
+              ->where('status',    'offered')
+              ->whereNull('responded_at')
+              ->update(['is_direct' => 0]);
+
 
             // auto-aceptar si SOLO hay 1 y así se pide
             if ($created === 1 && $autoAssignIfSingle) {

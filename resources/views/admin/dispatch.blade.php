@@ -256,6 +256,7 @@
 {{-- Leaflet una sola vez (sin duplicar) --}}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+
 <script>
   window.ccGoogleMapsKey = @json(config('services.google.maps.key', env('GOOGLE_MAPS_KEY','')));
 </script>
