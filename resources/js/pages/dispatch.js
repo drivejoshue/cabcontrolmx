@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css';
 /* =========================
  *  CONFIG
  * ========================= */
+
 const CENTER_DEFAULT = [19.1738, -96.1342];
 const DEFAULT_ZOOM   = 14;
 const OSM = {
@@ -14,12 +15,53 @@ const OSM = {
 const TENANT_ICONS = (window.ccTenant && window.ccTenant.map_icons) || {
   origin:  '/images/origen.png',
   dest:    '/images/destino.png',
-  stand:   '/images/marker-parqueo5.png'
+  stand:   '/images/marker-parqueo5.png',
+   stop:    '/images/stopride.png',
 };
 
 /* =========================
  *  HELPERs
  * ========================= */
+
+
+
+// ===== DEBUG RIDE LIST/CARDS =====
+window.__DISPATCH_DEBUG__ = false; // ponlo en false para apagar
+
+function escapeHtml(s){
+  return String(s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;")
+    .replace(/'/g,"&#039;");
+}
+
+function debugBrief(ride){
+  return {
+    id: ride.id,
+    hasStopsProp: Array.isArray(ride.stops),
+    stopsLen: Array.isArray(ride.stops) ? ride.stops.length : null,
+    typeofStopsJson: typeof ride.stops_json,
+    stopsJsonIsArray: Array.isArray(ride.stops_json),
+    stopsJsonStrPrefix: (typeof ride.stops_json === 'string' ? ride.stops_json.slice(0,80) : null),
+    stops_count: ride.stops_count ?? null,
+    stop_index: ride.stop_index ?? null,
+  };
+}
+
+function logListDebug(list, tag='[dispatch] list'){
+  if (!window.__DISPATCH_DEBUG__) return;
+  try {
+    console.groupCollapsed(tag, 'n=', list.length);
+    console.table(list.map(debugBrief));
+    const withStops = list.find(r => (r.stops_count ?? 0) > 0 || (Array.isArray(r.stops) && r.stops.length));
+    console.log('sample ride (con paradas si existe):', withStops || list[0]);
+    console.groupEnd();
+  } catch(e){ console.warn('debug error', e); }
+}
+
+
+
+
 const qs  = (sel) => document.querySelector(sel);
 const fmt = (n) => Number(n).toFixed(6);
 const isDarkMode = () => document.documentElement.getAttribute('data-theme') === 'dark';
@@ -123,10 +165,14 @@ let map;
 let layerSectores, layerStands, layerRoute, layerDrivers,layerSuggested;
 let fromMarker=null, toMarker=null;
 let gDirService=null, gGeocoder=null, acFrom=null, acTo=null;
+let stop1Marker=null, stop2Marker=null; // NUEVO
+let acStop1=null, acStop2=null;         // NUEVO
+
 
 const IconOrigin = L.icon({ iconUrl:TENANT_ICONS.origin, iconSize:[30,30], iconAnchor:[15,30], popupAnchor:[0,-26] });
 const IconDest   = L.icon({ iconUrl:TENANT_ICONS.dest,   iconSize:[30,30], iconAnchor:[15,30], popupAnchor:[0,-26] });
 const IconStand  = L.icon({ iconUrl:TENANT_ICONS.stand,  iconSize:[28,28], iconAnchor:[14,28], popupAnchor:[0,-24] });
+const IconStop   = L.icon({ iconUrl:TENANT_ICONS.stop,  iconSize:[28,28], iconAnchor:[14,28], popupAnchor:[0,-24] }); // NUEVO
 
 const routeStyle = () => (isDarkMode()
   ? { color:'#943DD4', weight:5, opacity:.95 }
@@ -144,6 +190,18 @@ function getAB(){
   const b=[parseFloat(qs('#toLat')?.value),   parseFloat(qs('#toLng')?.value)];
   return { a,b, hasA:Number.isFinite(a[0])&&Number.isFinite(a[1]), hasB:Number.isFinite(b[0])&&Number.isFinite(b[1]) };
 }
+
+function getStops(){
+  const s1=[parseFloat(qs('#stop1Lat')?.value), parseFloat(qs('#stop1Lng')?.value)];
+  const s2=[parseFloat(qs('#stop2Lat')?.value), parseFloat(qs('#stop2Lng')?.value)];
+  const arr=[];
+  if (Number.isFinite(s1[0]) && Number.isFinite(s1[1])) arr.push(s1);
+  if (Number.isFinite(s2[0]) && Number.isFinite(s2[1])) arr.push(s2);
+  return arr;
+}
+
+
+
 function pointsFromGoogleRoute(route){
   // 1) Google: overview_path (Array<LatLng>) ya decodificado
   if (route?.overview_path?.length) {
@@ -180,11 +238,13 @@ async function drawRoute({ quiet=false } = {}){
   if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ' + (qs('#when-later')?.checked?'después':'ahora');
   return;
 }
-
-
-    // Si hay Directions, úsalo con tráfico actual
+ // Si hay Directions, úsalo con tráfico actual
     if (gDirService && window.google?.maps){
       try{
+
+        const stops = getStops(); // NUEVO
+        const waypts = stops.map(s => ({ location:{lat:s[0], lng:s[1]} }));
+
         const res = await new Promise((resolve,reject)=>{
           gDirService.route({
             origin: {lat:a[0], lng:a[1]},
@@ -195,7 +255,7 @@ async function drawRoute({ quiet=false } = {}){
             drivingOptions: {                       // ← tráfico actual
               departureTime: new Date(),
               trafficModel: 'bestguess'
-            }
+            }, waypoints: waypts.length ? waypts : undefined 
           }, (r,s)=> s==='OK' ? resolve(r) : reject({status:s, r}));
         });
 
@@ -210,7 +270,7 @@ async function drawRoute({ quiet=false } = {}){
         } else {
           if(!quiet) console.debug('[ROUTE] Directions OK sin polyline → OSRM');
           autoQuoteIfReady();
-          await drawRouteWithOSRM(a,b,{quiet:true});
+          await drawRouteWithOSRM(a,b,stops,{quiet:true});
         }
 
         if (rs){
@@ -226,7 +286,7 @@ async function drawRoute({ quiet=false } = {}){
     }
 
     // Fallback OSRM si no hay Google o falló
-    await drawRouteWithOSRM(a,b,{quiet:true});
+    await drawRouteWithOSRM(a,b,stops,{quiet:true});
 
   }catch(err){
     console.error('drawRoute error', err);
@@ -269,6 +329,62 @@ function setTo(latlng, label){
   autoQuoteIfReady();
 }
 
+function setStop1(latlng, label){
+  if (stop1Marker) stop1Marker.remove();
+  stop1Marker = L.marker(latlng, { draggable:true, icon:IconStop, zIndexOffset:900 })
+    .addTo(map).bindTooltip('Parada 1');
+
+  qs('#stop1Lat').value = latlng[0]; qs('#stop1Lng').value = latlng[1];
+  if (label) qs('#inStop1').value = label; else reverseGeocode(latlng, '#inStop1');
+
+  stop1Marker.on('dragstart', ()=> map.dragging.disable());
+  stop1Marker.on('dragend', (e)=>{
+    map.dragging.enable();
+    const ll = e.target.getLatLng();
+    qs('#stop1Lat').value = ll.lat; qs('#stop1Lng').value = ll.lng;
+    reverseGeocode([ll.lat,ll.lng], '#inStop1');
+    drawRoute({quiet:true}); autoQuoteIfReady();
+  });
+
+  // Al tener stop1, permitimos mostrar stop2
+  document.getElementById('stop2Row')?.style.setProperty('display','');
+  drawRoute({quiet:true}); autoQuoteIfReady();
+}
+
+function setStop2(latlng, label){
+  // Solo si existe stop1
+  if (!Number.isFinite(parseFloat(qs('#stop1Lat')?.value))) return;
+
+  if (stop2Marker) stop2Marker.remove();
+  stop2Marker = L.marker(latlng, { draggable:true, icon:IconStop, zIndexOffset:900 })
+    .addTo(map).bindTooltip('Parada 2');
+
+  qs('#stop2Lat').value = latlng[0]; qs('#stop2Lng').value = latlng[1];
+  if (label) qs('#inStop2').value = label; else reverseGeocode(latlng, '#inStop2');
+
+  stop2Marker.on('dragstart', ()=> map.dragging.disable());
+  stop2Marker.on('dragend', (e)=>{
+    map.dragging.enable();
+    const ll = e.target.getLatLng();
+    qs('#stop2Lat').value = ll.lat; qs('#stop2Lng').value = ll.lng;
+    reverseGeocode([ll.lat,ll.lng], '#inStop2');
+    drawRoute({quiet:true}); autoQuoteIfReady();
+  });
+
+  drawRoute({quiet:true}); autoQuoteIfReady();
+}
+
+
+// Mostrar/ocultar fila de schedule
+qs('#when-now')?.addEventListener('change', ()=> {
+  const row = qs('#scheduleRow'); if (!row) return;
+  row.style.display = qs('#when-now').checked ? 'none' : '';
+});
+qs('#when-later')?.addEventListener('change', ()=> {
+  const row = qs('#scheduleRow'); if (!row) return;
+  row.style.display = qs('#when-later').checked ? '' : 'none';
+});
+
 // === Auto-cotización en cuanto hay ORIGEN y DESTINO ===
 
 let _quoteTimer = null;
@@ -291,6 +407,7 @@ async function _doAutoQuote() {
   const bLng = parseFloat(qs('#toLng').value);
 
   try {
+    const stops = getStops();
     const r = await fetch('/api/dispatch/quote', {
       method: 'POST',
       headers: {
@@ -301,6 +418,7 @@ async function _doAutoQuote() {
       body: JSON.stringify({
         origin: {lat:aLat, lng:aLng},
         destination: {lat:bLat, lng:bLng},
+        stops: stops.map(s => ({lat:s[0], lng:s[1]})), 
         round_to_step: 1.00  // pesos enteros
       })
     });
@@ -337,29 +455,38 @@ function autoQuoteIfReady() {
 
 
 
-async function drawRouteWithOSRM(a,b,{quiet=false} = {}){
-  try{
-    const url = `https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson`;
-    const r = await fetch(url);
-    if(!r.ok) throw new Error('OSRM HTTP '+r.status);
-    const j = await r.json();
-    const coords = j?.routes?.[0]?.geometry?.coordinates || [];
-    if(!coords.length){ if(!quiet) console.warn('[OSRM] sin geometría'); return; }
+async function drawRouteWithOSRM(a, b, stops = [], { quiet = false } = {}) {
+  // a/b son [lat,lng]; stops es [[lat,lng], ...]
+  const coords = [a, ...stops, b];
+  const parts = coords.map(c => `${c[1]},${c[0]}`); // lng,lat
+  const url = `https://router.project-osrm.org/route/v1/driving/${parts.join(';')}?overview=full&geometries=polyline`;
 
-    const latlngs = coords.map(c => [c[1], c[0]]);
-    const poly = L.polyline(latlngs, { pane:'routePane', className:'cc-route', ...routeStyle() });
-    poly.addTo(layerRoute);
-    map.fitBounds(poly.getBounds().pad(0.15), {padding:[40,40]});
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('OSRM 500');
+  const j = await r.json();
+  if (j.code !== 'Ok' || !j.routes?.length) throw new Error('OSRM bad');
 
-    const rs = document.getElementById('routeSummary');
-    const dist = j.routes[0].distance ? (j.routes[0].distance/1000).toFixed(1)+' km' : '—';
-    const dura = j.routes[0].duration ? Math.round(j.routes[0].duration/60)+' min' : '—';
-    if (rs) rs.innerText = `Ruta: ${dist} · ${dura} · Cuando: ${qs('#when-later')?.checked?'después':'ahora'}`;
-     autoQuoteIfReady();
-  }catch(e){
-    if(!quiet) console.warn('OSRM error', e);
+  const route = j.routes[0];
+  const poly = route.geometry;
+  const latlngs = decodePolyline(poly);
+
+  // limpia línea previa
+  try { window.__routeLine?.remove(); } catch {}
+  window.__routeLine = L.polyline(latlngs, routeStyle()).addTo(layerRoute);
+
+  if (!quiet) {
+    const rs = qs('#routeSummary');
+    if (rs) {
+      const km = (route.distance/1000).toFixed(1)+' km';
+      const min = Math.round(route.duration/60)+' min';
+      rs.innerText = `Ruta: ${km} · ${min}`;
+    }
   }
+  map.fitBounds(window.__routeLine.getBounds(), { padding:[20,20] });
+  return { distance_m: route.distance|0, duration_s: route.duration|0, polyline: poly };
 }
+
+
 async function refreshDispatch(){
   try{
     const [a,b] = await Promise.all([
@@ -367,23 +494,37 @@ async function refreshDispatch(){
       fetch('/api/dispatch/drivers',{headers:{Accept:'application/json'}}),
     ]);
 
-    // Manejo robusto de errores (500, HTML, etc.)
     const data    = a.ok ? await a.json() : (console.error('[active]', await a.text()), {});
     const drivers = b.ok ? await b.json() : (console.error('[drivers]', await b.text()), []);
 
+    const rides = Array.isArray(data.rides) ? data.rides : [];
+    window._lastActiveRides = rides;       
+    window._ridesIndex = new Map(rides.map(r=>[r.id, r])); 
+   
+
+    // Paneles
     renderQueues(Array.isArray(data.queues) ? data.queues : []);
-    renderActiveRides(Array.isArray(data.rides) ? data.rides : []);
+    renderRightNowCards(rides);         // solo requested/offered
+    renderRightScheduledCards(rides);   // solo scheduled
+    renderDockActive(rides);            // solo activos
     renderDrivers(Array.isArray(drivers) ? drivers : []);
-    await updateSuggestedRoutes(Array.isArray(data.rides) ? data.rides : []);
+    await updateSuggestedRoutes(rides);
   }catch(e){
     console.warn('refreshDispatch error', e);
   }
+}
+function normalizeStops(ride){
+  if (Array.isArray(ride.stops)) return ride.stops;
+  if (ride.stops_json) {
+    try { const a = JSON.parse(ride.stops_json); return Array.isArray(a) ? a : []; } catch {}
+  }
+  return [];
 }
 
 let pollTimer=null;
 function startPolling(){
   clearInterval(pollTimer);
-  pollTimer = setInterval(refreshDispatch, 4000);
+  pollTimer = setInterval(refreshDispatch, 3000);
   refreshDispatch();
 }
 
@@ -648,105 +789,277 @@ function renderQueues(queues){
   });
   const b = document.getElementById('badgeColas'); if (b) b.innerText = queues.length;
 }
-async function highlightRideOnMap(r){
-  // limpia anteriores
-  rideMarkers.forEach(g=>{ try{ g.remove(); }catch{} });
-  rideMarkers.clear();
 
-  const group = L.layerGroup().addTo(map);
-  const bounds = L.latLngBounds([]);
 
-  // marcadores
-  if (Number.isFinite(r.origin_lat) && Number.isFinite(r.origin_lng)) {
-    const m = L.marker([r.origin_lat, r.origin_lng], {icon: IconOrigin}).addTo(group);
-    bounds.extend(m.getLatLng());
-  }
-  if (Number.isFinite(r.dest_lat) && Number.isFinite(r.dest_lng)) {
-    const m = L.marker([r.dest_lat, r.dest_lng], {icon: IconDest}).addTo(group);
-    bounds.extend(m.getLatLng());
-  }
 
-  // 1) Ruta pasajero: ORIGEN -> DESTINO (si hay ambos)
-  if (Number.isFinite(r.origin_lat) && Number.isFinite(r.origin_lng) &&
-      Number.isFinite(r.dest_lat)   && Number.isFinite(r.dest_lng)) {
-    try {
-      const trip = await drawSuggestedRoute(
-        L.latLng(r.origin_lat, r.origin_lng),
-        L.latLng(r.dest_lat,   r.dest_lng)
-      );
-      // línea sólida (usa colores por tema)
-      trip.setStyle(routeStyle());
-      // marca clase para que cambie con theme switch
-      trip.options.className = 'cc-route';
-      trip.addTo(group);
-       autoQuoteIfReady();
-      try { bounds.extend(trip.getBounds()); } catch {}
-    } catch (e) { console.warn('trip suggested route error', e); }
-  }
+async function highlightRideOnMap(ride) {
+  try {
+    // 0) Asegura capas/estado
+    if (!window.layerRoute) window.layerRoute = L.layerGroup().addTo(map);
 
-  // 2) Si hay driver asignado: DRIVER -> ORIGEN (punteada)
-  if (r.driver_id) {
-    const e = driverPins.get(r.driver_id);
-    if (e) {
-      try {
-        const pick = await drawSuggestedRoute(
-          e.marker.getLatLng(),
-          L.latLng(r.origin_lat, r.origin_lng)
-        );
-        pick.setStyle(suggestedLineStyle());    // punteada y color por tema
-        pick.options.className = 'cc-suggested';
-        pick.addTo(group);
-        try { bounds.extend(pick.getBounds()); } catch {}
-      } catch (e) { console.warn('pickup suggested route error', e); }
+    // 1) Limpieza visual previa
+    if (layerRoute?.clearLayers) layerRoute.clearLayers();
+    if (window.fromMarker) { fromMarker.remove(); fromMarker = null; }
+    if (window.toMarker)   { toMarker.remove();   toMarker   = null; }
+    if (Array.isArray(window._stopMarkers)) {
+      window._stopMarkers.forEach(m => { try { m.remove(); } catch {} });
     }
-  }
+    window._stopMarkers = [];
 
-  // enfoca todo
-  if (bounds.isValid()) {
-    try { map.fitBounds(bounds.pad(0.15), { padding:[40,40] }); } catch {}
-  }
+    // 2) Datos base
+    const from = (Number.isFinite(+ride.origin_lat) && Number.isFinite(+ride.origin_lng))
+      ? { lat: +ride.origin_lat, lng: +ride.origin_lng } : null;
+    const to   = (Number.isFinite(+ride.dest_lat)   && Number.isFinite(+ride.dest_lng))
+      ? { lat: +ride.dest_lat,   lng: +ride.dest_lng   } : null;
 
-  rideMarkers.set(r.id, group);
+    // stops robusto (array directo, array casteado o string JSON)
+    let stops = [];
+    if (Array.isArray(ride.stops)) {
+      stops = ride.stops;
+    } else if (Array.isArray(ride.stops_json)) {
+      stops = ride.stops_json;
+    } else if (ride.stops_json && typeof ride.stops_json === 'string') {
+      try {
+        const a = JSON.parse(ride.stops_json);
+        if (Array.isArray(a)) stops = a;
+      } catch {}
+    }
+
+    // 3) Marcadores
+    if (from) {
+      fromMarker = L.marker([from.lat, from.lng], { icon: (typeof IconOrigin !== 'undefined' ? IconOrigin : undefined) });
+      fromMarker.addTo(layerRoute);
+    }
+    if (to) {
+      toMarker = L.marker([to.lat, to.lng], { icon: (typeof IconDest !== 'undefined' ? IconDest : undefined) });
+      toMarker.addTo(layerRoute);
+    }
+    stops.forEach((s, i) => {
+      const lt = +s.lat, lg = +s.lng;
+      if (!Number.isFinite(lt) || !Number.isFinite(lg)) return;
+      const mk = L.marker([lt, lg], { icon: (typeof IconStop !== 'undefined' ? IconStop : undefined), title: `Parada ${i + 1}` });
+      mk.addTo(layerRoute);
+      window._stopMarkers.push(mk);
+    });
+
+    // 4) Ruta
+    let latlngs = null;
+
+    // 4.1) Usa polyline de BD si existe
+    if (ride.route_polyline) {
+      try {
+        const arr = decodePolyline(ride.route_polyline) || [];
+        if (Array.isArray(arr) && arr.length >= 2) latlngs = arr;
+      } catch {}
+    }
+
+    // 4.2) Si no hay polyline, pide al backend (no envía stops si están vacíos)
+    if ((!latlngs || !latlngs.length) && from && to) {
+      try {
+        const body = { from, to, mode: 'driving' };
+        if (Array.isArray(stops) && stops.length > 0) body.stops = stops;
+
+        const r = await fetch('/api/geo/route', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        if (r.ok) {
+          const j = await r.json();
+          if (j?.polyline) {
+            latlngs = decodePolyline(j.polyline);
+          } else if (Array.isArray(j?.points)) {
+            latlngs = j.points.map(p => [ +p[0], +p[1] ]);
+          }
+        } else {
+          // si falla HTTP, seguimos al fallback manual
+        }
+      } catch {
+        // sigue al fallback
+      }
+    }
+
+    // 4.3) Fallback final: línea O -> stops -> D
+    if ((!latlngs || !latlngs.length) && from && to) {
+      const seq = [from, ...stops, to];
+      latlngs = seq
+        .filter(p => Number.isFinite(+p.lat) && Number.isFinite(+p.lng))
+        .map(p => [ +p.lat, +p.lng ]);
+    }
+
+    // 4.4) Dibuja polyline si hay al menos 2 puntos
+    if (latlngs && latlngs.length >= 2) {
+      const pl = L.polyline(latlngs, { className: 'cc-route', weight: 5, opacity: 0.9 });
+      pl.addTo(layerRoute);
+      window.__routeLine = pl;
+    }
+
+    // 5) Fit bounds
+    const bounds = [];
+    if (from) bounds.push([from.lat, from.lng]);
+    stops.forEach(s => { if (Number.isFinite(+s.lat) && Number.isFinite(+s.lng)) bounds.push([+s.lat, +s.lng]); });
+    if (to) bounds.push([to.lat, to.lng]);
+
+    if (bounds.length >= 1) {
+      map.fitBounds(bounds, { padding: [40, 40] });
+    }
+  } catch (e) {
+    console.warn('[map] highlightRideOnMap error', e);
+  }
 }
 
 
-function renderActiveRides(rides){
-  const el = document.getElementById('panel-active'); if(!el) return;
-  el.innerHTML='';
-  const b = document.getElementById('badgeActivos'); if (b) b.innerText = (rides||[]).length;
 
-  // índice rápido para acciones (assign/view) sin pedir el detalle
-  window._ridesIndex = new Map();
-
-  (rides||[]).forEach(r=>{
-    // guarda en índice
-    try { window._ridesIndex.set(r.id, r); } catch {}
-
-    // usa las helpers de la sección //----helpers  card------
-    const html = renderRideCard(r);
-    if (!html) return; // oculto solo si terminal
-
-    const wrapper = document.createElement('div');
-    wrapper.innerHTML = html;
-    const card = wrapper.firstElementChild;
-
-    // wire del botón "Ver" (si tu renderRideCard no lo enlaza solo)
-    card.querySelector('[data-act="view"]')?.addEventListener('click', ()=> highlightRideOnMap(r));
-
-    el.appendChild(card);
-  });
-}
 
 // ===== CANCELACIÓN CON SWEETALERT2 (event delegation + no duplicar handler) =====
+// Bind único
+// ====== REFERENCIAS GLOBALES (si aún no existen) ======
+window.__originMarker = window.__originMarker || null;
+window.__destMarker   = window.__destMarker   || null;
+window.__routeLine    = window.__routeLine    || null;
+window.__stopMarkers = window.__stopMarkers || [];
+
+// ====== LIMPIAR ORIGEN/DESTINO + RUTA ======
+function clearOriginDest() {
+  try {
+    const layer = (typeof layerSuggested !== 'undefined') ? layerSuggested : layerRoute;
+
+    if (window.__originMarker) {
+      try { layer.removeLayer(window.__originMarker); } catch {}
+      window.__originMarker = null;
+    }
+    if (window.__destMarker) {
+      try { layer.removeLayer(window.__destMarker); } catch {}
+      window.__destMarker = null;
+    }
+
+  if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
+    if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
+    if (window.__stopMarkers) {
+      window.__stopMarkers.forEach(m => { try { m.remove(); } catch {} });
+      window.__stopMarkers = [];
+    }
+   
+
+    if (window.__stopMarkers) {
+    
+    window.__stopMarkers.forEach(marker => { try { marker.remove(); } catch {} });
+    window.__stopMarkers = [];
+    }
+
+    // además, borra cualquier polyline con className cc-route (por si no guardamos referencia)
+    try {
+      const toRemove = [];
+      layerRoute.eachLayer(l => {
+        try {
+          if (l instanceof L.Polyline) {
+            const cls = String(l.options?.className || '');
+            if (cls.includes('cc-route')) toRemove.push(l);
+          }
+        } catch {}
+      });
+      toRemove.forEach(l => { try { layerRoute.removeLayer(l); } catch {} });
+      // al final de clearOriginDest():
+
+    } catch {}
+  } catch (err) {
+    console.warn('[map] clearOriginDest error', err);
+  }
+}
+
+// ====== LIMPIAR PREVIEWS/LÍNEAS SUGERIDAS (asignación) ======
+// --- Utils de limpieza ---
+// Limpia solo lo del viaje actual (ruta principal + markers origen/destino + previews de asignación)
+// ===== LIMPIEZA TOTAL DE GRAFICOS DE VIAJE (rutas + origen/destino + previews) =====
+function clearAssignArtifacts() {
+  try {
+    // marker de pickup del panel / preview de asignación
+    if (typeof _assignPickupMarker !== 'undefined' && _assignPickupMarker) {
+      const lyr = (typeof layerSuggested !== 'undefined') ? layerSuggested : layerRoute;
+      try { lyr.removeLayer(_assignPickupMarker); } catch {}
+      _assignPickupMarker = null;
+    }
+    if (typeof _assignPreviewLine !== 'undefined' && _assignPreviewLine) {
+      try { layerRoute.removeLayer(_assignPreviewLine); } catch {}
+      _assignPreviewLine = null;
+    }
+  } catch {}
+
+  // líneas cc-suggested / cc-preview (del flujo de asignación)
+  try {
+    const toRemove = [];
+    layerRoute.eachLayer(l => {
+      try {
+        if (l instanceof L.Polyline) {
+          const cls = String(l.options?.className || '');
+          if (cls.includes('cc-suggested') || cls.includes('cc-preview')) toRemove.push(l);
+        }
+      } catch {}
+    });
+    toRemove.forEach(l => { try { layerRoute.removeLayer(l); } catch {} });
+  } catch {}
+}
+
+function clearTripGraphicsHard() {
+  // 1) previews de asignación
+  try {
+    if (typeof clearAllPreviews === 'function') clearAllPreviews();
+    if (typeof clearSuggestedLines === 'function') clearSuggestedLines();
+  } catch {}
+  clearAssignArtifacts();
+
+  // 2) ruta principal del formulario
+  try { layerRoute?.clearLayers(); } catch {}
+
+  // 3) pines de origen/destino del formulario
+  try { if (window.fromMarker) { fromMarker.remove(); fromMarker=null; } } catch {}
+  try { if (window.toMarker)   { toMarker.remove();   toMarker=null;   } } catch {}
+
+  // 4) por si alguien usó estas refs globales
+  try {
+    const lyr = (typeof layerSuggested !== 'undefined') ? layerSuggested : layerRoute;
+    if (window.__originMarker) { lyr.removeLayer(window.__originMarker); window.__originMarker = null; }
+    if (window.__destMarker)   { lyr.removeLayer(window.__destMarker);   window.__destMarker   = null; }
+    if (window.__routeLine)    { layerRoute.removeLayer(window.__routeLine); window.__routeLine = null; }
+  } catch {}
+}
+
+// Borra también lo dibujado por highlightRideOnMap(), si pasas rideId
+function removeRideGraphics(rideId) {
+  try {
+    if (window.rideMarkers && rideMarkers.has(rideId)) {
+      const g = rideMarkers.get(rideId);
+      try { g.remove(); } catch {}
+      rideMarkers.delete(rideId);
+    }
+  } catch {}
+}
+
+
+
+
 if (!window.__cancelHandlerBound) {
   document.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.btn-cancel');
+    // Soporta ambos: data-action="cancel-ride" o clase .btn-cancel
+    const btn = e.target.closest('[data-action="cancel-ride"], .btn-cancel');
     if (!btn) return;
+    e.preventDefault();
 
-    const rideId = btn.getAttribute('data-ride-id');
-    if (!rideId) return;
+    // Obtén rideId desde el botón o desde el contenedor cercano
+    let rideId =
+      btn.dataset?.rideId ||
+      btn.getAttribute('data-ride-id') ||
+      btn.closest('.cc-ride-card')?.dataset?.rideId ||
+      btn.closest('[data-ride-id]')?.getAttribute('data-ride-id');
 
-    // 1) Modal de confirmación
+    rideId = Number(String(rideId ?? '').trim());
+    if (!Number.isFinite(rideId) || rideId <= 0) {
+      console.warn('cancel: rideId inválido en data-ride-id');
+      return;
+    }
+
+    // Confirmación
     const result = await Swal.fire({
       title: '¿Cancelar el servicio?',
       text: 'Esta acción no se puede deshacer.',
@@ -759,43 +1072,43 @@ if (!window.__cancelHandlerBound) {
       reverseButtons: true,
       focusCancel: true
     });
-
     if (!result.isConfirmed) return;
 
-    // 2) (Opcional) Motivo de cancelación: si tienes una lista en window.cancelReasons, muéstrala.
-    //    Si aún no la tienes, omitimos este paso y mandamos 'null'.
+    // (Opcional) Motivo
     let chosenReason = null;
     if (Array.isArray(window.cancelReasons) && window.cancelReasons.length > 0) {
       const { value: reasonId } = await Swal.fire({
         title: 'Motivo de cancelación',
         input: 'select',
         inputOptions: window.cancelReasons.reduce((acc, r) => {
-          acc[r.id] = r.label;
-          return acc;
+          acc[r.id] = r.label; return acc;
         }, {}),
         inputPlaceholder: 'Selecciona un motivo',
         showCancelButton: true,
         confirmButtonText: 'Continuar',
         cancelButtonText: 'Volver',
       });
-      if (reasonId === undefined) return; // canceló el select
+      if (reasonId === undefined) return; // canceló
       const item = window.cancelReasons.find(r => String(r.id) === String(reasonId));
       chosenReason = item ? item.label : null;
     }
 
-    // 3) Evitar doble click
+    // UI: evitar doble click
     const prevText = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Cancelando…';
 
     try {
+      // Llamada AJAX sin refrescar la página
       const res = await fetch(`/api/dispatch/rides/${rideId}/cancel`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Tenant-ID': window.currentTenantId || 1,
+          'Accept': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+          'X-Tenant-ID': (window.currentTenantId || document.querySelector('meta[name="tenant-id"]')?.content || '1')
         },
-        body: JSON.stringify({ reason: chosenReason }) // null o label del motivo
+        body: JSON.stringify({ reason: chosenReason })
       });
 
       const json = await res.json().catch(() => ({}));
@@ -807,26 +1120,52 @@ if (!window.__cancelHandlerBound) {
         });
         return;
       }
+  try {
+      ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
+      ['fromLat','fromLng','toLat','toLng'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
+      layerRoute.clearLayers();
+      if (fromMarker){ fromMarker.remove(); fromMarker=null; }
+      if (toMarker){   toMarker.remove();   toMarker=null;  }
+      if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
+      if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
+      const s1Lat = qs('#stop1Lat'), s1Lng = qs('#stop1Lng'), s2Lat = qs('#stop2Lat'), s2Lng = qs('#stop2Lng');
+      const inS1 = qs('#inStop1'), inS2 = qs('#inStop2');
+      const row1 = qs('#stop1Row'), row2 = qs('#stop2Row');
+      if (s1Lat) s1Lat.value=''; if (s1Lng) s1Lng.value='';
+      if (s2Lat) s2Lat.value=''; if (s2Lng) s2Lng.value='';
+      if (inS1) inS1.value='';   if (inS2) inS2.value='';
+      if (row1) row1.style.display='none';
+      if (row2) row2.style.display='none';
+      const rs = document.getElementById('routeSummary');
+      if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
+      resetWhenNow();
+    } catch {}
+      await Swal.fire({ icon: 'success', title: 'Cancelado', timer: 900, showConfirmButton: false });
+    
+     
+      // ✅ Sin refrescar toda la página:
+      // 1) saca la card del DOM si existe
+      const card = btn.closest('.cc-ride-card');
+      if (card) card.remove();
 
-      await Swal.fire({
-        icon: 'success',
-        title: 'Cancelado',
-        timer: 1200,
-        showConfirmButton: false
-      });
+      // 2) baja contador del badge
+      const badge = document.getElementById('badgeActivos');
+      if (badge) {
+        const n = Math.max(0, (parseInt(badge.textContent,10) || 0) - 1);
+        badge.textContent = n;
+      }
 
-      if (typeof loadActiveRides === 'function') {
-        await loadActiveRides();
-      } else {
-        location.reload();
+    
+
+      // 4) refresca SOLO el panel de activos si tienes esa función
+      if (typeof renderActiveRides === 'function') {
+        await renderActiveRides();
+      } else if (typeof refreshDispatch === 'function') {
+        await refreshDispatch();
       }
     } catch (err) {
       console.error('cancel error', err);
-      await Swal.fire({
-        icon: 'error',
-        title: 'Error de red',
-        text: 'No se pudo contactar al servidor.'
-      });
+      await Swal.fire({ icon: 'error', title: 'Error de red', text: 'No se pudo contactar al servidor.' });
     } finally {
       btn.disabled = false;
       btn.textContent = prevText;
@@ -835,6 +1174,7 @@ if (!window.__cancelHandlerBound) {
 
   window.__cancelHandlerBound = true;
 }
+
 
 
 
@@ -1085,34 +1425,27 @@ async function drawPreviewLinesStagger(ride, candidates, topN = 12) {
   }
 }
 
-// Dibuja TODAS las líneas driver->pickup (stagger) SIN DOM del panel
-async function drawPreviewLinesStagger(ride, candidates, topN = 12) {
-  const ordered = [...(candidates||[])]
-    .sort((a,b)=>(a.distance_km??9e9)-(b.distance_km??9e9))
-    .slice(0, topN);
 
-  for (let i=0; i<ordered.length; i++) {
-    const c = ordered[i];
-    const id = c.id || c.driver_id;
-    try { await ensureDriverPreviewLine(id, ride); } catch {}
-    await new Promise(res => setTimeout(res, 90)); // reparte llamadas a Directions
-  }
-
-  // Resalta el más cercano (opcional)
-  const best = ordered[0];
-  if (best) {
-    const id = best.id || best.driver_id;
-    const pin = driverPins.get(id);
-    if (pin?.previewLine) {
-      try { pin.previewLine.setStyle(suggestedLineSelectedStyle()); pin.previewLine.bringToFront(); } catch {}
-    }
-  }
-}
 async function focusRideOnMap(rideId){
-  const ride = window._ridesIndex?.get?.(rideId)
-    || (await fetch(`/api/dispatch/rides/${rideId}`, { headers:{ Accept:'application/json' } }).then(r=>r.json()));
+  // intenta cache primero
+  const cached = window._ridesIndex?.get?.(rideId);
+  if (cached) return highlightRideOnMap(cached);
+
+  // ruta correcta del show:
+  const r = await fetch(`/api/rides/${rideId}`, { headers:{ Accept:'application/json' } });
+  if (!r.ok) {
+    console.error('GET /api/rides/{id} →', r.status, await r.text().catch(()=>'')); 
+    alert('No se pudo cargar el viaje.');
+    return;
+  }
+  const ride = await r.json();
+  if (window.__DISPATCH_DEBUG__) {
+  console.log('[focusRideOnMap] GET /api/rides/'+rideId, debugBrief(ride), ride);
+}
   return highlightRideOnMap(ride);
 }
+
+
 
 
 //-----------------asignacion y movimiento  -----------------------
@@ -1162,13 +1495,19 @@ function bearingBetween(a,b){
 
 
 
-
-
 // ADD: util para crear/actualizar modal
 let _assignPanel, _assignSelected = null, _assignRide = null;
 let _assignOriginPin = null;let _assignPickupMarker = null;
 
 //----helpers  card------
+
+function isScheduledStatus(ride){
+  const st = _norm(ride?.status);
+  // además de status, acepta que venga solamente el campo de fecha
+  const hasSchedField = !!(ride?.scheduled_for || ride?.scheduledFor ||
+                           ride?.scheduled_at  || ride?.scheduledAt);
+  return st === 'scheduled' || hasSchedField;
+}
 
 function shouldHideRideCard(ride) {
   const st = String(ride.status || '').toLowerCase();
@@ -1190,41 +1529,194 @@ function deriveRideUi(ride) {
   const { anyAccepted, anyOffered, rejectedBy } = summarizeOffers(ride);
 
   let badge = '';
-  let showAssign = false;
-  let showReoffer = false;
-  let showRelease = false;
-  let showCancel = true; // casi siempre, salvo terminal
+  let showAssign   = false;
+  let showReoffer  = false;
+  let showRelease  = false;
+  let showCancel   = true;
 
   if (st === 'requested') {
     badge = 'Pendiente';
-    showAssign  = true;
-    showReoffer = true;
+    showAssign = true; showReoffer = true;
   } else if (st === 'offered' || (anyOffered && !anyAccepted)) {
     badge = 'Oferta enviada';
-    showAssign  = false; // <- lo importante: NO ocultar la card, solo el botón
-    showReoffer = true;
+    showAssign = true; showReoffer = true;
+  } else if (st === 'scheduled') {
+    // 🔹 Operable: el operador puede asignar o re-ofertar cuando quiera
+    badge = 'Programado';
+    showAssign = true; showReoffer = true;
   } else if (st === 'accepted' || st === 'assigned') {
-    badge = 'Aceptada';
-    showRelease = true;
+    badge = 'Aceptada'; showRelease = true;
   } else if (st === 'en_route') {
-    badge = 'En ruta';
-    showRelease = true;
+    badge = 'En ruta';  showRelease = true;
   } else if (st === 'arrived') {
-    badge = 'Llegó al punto';
-    showRelease = true;
+    badge = 'Llegó al punto'; showRelease = true;
   } else if (st === 'on_board' || st === 'onboard') {
-    badge = 'En viaje';
-    showRelease = false;
+    badge = 'En viaje'; showRelease = false;
   } else if (st === 'completed') {
     badge = 'Completada'; showCancel = false;
   } else if (st === 'canceled') {
     badge = 'Cancelada';  showCancel = false;
   } else {
-    badge = st; // fallback
+    badge = st;
   }
 
   return { badge, showAssign, showReoffer, showRelease, showCancel, rejectedBy };
 }
+
+
+
+// === LEE TAL CUAL DE LA DB (YYYY-MM-DD HH:mm:ss o YYYY-MM-DDTHH:mm:ss) ===
+function extractPartsFromDbTs(s) {
+  if (!s) return null;
+  // normaliza separador
+  const t = s.replace('T', ' ');
+  // yyyy-mm-dd hh:mm(:ss)
+  const m = t.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return null;
+  return {
+    y: +m[1], mo: +m[2], d: +m[3],
+    H: +m[4], M: +m[5], S: +(m[6] ?? 0),
+    raw: t
+  };
+}
+
+function fmtHM12_fromDb(s) {
+  const p = extractPartsFromDbTs(s);
+  if (!p) return '—';
+  let h = p.H % 12; if (h === 0) h = 12;
+  const mm = String(p.M).padStart(2, '0');
+  const ampm = p.H < 12 ? 'a.m.' : 'p.m.';
+  return `${h}:${mm} ${ampm}`;
+}
+
+function fmtShortDay_fromDb(s) {
+  const p = extractPartsFromDbTs(s);
+  if (!p) return '';
+  // dd Mon (abreviado en español a mano para no tocar zonas)
+  const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  return `${String(p.d).padStart(2,'0')} ${meses[p.mo-1]}`;
+}
+
+// Muestra hora y, si no es “hoy” según la cadena misma, añade dd-Mon
+function fmtWhen_db(s) {
+  const p = extractPartsFromDbTs(s);
+  if (!p) return '—';
+  
+  // SIEMPRE retornar hora + fecha
+  return `${fmtHM12_fromDb(s)} · ${fmtShortDay_fromDb(s)}`;
+}
+
+function normalizeStops(ride){
+  if (Array.isArray(ride.stops)) return ride.stops;
+  if (ride.stops_json) {
+    try {
+      const a = JSON.parse(ride.stops_json);
+      return Array.isArray(a) ? a : [];
+    } catch {}
+  }
+  return [];
+}
+
+
+// === Ride Card: estilos pro (se insertan una sola vez) ======================
+(function injectRideCardStyles(){
+  if (window.__RIDE_CARD_STYLES__) return;
+  window.__RIDE_CARD_STYLES__ = true;
+
+  const css = `
+  /* ===== Theme-aware tokens (toman los de Bootstrap 5.3) ===== */
+  :root{
+    --cc-card-bg: var(--bs-card-bg, var(--bs-body-bg));
+    --cc-text: var(--bs-body-color);
+    --cc-muted: var(--bs-secondary-color);
+    --cc-border: var(--bs-border-color);
+    --cc-soft-bg: var(--bs-tertiary-bg);
+  }
+
+  /* ===== Card ===== */
+  .cc-ride-card{
+    background: var(--cc-card-bg);
+    color: var(--cc-text);
+    border: 1px solid var(--cc-border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(16,24,40,.04);
+  }
+  .cc-ride-card.is-scheduled{ border-left: 4px solid var(--bs-danger); }
+  .cc-ride-card .card-body{ padding:14px 16px; }
+
+  .cc-ride-header{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .cc-ride-title{ font-weight:700; font-size:14px; letter-spacing:.2px; }
+
+  .cc-ride-badge .badge{ font-weight:600; padding:.35rem .5rem; border-radius:8px; }
+
+  .cc-stats{ text-align:right; }
+  .cc-amount{ font-weight:800; font-size:16px; line-height:1; }
+  .cc-meta{ font-size:12px; color: var(--cc-muted); margin-top:4px; }
+  .cc-divider{ height:1px; background: var(--cc-border); margin:10px 0; }
+
+  /* ===== Itinerario (línea vertical + pines) ===== */
+  .cc-legs{ position:relative; margin:0; padding-left:22px; list-style:none; }
+  .cc-legs::before{
+    content:""; position:absolute; left:7px; top:10px; bottom:10px;
+    width:2px; background: var(--cc-border); border-radius:1px;
+  }
+  .cc-leg{ display:flex; align-items:flex-start; gap:8px; margin:6px 0; }
+  .cc-pin{ width:12px; height:12px; border-radius:50%; margin-top:2px; flex:0 0 12px; }
+  .cc-pin--o{ background:#10b981; box-shadow:0 0 0 3px rgba(16,185,129,.18); }
+  .cc-pin--s{ background:#9aa0a6; }
+  .cc-pin--d{ background:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,.18); }
+
+  .cc-leg .cc-label{ font-size:13px; color: var(--cc-text); }
+  .cc-leg .cc-sub{ font-size:12px; color: var(--cc-muted); }
+
+  .cc-stops-title{ font-size:12px; color: var(--bs-primary); font-weight:700; margin:6px 0 4px; }
+
+  .cc-chip{
+    font-size:12px; border-radius:999px; padding:.25rem .5rem;
+    background: var(--cc-soft-bg); color: var(--cc-text); display:inline-block;
+    border: 1px solid var(--cc-border);
+  }
+
+  .cc-actions .btn{ border-radius:10px; }
+  .cc-actions .btn-outline-secondary{
+    color: var(--cc-text);
+    border-color: var(--cc-border);
+    background: transparent;
+  }
+
+  /* ===== Light mode override: forzar fondo blanco en modo claro ===== */
+  html:not([data-theme="dark"]) .cc-ride-card{
+    background: #ffffff !important;          /* <- blanco real */
+    border-color: #e9eef5;                   /* borde suave */
+  }
+  html:not([data-theme="dark"]) .cc-divider{ background: #eef2f7; }
+  html:not([data-theme="dark"]) .cc-chip{
+    background: #f3f4f6;
+    border-color: #e9eef5;
+  }
+
+  /* ===== Dark mode overrides ===== */
+  html[data-theme="dark"] .cc-ride-card{ box-shadow: 0 10px 24px rgba(0,0,0,.45); }
+  html[data-theme="dark"] .cc-legs::before{ background: var(--cc-border); }
+  html[data-theme="dark"] .cc-divider{ background: var(--cc-border); }
+  html[data-theme="dark"] .cc-chip{ background: var(--cc-soft-bg); border-color: var(--cc-border); }
+
+  /* Fallback si usas prefers-color-scheme sin data-theme */
+  @media (prefers-color-scheme: dark){
+    html:not([data-theme]) .cc-ride-card{ box-shadow: 0 10px 24px rgba(0,0,0,.45); }
+    html:not([data-theme]) .cc-legs::before{ background: var(--cc-border); }
+    html:not([data-theme]) .cc-divider{ background: var(--cc-border); }
+    html:not([data-theme]) .cc-chip{ background: var(--cc-soft-bg); }
+  }
+  `;
+
+  const style = document.createElement('style');
+  style.id = 'cc-ride-card-styles';
+  style.textContent = css;
+  document.head.appendChild(style);
+})();
+
 
 
 function renderRideCard(ride) {
@@ -1232,52 +1724,130 @@ function renderRideCard(ride) {
 
   const ui = deriveRideUi(ride);
 
-  const rejectedHint = ui.rejectedBy?.length
-    ? `<div class="text-muted small mt-1">Rechazada por: ${ui.rejectedBy.join(', ')}</div>`
-    : '';
+  // --- helpers ---
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
+  ));
+  const fmtC = (v) => Number.isFinite(+v) ? (+v).toFixed(5) : '—';
+  const parseStops = () => {
+    if (Array.isArray(ride.stops)) return ride.stops;
+    if (Array.isArray(ride.stops_json)) return ride.stops_json; // cast Eloquent
+    if (typeof ride.stops_json === 'string' && ride.stops_json.trim()!=='') {
+      try { const a = JSON.parse(ride.stops_json); return Array.isArray(a) ? a : []; } catch {}
+    }
+    return [];
+  };
 
+  // --- números/top-right ---
   const km  = (ride.km != null && !isNaN(ride.km)) ? Number(ride.km).toFixed(1)
-            : (ride.distance_m ? (ride.distance_m / 1000).toFixed(1) : '-');
-
+            : (ride.distance_m ? (ride.distance_m/1000).toFixed(1) : '-');
   const min = (ride.min != null) ? ride.min
-            : (ride.duration_s ? Math.round(ride.duration_s / 60) : '-');
+            : (ride.duration_s ? Math.round(ride.duration_s/60) : '-');
+  const amt = (ride.quoted_amount != null) ? Number(ride.quoted_amount) : Number(ride.amount ?? NaN);
+  const amtTxt = Number.isFinite(amt) ? `$${amt.toFixed(2)}` : '—';
 
-  const amt = (ride.quoted_amount != null) ? ride.quoted_amount
-            : (ride.amount ?? '-');
+  const stops = parseStops();
+  const stopsCount = stops.length || (ride.stops_count ? Number(ride.stops_count) : 0);
 
+  // --- labels O/D ---
   const passName  = ride.passenger_name || '—';
   const passPhone = ride.passenger_phone || '';
   const originLbl = ride.origin_label
-                 || (Number.isFinite(ride.origin_lat) ? `${ride.origin_lat.toFixed(5)}, ${ride.origin_lng.toFixed(5)}` : '—');
+                 || (Number.isFinite(ride.origin_lat) ? `${fmtC(ride.origin_lat)}, ${fmtC(ride.origin_lng)}` : '—');
   const destLbl   = ride.dest_label
-                 || (Number.isFinite(ride.dest_lat)   ? `${ride.dest_lat.toFixed(5)}, ${ride.dest_lng.toFixed(5)}`     : '—');
+                 || (Number.isFinite(ride.dest_lat)   ? `${fmtC(ride.dest_lat)}, ${fmtC(ride.dest_lng)}`     : '—');
 
+  // --- tiempo/estado ---
+  const scheduled    = isScheduledStatus(ride);
+  const schedRaw     = scheduled ? (ride.scheduled_for || ride.scheduled_for_fmt) : null;
+  const requestedRaw = (ride.requested_at || ride.created_at) || null;
+  const schedTxt     = scheduled ? fmtWhen_db(schedRaw) : '';
+  const requestedTxt = requestedRaw ? fmtWhen_db(requestedRaw) : '—';
+
+  const stateBadge = scheduled
+    ? `<span class="badge bg-danger-subtle text-danger">PROGRAMADO</span>`
+    : `<span class="badge bg-info">${ui.badge}</span>`;
+
+  // --- itinerary (O -> stops -> D) ---
+  const stopsTitle = stopsCount ? `<div class="cc-stops-title">Paradas (${stopsCount})</div>` : '';
+  const stopItems = stops.map((s,i) => {
+    const txt = (s && typeof s.label === 'string' && s.label.trim()!=='')
+      ? esc(s.label.trim())
+      : `${fmtC(s.lat)}, ${fmtC(s.lng)}`;
+    const title = `S${i+1}: ${fmtC(s.lat)}, ${fmtC(s.lng)}`;
+    return `<li class="cc-leg" title="${esc(title)}">
+              <span class="cc-pin cc-pin--s"></span>
+              <div><div class="cc-label">S${i+1}: ${txt}</div></div>
+            </li>`;
+  }).join('');
+
+  // --- debug toggle (apagado por default) ---
+  const showDebug = !!window.__DISPATCH_DEBUG__;
+  const debugBlock = showDebug ? `
+    <details class="mt-2"><summary class="text-muted small">debug</summary>
+      <pre class="small text-muted" style="white-space:pre-wrap;max-height:180px;overflow:auto">${
+        esc(JSON.stringify({
+          id: ride.id,
+          stops_count: ride.stops_count,
+          stop_index: ride.stop_index,
+          stops: ride.stops,
+          stops_json: ride.stops_json
+        }, null, 2))
+      }</pre>
+    </details>
+  ` : '';
+
+  // --- render ---
   return `
-  <div class="card mb-2" data-ride-id="${ride.id}">
+  <div class="card cc-ride-card ${scheduled ? 'is-scheduled' : ''} mb-2" data-ride-id="${ride.id}">
     <div class="card-body">
-      <!-- Header -->
-      <div class="d-flex justify-content-between align-items-start mb-2">
+      <div class="cc-ride-header">
         <div>
-          <div><strong>Ride #${ride.id}</strong> • <span class="badge bg-info">${ui.badge}</span></div>
-          <div class="small mt-1">
-            <span class="me-2"><i class="bi bi-person"></i> ${passName}</span>
-            ${passPhone ? `<span class="text-muted">${passPhone}</span>` : ''}
+          <div class="cc-ride-title">Ride #${ride.id}</div>
+          <div class="cc-ride-badge mt-1">${stateBadge}</div>
+        </div>
+        <div class="cc-stats">
+          <div class="cc-amount">${amtTxt}</div>
+          <div class="cc-meta">${km} km · ${min} min${stopsCount ? ` · ${stopsCount} parada${stopsCount>1?'s':''}` : ''}</div>
+        </div>
+      </div>
+
+      <div class="cc-divider"></div>
+
+      <ul class="cc-legs">
+        <li class="cc-leg">
+          <span class="cc-pin cc-pin--o"></span>
+          <div>
+            <div class="cc-label">Origen</div>
+            <div class="cc-sub">${esc(originLbl)}</div>
+            <div class="cc-sub mt-1"><i class="bi bi-person"></i> ${esc(passName)} ${passPhone ? `· <span class="text-muted">${esc(passPhone)}</span>` : ''}</div>
           </div>
-        </div>
-        <div class="text-end small text-muted">
-          ${km} km · ${min} min · $${amt}
-        </div>
+        </li>
+
+        ${stopsTitle}
+        ${stopItems}
+
+        ${destLbl !== '—' ? `
+        <li class="cc-leg">
+          <span class="cc-pin cc-pin--d"></span>
+          <div>
+            <div class="cc-label">Destino</div>
+            <div class="cc-sub">${esc(destLbl)}</div>
+          </div>
+        </li>` : '' }
+      </ul>
+
+      <div class="mt-2 cc-meta">
+        ${scheduled
+          ? `<span class="me-3"><i class="bi bi-clock"></i> Prog.: <span class="fw-semibold">${esc(schedTxt)}</span></span>
+             <span><i class="bi bi-clock-history"></i> Creado: <span class="fw-semibold">${esc(requestedTxt)}</span></span>`
+          : `<span><i class="bi bi-clock"></i> Solicitado: <span class="fw-semibold">${esc(requestedTxt)}</span></span>`
+        }
       </div>
 
-      <!-- Origen/Destino -->
-      <div class="small mb-2">
-        <div><span class="text-muted">Origen:</span> ${originLbl}</div>
-        ${destLbl !== '—' ? `<div><span class="text-muted">Destino:</span> ${destLbl}</div>` : ''}
-        ${rejectedHint}
-      </div>
+      ${debugBlock}
 
-      <!-- Botonera -->
-      <div class="d-flex justify-content-end">
+      <div class="d-flex justify-content-end cc-actions mt-3">
         <div class="btn-group">
           ${ui.showAssign  ? `<button class="btn btn-sm btn-primary" data-act="assign">Asignar</button>` : ''}
           ${ui.showReoffer ? `<button class="btn btn-sm btn-outline-primary" data-act="reoffer">Re-ofertar</button>` : ''}
@@ -1292,7 +1862,9 @@ function renderRideCard(ride) {
 
 
 
+
 async function postJSON(url, body) {
+  dbg('POST', url, body);
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -1303,54 +1875,70 @@ async function postJSON(url, body) {
     },
     body: JSON.stringify(body || {})
   });
- if (!res.ok) {
+  if (!res.ok) {
     const text = await res.text().catch(()=> '');
-    console.error('POST', url, '→', res.status, res.statusText, text);
+    console.error('POST FAIL', url, res.status, res.statusText, text);
     throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
   }
-  return await res.json();
+  const json = await res.json();
+  dbg('POST OK', url, json);
+  return json;
 }
 
 
+function dbg(...args){ try{ console.debug('[rides]', ...args); }catch{} }
 
 async function onRideAction(e) {
-  const btn = e.target.closest('[data-act]');
+  const btn  = e.target.closest('[data-act]');
   if (!btn) return;
-  const card = btn.closest('[data-ride-id]');
-  if (!card) return;
-  const rideId = Number(card.dataset.rideId);
-  const act = btn.dataset.act;
+  const wrap = btn.closest('[data-ride-id]');
+  if (!wrap) return;
+
+  const rideId = Number(wrap.dataset.rideId);
+  const act    = btn.dataset.act;
 
   try {
     if (act === 'assign') {
-      // Abre tu flujo actual de asignación (offcanvas)
-      const ride = window._ridesIndex?.get?.(rideId) || (await fetch(`/api/dispatch/rides/${rideId}`, {headers:{Accept:'application/json'}}).then(r=>r.json()));
-      openAssignFlow(ride);
-      return; // no refresques todavía
+      const ride = getRideById?.(rideId);
+      openAssignFlow?.(ride || { id: rideId });
+      return;
     }
+
+    if (act === 'view') {
+      await focusRideOnMap(rideId);
+      return;
+    }
+
     if (act === 'reoffer') {
       await postJSON('/api/dispatch/tick', { ride_id: rideId });
     }
+
     if (act === 'release') {
-      await postJSON('/api/dispatch/release', { ride_id: rideId });
-    }
-    if (act === 'cancel') {
-     await postJSON(`/api/dispatch/rides/${rideId}/cancel`);
-    }
-    if (act === 'view') {
-      focusRideOnMap(rideId); // tu helper para centrar/pintar
-      return; // sin refresh
+      // ⛔ Esta ruta no existe. Opciones:
+      // 1) Oculta el botón hasta crear la API
+      // 2) O crea la ruta /api/dispatch/release en el backend
+      alert('Acción "Liberar" no disponible (endpoint faltante).');
+      return;
     }
 
-    // Tras acciones que cambian estado, refresca la lista
-    await refreshDispatch();
+    if (act === 'cancel') {
+      await postJSON(`/api/dispatch/rides/${rideId}/cancel`);
+    }
+
+    await refreshDispatch?.();
   } catch (err) {
     console.error(err);
-    alert('Acción fallida: ' + (err.message||err));
+    alert('Acción fallida: ' + (err.message || err));
   }
 }
-document.addEventListener('click', onRideAction);
-  
+if (!window.__rides_actions_wired__) {
+  document.addEventListener('click', onRideAction);
+  window.__rides_actions_wired__ = true;
+}
+
+
+
+
   
 function renderAssignPanel(ride, candidates){
   _assignRide = ride; _assignSelected = null;
@@ -1532,10 +2120,12 @@ document.getElementById('btnDoAssign').onclick = async ()=>{
 }
 
 function openAssignFlow(ride){
-  if (!ride || !Number.isFinite(ride.origin_lat) || !Number.isFinite(ride.origin_lng)) {
-    alert('Este ride no tiene origen válido'); return;
+   const lat = Number(ride?.origin_lat), lng = Number(ride?.origin_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    alert('Este servicio no tiene origen válido.');
+    return;
   }
-  fetch(`/api/dispatch/nearby-drivers?lat=${ride.origin_lat}&lng=${ride.origin_lng}&km=5`,
+  fetch(`/api/dispatch/nearby-drivers?lat=${ride.origin_lat}&lng=${ride.origin_lng}&km=3`,
         { headers:{Accept:'application/json'} })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(list => {
@@ -1547,13 +2137,12 @@ function openAssignFlow(ride){
           const dk = _distKm(ride.origin_lat, ride.origin_lng, ll.lat, ll.lng);
           candidates.push({ id, name:e.name||('Driver '+id), vehicle_type:e.type||'sedan', vehicle_plate:e.plate||'', distance_km: dk });
         });
-        candidates = candidates.filter(c => c.distance_km <= 7);
+        candidates = candidates.filter(c => c.distance_km <= 4);
       }
       renderAssignPanel(ride, candidates);
     })
     .catch(e => { console.warn('nearby-drivers error', e); renderAssignPanel(ride, []); });
 }
-
 
 // ADD: POST de asignación + UI
 async function confirmAssign(ride, driver){
@@ -1585,12 +2174,702 @@ async function confirmAssign(ride, driver){
   }
 }
 
+// ==== Cargar settings desde Laravel (model/service) ====
+async function loadDispatchSettings() {
+  try {
+    const tenantId = (typeof getTenantId === 'function' ? getTenantId() : (window.currentTenantId || ''));
+    const r = await fetch('/api/dispatch/settings', {
+      method: 'GET',
+      headers: { 'Accept': 'application/json', 'X-Tenant-ID': tenantId },
+      credentials: 'same-origin'
+    });
+    const json = await r.json();
+    window.ccDispatchSettings = {
+      auto_dispatch_enabled:           !!json.auto_dispatch_enabled,
+      auto_dispatch_delay_s:           Number(json.auto_dispatch_delay_s ?? 20),
+      auto_dispatch_preview_n:         Number(json.auto_dispatch_preview_n ?? 12),
+      auto_dispatch_preview_radius_km: Number(json.auto_dispatch_preview_radius_km ?? 5),
+      offer_expires_sec:               Number(json.offer_expires_sec ?? 180),
+      auto_assign_if_single:           !!json.auto_assign_if_single,
+    };
+    console.debug('[settings] OK', window.ccDispatchSettings);
+  } catch (e) {
+    console.warn('[settings] error; defaults');
+    window.ccDispatchSettings = window.ccDispatchSettings || {
+      auto_dispatch_enabled: true,
+      auto_dispatch_delay_s: 20,
+      auto_dispatch_preview_n: 12,
+      auto_dispatch_preview_radius_km: 5
+    };
+  }
+}
+window.loadDispatchSettings = loadDispatchSettings;
 
+// ==== Cancelar timers ====
+// --- Auto-dispatch helpers ---
+function cancelCompoundAutoDispatch(){
+  if (!window.__compoundTimers) return;
+  try {
+    if (window.__compoundTimers.tEnd)     clearTimeout(window.__compoundTimers.tEnd);
+    if (window.__compoundTimers.interval) clearInterval(window.__compoundTimers.interval);
+  } catch {}
+  window.__compoundTimers = null;
+  try { hideBubble?.(); } catch {}
+}
+
+function startCompoundAutoDispatch(ride) {
+  // limpia cualquier timer previo
+  cancelCompoundAutoDispatch();
+
+  const ds = window.ccDispatchSettings || {};
+  const enabled = ds.auto_dispatch_enabled !== false;
+
+  // delay configurable: usa auto_dispatch_delay_s o, si no viene, auto_delay_sec; default 20s
+  const total = Number.isFinite(+ds.auto_dispatch_delay_s)
+    ? Math.max(0, Math.floor(+ds.auto_dispatch_delay_s))
+    : (Number.isFinite(+ds.auto_delay_sec) ? Math.max(0, Math.floor(+ds.auto_delay_sec)) : 20);
+
+  // no continues si está deshabilitado o sin ride
+  if (!enabled || !ride) return;
+
+  // seguridad extra: no dispares si es programado
+  if (typeof isScheduledStatus === 'function' && isScheduledStatus(ride)) return;
+  if (!isScheduledStatus && ride?.scheduled_for) return;
+
+  // feedback visual (opcional)
+  try { showBubble?.('Servicio detectado…'); } catch {}
+
+  window.__compoundTimers = window.__compoundTimers || {};
+
+  // disparo final: POST /api/dispatch/tick con ride_id
+  window.__compoundTimers.tEnd = setTimeout(async () => {
+    try { hideBubble?.(); } catch {}
+    try {
+      const tenantId = (typeof getTenantId === 'function' ? getTenantId() : (window.currentTenantId || ''));
+      const resp = await fetch('/api/dispatch/tick', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+          'X-Tenant-ID': tenantId
+        },
+        body: JSON.stringify({ ride_id: ride.id })
+      });
+      if (!resp.ok) {
+        const txt = await resp.text().catch(()=> '');
+        console.warn('[auto] tick 500:', txt);
+      }
+    } catch (e) {
+      console.warn('[auto] tick error:', e);
+    }
+  }, total * 1000);
+
+  // cuenta regresiva (opcional)
+  let left = total;
+  window.__compoundTimers.interval = setInterval(() => {
+    left -= 1;
+    if (left <= 0) { clearInterval(window.__compoundTimers.interval); return; }
+    try { updateBubble?.(`Asignando en ${left}s`); } catch {}
+  }, 1000);
+}
+window.startCompoundAutoDispatch = startCompoundAutoDispatch;
+window.cancelCompoundAutoDispatch = cancelCompoundAutoDispatch;
+
+
+//barra derecha lateral 
+
+const _norm = s => String(s || '').toLowerCase().trim();
+
+// Canoniza alias comunes (onboard/enroute, etc.)
+function _canonStatus(s){
+  const k = _norm(s);
+  if (k === 'onboard') return 'on_board';
+  if (k === 'enroute') return 'en_route';
+  return k;
+}
+
+// Conjuntos ya en canónico
+const _SET_WAITING = new Set(['requested','pending','new','offered','offering']);
+const _SET_ACTIVE  = new Set(['accepted','assigned','en_route','arrived','boarding','on_board']);
+const _SET_SCHED   = new Set(['scheduled']);
+
+const _isWaiting   = r => _SET_WAITING.has(_canonStatus(r?.status));
+const _isActive    = r => _SET_ACTIVE.has(_canonStatus(r?.status));
+const _isScheduled = r => _SET_SCHED.has(_canonStatus(r?.status));
+
+
+
+// Badge de color por estado (acepta alias)
+function statusBadgeClass(s){
+  const k = _canonStatus(s);
+  if (k === 'en_route') return 'bg-primary-subtle text-primary';
+  if (k === 'arrived')  return 'bg-warning-subtle text-warning';
+  if (k === 'on_board') return 'bg-success-subtle text-success';
+  if (k === 'assigned' || k === 'accepted' || k === 'boarding')
+    return 'bg-secondary-subtle text-secondary';
+  return 'bg-light text-body';
+}
+
+
+/* ------- Render genérico en cualquier contenedor ------- */
+function renderActiveRidesInto(containerSel, badgeSel, rides){
+  const el = document.querySelector(containerSel); if(!el) return;
+  el.innerHTML = '';
+
+  const b = document.querySelector(badgeSel);
+  if (b) b.innerText = (rides||[]).length;
+
+  // índice rápido para acciones (assign/view) sin pedir el detalle
+  window._ridesIndex = new Map();
+
+  (rides||[]).forEach(r=>{
+    try { window._ridesIndex.set(r.id, r); } catch {}
+
+    // usa tu helper existente (//----helpers card------)
+    const html = renderRideCard(r);
+    if (!html) return; // oculto solo si terminal
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    const card = wrapper.firstElementChild;
+
+    // wire de acciones mínimas
+    card.querySelector('[data-act="view"]')
+        ?.addEventListener('click', ()=> highlightRideOnMap?.(r));
+
+    // cancel por data-action (si tu card ya lo trae)
+    card.querySelector('[data-action="cancel-ride"]')
+        ?.addEventListener('click', (e)=> e.stopPropagation()); // el handler global escucha el click
+
+    el.appendChild(card);
+  });
+}
+
+/* ------- Mantén tu función original pero redirígela a la genérica ------- */
+function renderActiveRides(rides){
+  renderActiveRidesInto('#panel-active', '#badgeActivos', rides);
+}
+
+/* ------- Versión espejo para el panel izquierdo ------- */
+function renderActiveRidesLeft(rides){
+  renderActiveRidesInto('#left-active', '#badgeActivosLeft', rides);
+}
+
+/* ------- Carga por AJAX y pinta ambos paneles ------- */
+
+// --- helpers para asegurar que la card tenga paradas ---
+async function hydrateRideStops(ride) {
+  // si ya vienen, no hacemos nada
+  if (Array.isArray(ride.stops) && ride.stops.length) return ride;
+  if (Array.isArray(ride.stops_json) && ride.stops_json.length) {
+    ride.stops = ride.stops_json;
+    ride.stops_count = ride.stops_json.length;
+    ride.stop_index = ride.stop_index ?? 0;
+    return ride;
+  }
+  if (typeof ride.stops_json === 'string' && ride.stops_json.trim() !== '') {
+    try {
+      const arr = JSON.parse(ride.stops_json);
+      if (Array.isArray(arr)) {
+        ride.stops = arr;
+        ride.stops_count = arr.length;
+        ride.stop_index = ride.stop_index ?? 0;
+        return ride;
+      }
+    } catch {}
+  }
+
+  // cargar detalle del ride (incluye stops) y mezclar
+  try {
+    const r = await fetch(`/api/rides/${ride.id}`, { headers: { Accept: 'application/json' } });
+    if (r.ok) {
+      const d = await r.json();
+      ride.stops        = Array.isArray(d.stops) ? d.stops : [];
+      ride.stops_json   = ride.stops;
+      ride.stops_count  = d.stops_count ?? ride.stops.length;
+      ride.stop_index   = d.stop_index ?? 0;
+      // por si quieres que el monto/dist/dur se actualicen con el detalle
+      ride.distance_m   = d.distance_m ?? ride.distance_m;
+      ride.duration_s   = d.duration_s ?? ride.duration_s;
+      ride.quoted_amount= d.quoted_amount ?? ride.quoted_amount;
+    }
+  } catch (e) {
+    console.warn('hydrateRideStops fallo', e);
+  }
+  return ride;
+}
+
+
+
+async function loadActiveRides() {
+  const panel = document.getElementById('panel-active');
+  try {
+    const r = await fetch('/api/rides?status=active', { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    let list = await r.json();
+
+    // 💧 hidratar con paradas cuando falten
+    list = await Promise.all(list.map(hydrateRideStops));
+
+    // render
+    panel.innerHTML = list.map(renderRideCard).join('') || '<div class="text-muted small">Sin viajes</div>';
+
+    // opcional: badge
+    const b = document.getElementById('badgeActivos');
+    if (b) b.textContent = list.length;
+
+  } catch (e) {
+    console.error('loadActiveRides fallo:', e);
+    panel.innerHTML = `<div class="text-danger small">Error cargando activos</div>`;
+  }
+}
+
+
+// Pinta tarjetas de "Ahora" (esperando/ofertados) en #panel-active
+function renderRightNowCards(rides){
+  const host = document.getElementById('panel-active');
+  if (!host) return;
+  const waiting = (rides || []).filter(_isWaiting);
+
+  // índice solo de waiting (para los botones Ver)
+  window._ridesIndex = new Map(waiting.map(r => [r.id, r]));
+
+  host.innerHTML = waiting.length
+    ? waiting.map(r => renderRideCard(r) || '').join('')
+    : `<div class="text-muted px-2 py-2">Sin solicitudes.</div>`;
+
+  host.querySelectorAll('[data-act="view"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const card = btn.closest('[data-ride-id]');
+      const id   = Number(card?.dataset?.rideId);
+      const r    = window._ridesIndex.get(id);
+      if (r) highlightRideOnMap(r);
+    });
+  });
+
+  // badge de la pestaña
+  const b = document.querySelector('#tab-active-cards .badge');
+  if (b) b.textContent = String(waiting.length);
+}
+
+
+// Pinta tarjetas programadas en #panel-active-scheduled
+function renderRightScheduledCards(rides){
+  const host = document.getElementById('panel-active-scheduled');
+  if (!host) return;
+  const scheduled = (rides || []).filter(_isScheduled);
+
+  // índice para "Ver" (solo scheduled aquí)
+  window._ridesIndex = new Map(scheduled.map(r => [r.id, r]));
+
+  host.innerHTML = scheduled.length
+    ? scheduled.map(r => renderRideCard(r) || '').join('')
+    : `<div class="text-muted px-2 py-2">Sin programados.</div>`;
+
+  host.querySelectorAll('[data-act="view"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const card = btn.closest('[data-ride-id]');
+      const id   = Number(card?.dataset?.rideId);
+      const r    = window._ridesIndex.get(id);
+      if (r) highlightRideOnMap(r);
+    });
+  });
+
+  // badge de la pestaña
+  const b = document.querySelector('#tab-active-grid .badge');
+  if (b) b.textContent = String(scheduled.length);
+}
+
+
+// Pinta el dock inferior (tipo tabla) con ACTivos
+// --- helpers mínimos ---
+const _lc = s => String(s||'').toLowerCase();
+
+function _statePill(r){
+  const st = _lc(r.status);
+  if (st === 'en_route') return { cls:'badge-pill badge-enroute',  label:'EN RUTA' };
+  if (st === 'arrived')  return { cls:'badge-pill badge-arrived',  label:'LLEGÓ'   };
+  if (st === 'on_board') return { cls:'badge-pill badge-onboard',  label:'A BORDO' };
+  return { cls:'badge-pill badge-accepted', label:'ACEPTADO' };
+}
+
+function statusBadgeClass(s){
+  const k = String(s||'').toLowerCase();
+  if (k === 'en_route' || k === 'enroute') return 'bg-primary-subtle text-primary';
+  if (k === 'arrived')                      return 'bg-warning-subtle text-warning';
+  if (k === 'on_board' || k === 'onboard')  return 'bg-success-subtle text-success';
+  if (k === 'accepted')                     return 'bg-secondary-subtle text-secondary';
+  return 'bg-light text-body';
+}
+
+// === Dock table styles (once) ===============================================
+(function injectDockTableStyles(){
+  if (window.__DOCK_TABLE_STYLES__) return; window.__DOCK_TABLE_STYLES__ = true;
+  const css = `
+    .cc-dock-table th, .cc-dock-table td { font-size:12px; vertical-align:middle; }
+    .cc-dock-table .badge { font-size:11px; }
+    .cc-dock-unit, .cc-dock-driver { font-weight:600; }
+    .cc-dock-eta { width:54px; }
+    .cc-dock-num { text-align:right; width:56px; }
+    .cc-dock-stops { text-align:center; width:70px; }
+    .cc-dock-table tbody tr:hover { background: #f8fafc; }
+  `;
+  const s = document.createElement('style'); s.textContent = css; document.head.appendChild(s);
+})();
+
+// === Dock expandible =========================================================
+(function setupDockToggle(){
+  const dock   = document.querySelector('#dispatchDock'); // contenedor dock
+  const toggle = document.querySelector('#dockToggle, [data-act="dock-toggle"]'); // botón expandir
+  if (!dock || !toggle) return;
+
+  const saved = localStorage.getItem('dispatchDockExpanded');
+  if (saved === '1') dock.classList.add('is-expanded');
+
+  toggle.addEventListener('click', (e)=>{
+    e.preventDefault();
+    dock.classList.toggle('is-expanded');
+    localStorage.setItem('dispatchDockExpanded', dock.classList.contains('is-expanded') ? '1' : '0');
+  });
+})();
+
+function renderDockActive(rides){
+  const active = (rides||[]).filter(_isActive);
+
+  const b1 = document.getElementById('badgeActivos');      // badge panel derecho
+  const b2 = document.getElementById('badgeActivosDock');  // badge dock
+  if (b1) b1.textContent = active.length;
+  if (b2) b2.textContent = active.length;
+
+  const host = document.getElementById('dock-active-table');
+  if (!host) return;
+
+  // índice por id
+  window._ridesIndex = new Map(active.map(r=>[r.id,r]));
+
+  // helpers
+  const esc = (s)=>String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const fmtKm  = (m)=> Number.isFinite(m) ? (m/1000).toFixed(1) : '–';
+  const fmtMin = (s)=> Number.isFinite(s) ? Math.round(s/60) : '–';
+  const parseStops = (r)=>{
+    if (Array.isArray(r.stops)) return r.stops;
+    if (Array.isArray(r.stops_json)) return r.stops_json;
+    if (typeof r.stops_json === 'string' && r.stops_json.trim()!==''){
+      try { const a = JSON.parse(r.stops_json); return Array.isArray(a) ? a : []; } catch {}
+    }
+    return [];
+  };
+  const short = (t,max=60)=> (t||'').length>max ? t.slice(0,max-1)+'…' : (t||'');
+
+  const rows = active.map(r=>{
+    const km   = fmtKm(r.distance_m);
+    const min  = fmtMin(r.duration_s);
+    const st   = String(_canonStatus(r.status) || '').toUpperCase();
+    const badge= statusBadgeClass(r.status);
+    const dvr  = r.driver_name || r.driver?.name || '—';
+    const unit = r.vehicle_economico || r.vehicle_plate || r.vehicle_id || '—';
+    const eta  = (r.pickup_eta_min ?? '—');
+
+    const stops = parseStops(r);
+    const sc    = stops.length || Number(r.stops_count||0);
+
+    // Tooltip con labels o coords; \n -> &#10; para title HTML
+    const tipRaw = stops.map((s,i)=>{
+      const label = (s && typeof s.label==='string' && s.label.trim()!=='')
+        ? s.label.trim()
+        : (Number.isFinite(+s.lat)&&Number.isFinite(+s.lng) ? `${(+s.lat).toFixed(5)}, ${(+s.lng).toFixed(5)}` : '—');
+      return `S${i+1}: ${label}`;
+    }).join('\n');
+    const tipHtml = esc(tipRaw).replace(/\n/g,'&#10;');
+
+    const stopsCell = sc
+      ? `<span class="badge bg-secondary-subtle text-secondary" title="${tipHtml}">${sc}</span>`
+      : '—';
+
+    return `
+      <tr class="cc-row" data-ride-id="${r.id}">
+        <td class="cc-dock-unit">${esc(unit)}</td>
+        <td class="cc-dock-driver">${esc(dvr)}</td>
+        <td class="cc-dock-eta">${esc(String(eta))}</td>
+        <td class="small" title="${esc(r.origin_label||'')}">${esc(short(r.origin_label,50))}</td>
+        <td class="small" title="${esc(r.dest_label||'')}">${esc(short(r.dest_label,50))}</td>
+        <td class="cc-dock-stops">${stopsCell}</td>
+        <td class="cc-dock-num">${km}</td>
+        <td class="cc-dock-num">${min}</td>
+        <td><span class="badge ${badge}">${st}</span></td>
+        <td class="text-end"><button class="btn btn-xs btn-outline-secondary" data-act="view">Ver</button></td>
+      </tr>`;
+  }).join('');
+
+  host.innerHTML = `
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0 cc-dock-table">
+        <thead>
+          <tr>
+            <th>Unidad</th>
+            <th>Conductor</th>
+            <th class="cc-dock-eta">ETA</th>
+            <th>Origen</th>
+            <th>Destino</th>
+            <th class="cc-dock-stops">Paradas</th>
+            <th class="cc-dock-num">Km</th>
+            <th class="cc-dock-num">Min</th>
+            <th>Estado</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  // Ver (ruta en mapa) + centrar conductor
+  host.querySelectorAll('button[data-act="view"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const tr = btn.closest('tr');
+      const id = Number(tr?.dataset?.rideId);
+      const r  = window._ridesIndex.get(id);
+      if (r){
+        highlightRideOnMap(r); // deja ruta/markers
+        focusDriverOnMap(r);   // centra conductor
+      }
+    });
+  });
+
+  // Click en fila -> centra conductor (sin dibujar ruta)
+  host.querySelectorAll('tr.cc-row').forEach(tr=>{
+    tr.addEventListener('click', (e)=>{
+      if (e.target.closest('button')) return;
+      const id = Number(tr.dataset.rideId);
+      const r  = window._ridesIndex.get(id);
+      if (r) focusDriverOnMap(r);
+    });
+  });
+}
+
+
+// Centra el mapa en la última ubicación conocida del driver (si existe). Mantiene la ruta.
+function getRideById(id){
+  if (!id) return null;
+  const r = window._ridesIndex?.get?.(id);
+  if (r) return r;
+  const list = Array.isArray(window._lastActiveRides) ? window._lastActiveRides : [];
+  return list.find(x => Number(x.id) === Number(id)) || null;
+}
+
+
+
+// Orquestador: separa y pinta todo
+function renderRightPanels(rides){
+  renderRightNowCards(rides);
+  renderRightScheduledCards(rides);
+  renderDockActive(rides);
+
+  // Auto-mostrar pestaña: si hay programados, quédate donde esté el usuario; no forzar
+  // (si quisieras forzar, podrías hacer .show() sobre el tab correspondiente)
+}
+
+function applyRidePreset(preset){
+  const hasExisting =
+    (qs('#fromLat')?.value && qs('#fromLng')?.value) ||
+    (qs('#toLat')?.value   && qs('#toLng')?.value);
+
+  if (hasExisting) {
+    const ok = confirm('Ya hay una ruta cargada. ¿Quieres reemplazarla por la del cliente seleccionado?');
+    if (!ok) return;
+  }
+
+  // Rellenar campos
+  if (preset.origin) {
+    qs('#inFrom').value   = preset.origin.label || '';
+    qs('#fromLat').value  = preset.origin.lat ?? '';
+    qs('#fromLng').value  = preset.origin.lng ?? '';
+  }
+  if (preset.dest) {
+    qs('#inTo').value   = preset.dest.label || '';
+    qs('#toLat').value  = preset.dest.lat ?? '';
+    qs('#toLng').value  = preset.dest.lng ?? '';
+  }
+
+  // Redibujar ruta si tienes helper
+  if (typeof drawRoutePreview === 'function') {
+    drawRoutePreview();
+  }
+}
+
+
+// MANTIENE la firma original
+function renderQueues(queues){
+  const acc = document.getElementById('panel-queue'); if (!acc) return;
+  acc.innerHTML = '';
+
+  const total = (queues || []).length;
+  const badge = document.getElementById('badgeColas'); if (badge) badge.textContent = total;
+
+  (queues || []).forEach((s, idx) => {
+    const drivers = Array.isArray(s.drivers) ? s.drivers : [];
+    const toEco = d => (d.eco || d.callsign || d.number || d.id || '?');
+
+    const item   = document.createElement('div'); item.className = 'accordion-item';
+    const headId = `qhead-${s.id||idx}`, colId = `qcol-${s.id||idx}`;
+
+    item.innerHTML = `
+      <h2 class="accordion-header" id="${headId}">
+        <button class="accordion-button collapsed" type="button"
+                data-bs-toggle="collapse" data-bs-target="#${colId}"
+                aria-expanded="false" aria-controls="${colId}">
+          <div class="d-flex w-100 justify-content-between align-items-center">
+            <div>
+              <div class="fw-semibold">${s.nombre || s.name || ('Base '+(s.id||''))}</div>
+              <div class="small text-muted">${[s.latitud||s.lat, s.longitud||s.lng].filter(Boolean).join(', ')}</div>
+            </div>
+            <span class="badge bg-secondary">${drivers.length}</span>
+          </div>
+        </button>
+      </h2>
+      <div id="${colId}" class="accordion-collapse collapse" data-bs-parent="#panel-queue">
+        <div class="accordion-body">
+          ${
+            drivers.length
+              ? `<div class="queue-eco-grid">${
+                  drivers.map(d => `<span class="eco">${toEco(d)}</span>`).join('')
+                }</div>`
+              : `<div class="text-muted">Sin unidades en cola.</div>`
+          }
+        </div>
+      </div>
+    `;
+    acc.appendChild(item);
+  });
+}
+
+
+function resetWhenNow(){
+  const rNow   = document.getElementById('when-now');
+  const rLater = document.getElementById('when-later');
+  const sched  = document.getElementById('scheduleAt');
+  const row    = document.getElementById('scheduleRow');
+
+  if (rNow)   rNow.checked   = true;
+  if (rLater) rLater.checked = false;
+  if (sched)  sched.value    = '';         // limpia datetime-local
+  if (row)    row.style.display = 'none';  // oculta la fila
+  const rs = document.getElementById('routeSummary');
+  if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
+}
+(function autoFixedWhenTyping(){
+  const amt = document.querySelector('#fareAmount');
+  const fm  = document.querySelector('#fareMode');
+  if (!amt || !fm) return;
+
+  let lastProgrammatic = null;
+
+  // Marcar 'fixed' al editar manualmente
+  amt.addEventListener('input', () => {
+    const v = Number(amt.value);
+    if (Number.isFinite(v) && fm.value !== 'fixed') {
+      fm.value = 'fixed';
+      // opcional: pequeño aviso
+      // toast('Usando tarifa fija');
+    }
+  });
+
+  // Si vuelven a 'meter', puedes restaurar el valor de la última cotización
+  fm.addEventListener('change', () => {
+    if (fm.value === 'meter' && window.__lastQuote?.amount != null) {
+      amt.value = window.__lastQuote.amount;
+    }
+  });
+})();
+
+async function recalcQuoteUI() {
+  try {
+    const fromLat = parseFloat(qs('#fromLat')?.value || '');
+    const fromLng = parseFloat(qs('#fromLng')?.value || '');
+    const toLat   = parseFloat(qs('#toLat')?.value   || '');
+    const toLng   = parseFloat(qs('#toLng')?.value   || '');
+
+    // 1) Validación: O/D completos
+    if (!Number.isFinite(fromLat) || !Number.isFinite(fromLng) ||
+        !Number.isFinite(toLat)   || !Number.isFinite(toLng)) {
+      console.warn('[quote] faltan coordenadas de origen/destino');
+      return;
+    }
+
+    // 2) Stops (0..2)
+    const stops = [];
+    const s1lat = parseFloat(qs('#stop1Lat')?.value || '');
+    const s1lng = parseFloat(qs('#stop1Lng')?.value || '');
+    if (Number.isFinite(s1lat) && Number.isFinite(s1lng)) stops.push({ lat: s1lat, lng: s1lng });
+
+    const s2lat = parseFloat(qs('#stop2Lat')?.value || '');
+    const s2lng = parseFloat(qs('#stop2Lng')?.value || '');
+    if (Number.isFinite(s2lat) && Number.isFinite(s2lng)) stops.push({ lat: s2lat, lng: s2lng });
+
+    // 3) Arma body
+    const body = {
+      origin:      { lat: fromLat, lng: fromLng },
+      destination: { lat: toLat,   lng: toLng   },
+      stops,                // backend usará stop_fee de tenant_fare_policies
+      round_to_step: 1       // opcional
+    };
+
+    // 4) URL segura (default si no definiste la global)
+    const url = window.__QUOTE_URL__ || '/api/dispatch/quote';
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type':'application/json',
+        'Accept':'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (amtInput && (!fm || fm.value !== 'fixed')) {
+      amtInput.value = data.amount;
+    }
+
+    if (!resp.ok) {
+      console.warn('[quote] HTTP', resp.status);
+      return;
+    }
+
+    const data = await resp.json();
+
+    // Tu controlador responde { ok, amount, distance_m, duration_s, [stops_n] }
+    const amount = data?.amount;
+    if (amount == null) {
+      console.warn('[quote] respuesta sin amount', data);
+      return;
+    }
+
+    // 5) Actualiza UI
+    const amt = qs('#fareAmount'); if (amt) amt.value = amount;
+
+    const rs = qs('#routeSummary');
+    if (rs) {
+      const km  = ((data.distance_m ?? 0) / 1000).toFixed(2);
+      const min = Math.round((data.duration_s ?? 0) / 60);
+      const sn  = data.stops_n ?? stops.length; // por si el backend no manda stops_n
+      rs.innerText = `Ruta: ${km} km · ${min} min · Paradas: ${sn} · Tarifa: $${amount}`;
+    }
+  } catch (e) {
+    console.warn('[quote] recalcQuoteUI error', e);
+  }
+}
 
 
 
 /* ---------- INIT (cuando el DOM está listo) ---------- */
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadDispatchSettings();
+  //renderQueues(queues); 
+  loadActiveRides();
+  // refresco suave cada 20–30s (opcional)
+  //setInterval(loadActiveRides, 30000);
+
+
   const mapEl = document.getElementById('map');
   if (!mapEl) return;
   mapEl.classList.toggle('map-dark', isDarkMode());
@@ -1629,6 +2908,28 @@ document.addEventListener('DOMContentLoaded', async () => {
       const p = acTo.getPlace(); if(!p?.geometry) return;
       setTo([p.geometry.location.lat(), p.geometry.location.lng()], p.formatted_address);
     });
+    if (window.google?.maps?.places) {
+  if (qs('#inStop1')) {
+    acStop1 = new google.maps.places.Autocomplete(qs('#inStop1'), { fields:['geometry','formatted_address'] });
+    acStop1.addListener('place_changed', ()=>{
+      const p = acStop1.getPlace();
+      const ll = p?.geometry?.location;
+      if (!ll) return;
+      setStop1([ll.lat(), ll.lng()], p.formatted_address || null);
+    });
+  }
+  if (qs('#inStop2')) {
+    acStop2 = new google.maps.places.Autocomplete(qs('#inStop2'), { fields:['geometry','formatted_address'] });
+    acStop2.addListener('place_changed', ()=>{
+      // solo si existe stop1
+      if (!Number.isFinite(parseFloat(qs('#stop1Lat')?.value))) return;
+      const p = acStop2.getPlace();
+      const ll = p?.geometry?.location;
+      if (!ll) return;
+      setStop2([ll.lat(), ll.lng()], p.formatted_address || null);
+    });
+  }
+}
   }).catch(e=> console.warn('[DISPATCH] Google no cargó', e));
 
   // toggles + pick
@@ -1642,132 +2943,291 @@ document.addEventListener('DOMContentLoaded', async () => {
     else setTo([ev.latlng.lat, ev.latlng.lng]);
     pickMode=null;
   });
+
+  qs('#btnPickStop1')?.addEventListener('click', ()=>{
+  map.once('click', (e)=> setStop1([e.latlng.lat, e.latlng.lng]));
+  });
+  qs('#btnPickStop2')?.addEventListener('click', ()=>{
+    if (!Number.isFinite(parseFloat(qs('#stop1Lat')?.value))) return;
+    map.once('click', (e)=> setStop2([e.latlng.lat, e.latlng.lng]));
+  });
+
+  // Botón +Parada
+  qs('#btnAddStop1')?.addEventListener('click', ()=>{
+    const hasS1 = Number.isFinite(parseFloat(qs('#stop1Lat')?.value));
+    if (!hasS1) { qs('#stop1Row').style.display=''; return; }
+    const hasS2 = Number.isFinite(parseFloat(qs('#stop2Lat')?.value));
+    if (!hasS2) { qs('#stop2Row').style.display=''; }
+  });
+
+  // Quitar
+  qs('#btnClearStop1')?.addEventListener('click', ()=>{
+    qs('#stop1Lat').value=''; qs('#stop1Lng').value='';
+    qs('#inStop1').value='';  qs('#stop1Row').style.display='none';
+    if (stop1Marker){ stop1Marker.remove(); stop1Marker=null; }
+    // si quitamos S1, también invalidamos S2
+    qs('#btnClearStop2')?.click();
+    drawRoute({quiet:true}); autoQuoteIfReady();
+    recalcQuoteUI();
+  });
+  qs('#btnClearStop2')?.addEventListener('click', ()=>{
+    qs('#stop2Lat').value=''; qs('#stop2Lng').value='';
+    qs('#inStop2').value='';  qs('#stop2Row').style.display='none';
+    if (stop2Marker){ stop2Marker.remove(); stop2Marker=null; }
+    drawRoute({quiet:true}); autoQuoteIfReady();
+    recalcQuoteUI();
+  });
+
+
   qs('#toggle-sectores')?.addEventListener('change', e=> e.target.checked? layerSectores.addTo(map):map.removeLayer(layerSectores));
   qs('#toggle-stands')?.addEventListener('change',   e=> e.target.checked? layerStands.addTo(map):  map.removeLayer(layerStands));
 
   // recordar último ride por teléfono
-  qs('#pass-phone')?.addEventListener('blur', async (e)=>{
-    const phone = (e.target.value||'').trim(); if(!phone) return;
-    try{
-      const r = await fetch(`/api/passengers/last-ride?phone=${encodeURIComponent(phone)}`);
-      if(!r.ok) return;
-      const j = await r.json(); if(!j) return;
-      if(j.passenger_name && !qs('#pass-name').value) qs('#pass-name').value = j.passenger_name;
-      if(j.notes && !qs('#ride-notes').value) qs('#ride-notes').value = j.notes;
-      if(Number.isFinite(j.origin_lat) && Number.isFinite(j.origin_lng)) setFrom([j.origin_lat, j.origin_lng], j.origin_label);
-      if(Number.isFinite(j.dest_lat)   && Number.isFinite(j.dest_lng))   setTo([j.dest_lat,   j.dest_lng],   j.dest_label);
-    }catch{}
-  });
+ // recordar último ride por teléfono (no sobreescribir si ya hay puntos)
+qs('#pass-phone')?.addEventListener('blur', async (e) => {
+  const phone = (e.target.value || '').trim();
+  if (!phone) return;
+
+  // 1) Si ya hay A o B definidos, NO toques la ruta.
+  const hasA = !!(qs('#fromLat')?.value && qs('#fromLng')?.value);
+  const hasB = !!(qs('#toLat')?.value   && qs('#toLng')?.value);
+  if (hasA || hasB) {
+    // (opcional) muestra un mini aviso o abre un selector de rutas previas
+    // showPhonePresetToast(phone);  // <- pendiente de implementar si quieres el flotante
+    return;
+  }
+
+  try {
+    const r = await fetch(`/api/passengers/last-ride?phone=${encodeURIComponent(phone)}`);
+    if (!r.ok) return;
+    const j = await r.json(); if (!j) return;
+
+    // 2) Rellena nombre/notas solo si están vacíos.
+    if (j.passenger_name && !qs('#pass-name')?.value) qs('#pass-name').value = j.passenger_name;
+    if (j.notes && !qs('#ride-notes')?.value) qs('#ride-notes').value = j.notes;
+
+    // 3) Antes de pintar pines nuevos, limpia artefactos previos (resaltados, previas).
+    try { 
+      // limpia líneas “suggested/preview” y asignaciones
+      if (typeof clearAssignArtifacts === 'function') clearAssignArtifacts();
+
+      // borra grupos de highlight previos (rutas marcadas por focus/ver)
+      if (window.rideMarkers) {
+        try { window.rideMarkers.forEach(g => { try { g.remove(); } catch {} }); } catch {}
+        try { window.rideMarkers.clear(); } catch {}
+      }
+    } catch {}
+
+    // 4) Pinta ÚNICAMENTE si vienen coords válidas
+    if (Number.isFinite(j.origin_lat) && Number.isFinite(j.origin_lng)) {
+      setFrom([j.origin_lat, j.origin_lng], j.origin_label);
+    }
+    if (Number.isFinite(j.dest_lat) && Number.isFinite(j.dest_lng)) {
+      setTo([j.dest_lat, j.dest_lng], j.dest_label);
+    }
+  } catch {/* silencioso */}
+});
+
 
   // crear ride
-  qs('#btnCreate')?.addEventListener('click', async ()=>{
-  const payload = {
-  passenger_name:  qs('#pass-name')?.value || null,
-  passenger_phone: qs('#pass-phone')?.value || null,
-
-  origin_lat: parseFloat(qs('#fromLat')?.value),
-  origin_lng: parseFloat(qs('#fromLng')?.value),
-  origin_label: qs('#inFrom')?.value || null,
-
-  dest_lat: parseFloat(qs('#toLat')?.value) || null,
-  dest_lng: parseFloat(qs('#toLng')?.value) || null,
-  dest_label: qs('#inTo')?.value || null,
-
-  payment_method: qs('#pay-method')?.value || 'cash',
-  fare_mode: (qs('#fareMode')?.value || 'meter'), // si lo usas
-
-  notes: qs('#ride-notes')?.value || null,
-  pax: parseInt(qs('#pax')?.value)||1,
-  scheduled_for: null,
-
-  quoted_amount: (() => {
-    const v = Number(qs('#fareAmount')?.value);
-    return Number.isFinite(v) ? Math.round(v) : null; // enteros
-  })(),
-  distance_m: __lastQuote?.distance_m ?? null,
-  duration_s: __lastQuote?.duration_s ?? null,
-  route_polyline: __lastQuote?.polyline ?? null,   // si lo guardas
-  requested_channel: 'dispatch',
-};
-
-    if(!Number.isFinite(payload.origin_lat) || !Number.isFinite(payload.origin_lng)){
-      alert('Indica un origen válido.'); return;
-    }
-    try{
-      const r = await fetch('/api/rides', {
-        method:'POST',
-        headers:{
-          'Content-Type':'application/json',
-          'Accept':'application/json',
-          'X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]')?.content || ''
-        },
-        body: JSON.stringify(payload)
-      });
-      if(!r.ok){ const t=await r.text(); throw new Error(t||('HTTP '+r.status)); }
-      const ride = await r.json();
-
-      // === Autodespacho visual opcional (delay) ===
-      // lee settings expuestos por el backend en el layout (o defaults)
-      const ds = (window.ccDispatchSettings || {});
-      const enabled   = ds.auto_dispatch_enabled ?? true;
-      const delaySec  = Number(ds.auto_dispatch_delay_s ?? 0);
-      const prevN     = Number(ds.auto_dispatch_preview_n ?? 8);
-      const radiusKm  = Number(ds.auto_dispatch_preview_radius_km ?? 5);
-
-      if (enabled && delaySec > 0 && Number.isFinite(ride.origin_lat) && Number.isFinite(ride.origin_lng)) {
-      showBubble('Servicio detectado · buscando candidatos...');
-      previewCandidatesFor(ride, prevN, radiusKm);
-
-      // <<< NUEVO: dibuja líneas un poco antes del tick, sin abrir panel >>>
-      const PAD_MS = 1200; // 1.2s antes del tick
-      setTimeout(async () => {
-        try {
-          const candidates = await getCandidatesFor(ride, radiusKm);
-          await drawPreviewLinesStagger(ride, candidates, prevN);
-        } catch(e) { console.warn('auto preview lines error', e); }
-      }, Math.max(0, delaySec*1000 - PAD_MS));
-
-      startCountdown(delaySec, (s)=> {
-        updateBubble(`Asignando en ${s}s...`);
-      }, async ()=> {
-        hideBubble();
-        try {
-          await fetch('/api/dispatch/tick', {
-            method:'POST',
-            headers:{
-              'Content-Type':'application/json',
-              'Accept':'application/json',
-              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
-              'X-Tenant-ID': getTenantId()
-            },
-            body: JSON.stringify({ ride_id: ride.id })
-          });
-        } catch(e) { console.warn('tick error', e); }
-      });
+  // Crear ride (dispatch)
+// normaliza el datetime-local a ISO con zona (evita desfases)
+function normalizeScheduledValue(v){
+  // v viene tipo "2025-01-31T14:30"
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString(); // manda UTC ISO
 }
-
-
-// feedback al operador
-//alert('Viaje creado #'+(ride.id||''));
-
-// refresca panel/mapa
-refreshDispatch();
-    }catch(e){
-      console.error(e); alert('No se pudo crear el viaje.');
+qs('#btnCreate')?.addEventListener('click', async () => {
+  // ¿programado?
+  let scheduled_for = null;
+  if (qs('#when-later')?.checked) {
+    const scheduleInput = qs('#scheduleAt');
+    if (scheduleInput?.value) {
+      scheduled_for = scheduleInput.value; // "YYYY-MM-DDTHH:mm"
     }
-  });
+  }
+
+  // tarifa tomada del input (permitimos override manual)
+  const fareInput = Number(qs('#fareAmount')?.value);
+  const quoted_amount = Number.isFinite(fareInput) ? Math.round(fareInput) : null;
+
+  // si tienes un checkbox para fijar tarifa manual (#fareFixed o #fareLock), lo usamos; si no existe, no estorba.
+  const userfixed = !!(qs('#fareFixed')?.checked || qs('#fareLock')?.checked);
+
+  const payload = {
+    passenger_name:  qs('#pass-name')?.value || null,
+    passenger_phone: qs('#pass-phone')?.value || null,
+
+    origin_lat:   parseFloat(qs('#fromLat')?.value),
+    origin_lng:   parseFloat(qs('#fromLng')?.value),
+    origin_label: qs('#inFrom')?.value || null,
+
+    dest_lat:     (qs('#toLat')?.value ? parseFloat(qs('#toLat')?.value) : null),
+    dest_lng:     (qs('#toLng')?.value ? parseFloat(qs('#toLng')?.value) : null),
+    dest_label:   qs('#inTo')?.value || null,
+
+    payment_method: qs('#pay-method')?.value || 'cash',
+    fare_mode:      qs('#fareMode')?.value || 'meter',   // si no existe el select, quedará 'meter'
+    notes:          qs('#ride-notes')?.value || null,
+    pax:            parseInt(qs('#pax')?.value) || 1,
+    scheduled_for,
+
+    quoted_amount,
+    // si marcaste “fijar tarifa”, lo mandamos; el servicio ya respeta este flag
+    ...(userfixed ? { userfixed: true } : {}),
+
+    distance_m:     (typeof __lastQuote !== 'undefined' ? (__lastQuote?.distance_m ?? null) : null),
+    duration_s:     (typeof __lastQuote !== 'undefined' ? (__lastQuote?.duration_s ?? null) : null),
+    route_polyline: (typeof __lastQuote !== 'undefined' ? (__lastQuote?.polyline   ?? null) : null),
+
+    requested_channel: 'dispatch',
+  };
+
+  // ===== Adjuntar STOPS (con label) si existen en el formulario =====
+  (() => {
+    const s1lat = parseFloat(qs('#stop1Lat')?.value || '');
+    const s1lng = parseFloat(qs('#stop1Lng')?.value || '');
+    const s2lat = parseFloat(qs('#stop2Lat')?.value || '');
+    const s2lng = parseFloat(qs('#stop2Lng')?.value || '');
+
+    const stops = [];
+    if (Number.isFinite(s1lat) && Number.isFinite(s1lng)) {
+      stops.push({ lat: s1lat, lng: s1lng, label: (qs('#inStop1')?.value || null) });
+      if (Number.isFinite(s2lat) && Number.isFinite(s2lng)) {
+        stops.push({ lat: s2lat, lng: s2lng, label: (qs('#inStop2')?.value || null) });
+      }
+    }
+    if (stops.length) payload.stops = stops;
+  })();
+  // ==================================================================
+
+  // Validación mínima de origen
+  if (!Number.isFinite(payload.origin_lat) || !Number.isFinite(payload.origin_lng)) {
+    alert('Indica un origen válido.');
+    return;
+  }
+
+  try {
+    const r = await fetch('/api/rides', {
+      method: 'POST',
+      headers: {
+        'Content-Type':'application/json','Accept':'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+        'X-Tenant-ID': (typeof getTenantId === 'function' ? getTenantId() : (window.currentTenantId || ''))
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) throw new Error((await r.text().catch(()=>'')) || ('HTTP '+r.status));
+    const ride = await r.json();
+
+    // ===== AUTODISPATCH con delay solo si NO es programado =====
+    try {
+      if (!isScheduledStatus?.(ride) && typeof startCompoundAutoDispatch === 'function') {
+        startCompoundAutoDispatch(ride);
+      }
+    } catch(e){}
+
+    // ===== Limpiar UI (incluye stops) =====
+    try {
+      ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount'].forEach(id=>{
+        const el = qs('#'+id); if (el) el.value='';
+      });
+      ['fromLat','fromLng','toLat','toLng'].forEach(id=>{
+        const el = qs('#'+id); if (el) el.value='';
+      });
+      layerRoute?.clearLayers?.();
+      if (fromMarker){ fromMarker.remove(); fromMarker=null; }
+      if (toMarker){   toMarker.remove();   toMarker=null;  }
+      if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
+      if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
+      const s1Lat = qs('#stop1Lat'), s1Lng = qs('#stop1Lng'), s2Lat = qs('#stop2Lat'), s2Lng = qs('#stop2Lng');
+      const inS1 = qs('#inStop1'), inS2 = qs('#inStop2');
+      const row1 = qs('#stop1Row'), row2 = qs('#stop2Row');
+      if (s1Lat) s1Lat.value=''; if (s1Lng) s1Lng.value='';
+      if (s2Lat) s2Lat.value=''; if (s2Lng) s2Lng.value='';
+      if (inS1) inS1.value='';   if (inS2) inS2.value='';
+      if (row1) row1.style.display='none';
+      if (row2) row2.style.display='none';
+      const rs = document.getElementById('routeSummary');
+      if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
+      resetWhenNow?.();
+    } catch {}
+
+    // ===== Feedback + Tabs =====
+    if (isScheduledStatus?.(ride)) {
+      Swal.fire({icon:'success', title:'Programado creado', text:'Se disparará a su hora.', timer:1800, showConfirmButton:false});
+      const tabProg = document.getElementById('tab-active-grid');
+      if (tabProg && window.bootstrap?.Tab) window.bootstrap.Tab.getOrCreateInstance(tabProg).show();
+    } else {
+      Swal.fire({icon:'success', title:'Viaje creado', timer:1200, showConfirmButton:false});
+      const tabNow = document.getElementById('tab-active-cards');
+      if (tabNow && window.bootstrap?.Tab) window.bootstrap.Tab.getOrCreateInstance(tabNow).show();
+    }
+
+    await window.refreshDispatch?.();
+  } catch (e) {
+    console.error(e);
+    alert('No se pudo crear el viaje: ' + (e?.message || e));
+  }
+});
+
+
+
+
+
 
   // limpiar
   qs('#btnClear')?.addEventListener('click', ()=>{
-    ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
+    ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
     ['fromLat','fromLng','toLat','toLng'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
     layerRoute.clearLayers();
     if (fromMarker){ fromMarker.remove(); fromMarker=null; }
     if (toMarker){   toMarker.remove();   toMarker=null;  }
+    if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
+    if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
+     // Limpiar campos de las paradas
+    qs('#stop1Lat').value = ''; qs('#stop1Lng').value = '';
+    qs('#inStop1').value  = ''; qs('#stop1Row').style.display = 'none';
+    qs('#stop2Lat').value = ''; qs('#stop2Lng').value = '';
+    qs('#inStop2').value  = ''; qs('#stop2Row').style.display = 'none';
+
     const rs = document.getElementById('routeSummary');
     if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
+    resetWhenNow();
   });
 
+   qs('#btnReset')?.addEventListener('click', ()=>{
+    ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
+    ['fromLat','fromLng','toLat','toLng'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
+    layerRoute.clearLayers();
+    if (fromMarker){ fromMarker.remove(); fromMarker=null; }
+    if (toMarker){   toMarker.remove();   toMarker=null;  }
+     if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
+    if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
+     // Limpiar campos de las paradas
+    qs('#stop1Lat').value = ''; qs('#stop1Lng').value = '';
+    qs('#inStop1').value  = ''; qs('#stop1Row').style.display = 'none';
+    qs('#stop2Lat').value = ''; qs('#stop2Lng').value = '';
+    qs('#inStop2').value  = ''; qs('#stop2Row').style.display = 'none';
+    const rs = document.getElementById('routeSummary');
+    if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
+    resetWhenNow();
+  });
+
+   qs('#btnDuplicate')?.addEventListener('click', (e)=>{
+  e.preventDefault();
+  if (!window.__lastRide) return; // si guardas el ride creado aquí
+  // ejemplo rápido:
+  qs('#inFrom').value = window.__lastRide.origin_label || '';
+  qs('#fromLat').value = window.__lastRide.origin_lat || '';
+  qs('#fromLng').value = window.__lastRide.origin_lng || '';
+  qs('#inTo').value = window.__lastRide.dest_label || '';
+  qs('#toLat').value = window.__lastRide.dest_lat || '';
+  qs('#toLng').value = window.__lastRide.dest_lng || '';
+  qs('#pass-name').value = window.__lastRide.passenger_name || '';
+  qs('#pass-phone').value = window.__lastRide.passenger_phone || '';
+});
 
   qs('#btnQuote')?.addEventListener('click', async () => {
   const aLat = parseFloat(qs('#fromLat')?.value);

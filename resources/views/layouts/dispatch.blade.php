@@ -1,16 +1,16 @@
-<?php /* resources/views/layouts/dispatch.blade.php */ ?>
 <!doctype html>
 <html lang="es" data-theme="light">
 
 
 <head>
   <meta charset="utf-8">
+  <meta name="page-id" content="dispatch">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>@yield('title','Dispatch') · Athera</title>
 {{-- Feather por CDN (iconos) --}}
  <!-- choose one -->
 <!-- <script src="https://unpkg.com/feather-icons"></script> -->
-<script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
+   <script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
 
   {{-- Hoja dinámica (light/dark) de AdminKit --}}
   <link id="themeStylesheet" rel="stylesheet" href="{{ Vite::asset('resources/css/adminkit/light.css') }}">
@@ -51,7 +51,9 @@
         <small class="text-muted">en cola</small>
       </div>
     </div>
-
+<div id="ops-clock" class="ms-3 small text-muted">
+  <i data-feather="clock"></i> <span id="ops-clock-text">--:--</span>
+</div>
     <div class="ms-3 d-flex align-items-center gap-2">
       <button id="themeToggle" class="btn btn-sm btn-outline-secondary">
         <span class="light-label d-none"><i data-feather="sun"></i></span>
@@ -87,5 +89,51 @@
     return {{ (int) (auth()->user()->tenant_id ?? 1) }};
   };
 </script>
+
+
+<script>
+(async function setupOpsClock(){
+  let serverNowMs = null;
+  let deltaMs = 0;
+  let tenantTz = null;
+
+  try {
+    const r = await fetch('/api/dispatch/runtime', {headers:{Accept:'application/json'}});
+    const js = await r.json();
+    serverNowMs = js.server_now_ms ?? Date.now();
+    tenantTz    = js.tenant_tz || js.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    deltaMs     = serverNowMs - Date.now();
+
+    const drift = Math.abs(deltaMs);
+    if (drift > 90_000 && window.Swal) {
+      Swal.fire({
+        icon:'warning',
+        title:'Ajusta tu reloj',
+        text:'La hora local no coincide con el servidor. Ajusta la hora del sistema.',
+      });
+    }
+  } catch(e){ /* no rompas UI si falla */ }
+
+  const el = document.getElementById('ops-clock-text');
+  function tick(){
+    const now = new Date(Date.now()+deltaMs);
+    if (el) {
+      const dateStr = now.toLocaleDateString([], {
+        timeZone: tenantTz, year:'numeric', month:'short', day:'2-digit'
+      });
+      const timeStr = now.toLocaleTimeString([], {
+        timeZone: tenantTz, hour:'2-digit', minute:'2-digit'
+      });
+      el.textContent = `${dateStr} · ${timeStr}`;
+    }
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  window.__SERVER_CLOCK_DELTA__ = deltaMs;
+})();
+</script>
+
+
 </body>
 </html>

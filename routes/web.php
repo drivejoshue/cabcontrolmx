@@ -12,9 +12,15 @@ use App\Http\Controllers\Admin\TaxiStandController as AdminTaxiStandController;
 use App\Http\Controllers\Admin\VehicleController;
 use App\Http\Controllers\Admin\DriverController;
 
+// ✨ Nuevos controladores (admin)
+use App\Http\Controllers\Admin\TenantController;
+use App\Http\Controllers\Admin\DispatchSettingsController;
+use App\Http\Controllers\Admin\TenantFarePolicyController;
+
 // API controllers (panel con sesión)
 use App\Http\Controllers\API\SectorController as ApiSectorController;
 use App\Http\Controllers\API\TaxiStandController as ApiTaxiStandController;
+use App\Http\Controllers\Admin\Reports\RidesReportController;
 
 Route::redirect('/', '/login');
 
@@ -67,32 +73,56 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/admin/taxistands/{id}/qr/refresh', [AdminTaxiStandController::class,'refreshQr'])->name('taxistands.qr.refresh');
     Route::get('/admin/taxistands/{id}/qr.png',     [AdminTaxiStandController::class,'qrPng'])->name('taxistands.qr.png');
 
-    // Vehículos (CRUD)
-  // Drivers
-Route::get   ('/admin/drivers',           [DriverController::class,'index'])->name('drivers.index');
-Route::get   ('/admin/drivers/create',    [DriverController::class,'create'])->name('drivers.create');
-Route::post  ('/admin/drivers',           [DriverController::class,'store'])->name('drivers.store');
-Route::get   ('/admin/drivers/{id}',      [DriverController::class,'show'])->name('drivers.show');
-Route::get   ('/admin/drivers/{id}/edit', [DriverController::class,'edit'])->name('drivers.edit');
-Route::put   ('/admin/drivers/{id}',      [DriverController::class,'update'])->name('drivers.update');
-Route::delete('/admin/drivers/{id}',      [DriverController::class,'destroy'])->name('drivers.destroy');
+    // Drivers
+    Route::get   ('/admin/drivers',           [DriverController::class,'index'])->name('drivers.index');
+    Route::get   ('/admin/drivers/create',    [DriverController::class,'create'])->name('drivers.create');
+    Route::post  ('/admin/drivers',           [DriverController::class,'store'])->name('drivers.store');
+    Route::get   ('/admin/drivers/{id}',      [DriverController::class,'show'])->name('drivers.show');
+    Route::get   ('/admin/drivers/{id}/edit', [DriverController::class,'edit'])->name('drivers.edit');
+    Route::put   ('/admin/drivers/{id}',      [DriverController::class,'update'])->name('drivers.update');
+    Route::delete('/admin/drivers/{id}',      [DriverController::class,'destroy'])->name('drivers.destroy');
 
-// Vehicles
-Route::get   ('/admin/vehicles',           [VehicleController::class,'index'])->name('vehicles.index');
-Route::get   ('/admin/vehicles/create',    [VehicleController::class,'create'])->name('vehicles.create');
-Route::post  ('/admin/vehicles',           [VehicleController::class,'store'])->name('vehicles.store');
-Route::get   ('/admin/vehicles/{id}',      [VehicleController::class,'show'])->name('vehicles.show');
-Route::get   ('/admin/vehicles/{id}/edit', [VehicleController::class,'edit'])->name('vehicles.edit');
-Route::put   ('/admin/vehicles/{id}',      [VehicleController::class,'update'])->name('vehicles.update');
-Route::delete('/admin/vehicles/{id}',      [VehicleController::class,'destroy'])->name('vehicles.destroy');
+    // Vehicles
+    Route::get   ('/admin/vehicles',           [VehicleController::class,'index'])->name('vehicles.index');
+    Route::get   ('/admin/vehicles/create',    [VehicleController::class,'create'])->name('vehicles.create');
+    Route::post  ('/admin/vehicles',           [VehicleController::class,'store'])->name('vehicles.store');
+    Route::get   ('/admin/vehicles/{id}',      [VehicleController::class,'show'])->name('vehicles.show');
+    Route::get   ('/admin/vehicles/{id}/edit', [VehicleController::class,'edit'])->name('vehicles.edit');
+    Route::put   ('/admin/vehicles/{id}',      [VehicleController::class,'update'])->name('vehicles.update');
+    Route::delete('/admin/vehicles/{id}',      [VehicleController::class,'destroy'])->name('vehicles.destroy');
 
- // 👉 Asignar vehículo a driver (POST del modal en show del driver)
+    // 👉 Asignar vehículo a driver (POST del modal en show del driver)
     Route::post  ('/admin/drivers/{id}/assign-vehicle', [DriverController::class,'assignVehicle'])->name('drivers.assignVehicle');
 
     // 👉 Cerrar una asignación (usado en driver y vehicle)
     Route::put   ('/admin/assignments/{id}/close',       [DriverController::class,'closeAssignment'])->name('assignments.close');
 
+    /*
+    |--------------------------------------------------------------------------
+    | ✨ Nuevas rutas: Tenant Settings / Dispatch Settings / Fare Policies
+    |--------------------------------------------------------------------------
+    */
+ // 🔒 Solo administradores
+    Route::middleware('admin')->group(function () {
+        Route::get ('/admin/tenants/{tenant}/edit', [TenantController::class, 'edit'])->name('admin.tenants.edit');
+        Route::put ('/admin/tenants/{tenant}',      [TenantController::class, 'update'])->name('admin.tenants.update');
+
+        Route::get ('/admin/dispatch-settings', [DispatchSettingsController::class, 'edit'])->name('admin.dispatch_settings.edit');
+        Route::put ('/admin/dispatch-settings', [DispatchSettingsController::class, 'update'])->name('admin.dispatch_settings.update');
+
+        Route::get ('/admin/fare-policies',        [TenantFarePolicyController::class, 'index'])->name('admin.fare_policies.index');
+        Route::get ('/admin/fare-policies/edit',   [TenantFarePolicyController::class, 'edit'])->name('admin.fare_policies.edit');
+        Route::put ('/admin/fare-policies/update', [TenantFarePolicyController::class, 'update'])->name('admin.fare_policies.update');
+
+        Route::get ('/admin/reportes/viajes',           [RidesReportController::class, 'index'])->name('admin.reports.rides');
+    Route::get ('/admin/reportes/viajes/{ride}',    [RidesReportController::class, 'show'])->name('admin.reports.rides.show');
+    Route::get ('/admin/reportes/viajes.csv',       [RidesReportController::class, 'exportCsv'])->name('admin.reports.rides.csv');
+    });
+  
+
 });
+
+
 
 /*
 |--------------------------------------------------------------------------

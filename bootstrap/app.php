@@ -1,5 +1,6 @@
 <?php
 use App\Http\Middleware\SetTenantFromUser;
+use App\Http\Middleware\EnsureUserIsAdmin;  
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -13,8 +14,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-         $middleware->appendToGroup('web', SetTenantFromUser::class);
-        //
+        // Lo que va al grupo web
+        $middleware->appendToGroup('web', SetTenantFromUser::class);
+
+        // 👇 Alias para usar 'admin' en routes/web.php
+        $middleware->alias([
+            'admin' => EnsureUserIsAdmin::class,
+        ]);
     }) ->withProviders([
         // Providers del core que sí necesitas
         Illuminate\Filesystem\FilesystemServiceProvider::class,

@@ -7,28 +7,60 @@ use App\Models\Passenger;
 use App\Models\Ride;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\Services\AutoDispatchService;
 
 class RideController extends Controller
 {
-    /** GET /api/rides */
+    /** Helper tenant */
+    private function tenantIdFrom(Request $req): int
+    {
+        return (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
+    }
 
-    private function tenantIdFrom(Request $req)
+    /** GET /api/rides */
+public function index(Request $req)
 {
-    return $req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1;
+    $tenantId = $this->tenantIdFrom($req);
+
+    $q = DB::table('rides')
+        ->where('tenant_id', $tenantId);
+
+    if ($s = $req->query('status')) $q->where('status', strtolower($s));
+    if ($p = $req->query('phone'))  $q->where('passenger_phone', 'like', "%{$p}%");
+    if ($d = $req->query('date'))   $q->whereDate('created_at', $d);
+
+    $rows = $q->orderByDesc('id')
+        ->limit(200)
+        ->get([
+            'id','tenant_id','status','requested_channel',
+            'passenger_id','passenger_name','passenger_phone',
+            'origin_label','origin_lat','origin_lng',
+            'dest_label','dest_lat','dest_lng',
+            'fare_mode','payment_method','notes','pax',
+            'distance_m','duration_s','route_polyline',
+            'quoted_amount','total_amount',
+            'driver_id','vehicle_id','sector_id','stand_id','shift_id',
+            'scheduled_for','requested_at','accepted_at','arrived_at','onboard_at',
+            'finished_at','canceled_at','cancel_reason','canceled_by',
+            'created_by','created_at','updated_at',
+            // ¡IMPORTANTE!
+            'stops_json','stops_count','stop_index',
+        ]);
+
+    // agregar 'stops' ya decodificado para que el front lo tenga directo
+    $rows->transform(function($r){
+        $r->stops = [];
+        if (!empty($r->stops_json)) {
+            $tmp = json_decode($r->stops_json, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) {
+                $r->stops = $tmp;
+            }
+        }
+        return $r;
+    });
+
+    return response()->json($rows);
 }
 
-
-    public function index(Request $req)
-    {
-        $q = Ride::query();
-
-        if ($s = $req->query('status')) $q->where('status', strtolower($s));
-        if ($p = $req->query('phone'))  $q->where('passenger_phone', 'like', "%{$p}%");
-        if ($d = $req->query('date'))   $q->whereDate('created_at', $d);
-
-        return $q->orderByDesc('id')->limit(200)->get();
-    }
 
     /** POST /api/rides */
     public function store(Request $req)
@@ -45,13 +77,18 @@ class RideController extends Controller
             'dest_lat'   => 'nullable|numeric',
             'dest_lng'   => 'nullable|numeric',
 
+            'stops'          => 'nullable|array|max:2',
+            'stops.*.lat'    => 'required_with:stops|numeric',
+            'stops.*.lng'    => 'required_with:stops|numeric',
+            'stops.*.label'    => 'nullable|string|max:160', 
+
             'payment_method'   => 'nullable|in:cash,transfer,card,corp',
             'fare_mode'        => 'nullable|in:meter,fixed',
             'notes'            => 'nullable|string|max:500',
             'pax'              => 'nullable|integer|min:1|max:10',
             'scheduled_for'    => 'nullable|date',
 
-            // lo que ya calculó el Dispatch
+            // calculado por el Dispatch
             'quoted_amount'     => 'nullable|numeric',
             'distance_m'        => 'nullable|integer',
             'duration_s'        => 'nullable|integer',
@@ -59,97 +96,119 @@ class RideController extends Controller
             'requested_channel' => 'nullable|in:dispatch,passenger_app,driver_app,api',
         ]);
 
-        $tenantId = $req->header('X-Tenant-ID')
-            ?? optional($req->user())->tenant_id
-            ?? 1;
+        $tenantId = $this->tenantIdFrom($req);
 
-        $ride = DB::transaction(function () use ($data, $tenantId) {
+        if (array_key_exists('quoted_amount', $data) && $data['quoted_amount'] !== null) {
+            $data['fare_mode'] = 'fixed';
+        }
+        // Crear ride (tu servicio actual)
+        $ride = app(\App\Services\CreateRideService::class)->create($data, $tenantId);
 
-            // Upsert Passenger por teléfono
-            $passengerId = null;
-            $snapName    = $data['passenger_name']  ?? null;
-            $snapPhone   = $data['passenger_phone'] ?? null;
+        // Guardar stops si vienen
+        $stops = $data['stops'] ?? [];
+        if (!empty($stops)) {
+        // normaliza y limita a 2, CONSERVANDO label
+        $stops = array_values(array_slice(array_map(function ($s) {
+            return [
+                'lat'   => isset($s['lat'])   ? (float)$s['lat']   : null,
+                'lng'   => isset($s['lng'])   ? (float)$s['lng']   : null,
+                'label' => isset($s['label']) ? trim((string)$s['label']) ?: null : null,
+            ];
+        }, $stops), 0, 2));
 
-            if (!empty($snapPhone)) {
-                $p = Passenger::firstOrCreate(
-                    ['tenant_id'=>$tenantId, 'phone'=>$snapPhone],
-                    ['name'=>$snapName]
-                );
-                if ($snapName && $snapName !== $p->name) { $p->name = $snapName; $p->save(); }
-                $passengerId = $p->id;
-                if (!$snapName) $snapName = $p->name;
-            }
+            DB::table('rides')
+                ->where('tenant_id', $tenantId)->where('id', $ride->id)
+                ->update([
+                    'stops_json'  => json_encode($stops),
+                    'stops_count' => count($stops),
+                    'stop_index'  => 0,
+                    'updated_at'  => now(),
+                ]);
 
-            // Mini snapshot de tarifa si viene monto
-            $snapshot = null;
-            if (isset($data['quoted_amount'])) {
-                $snapshot = [
-                    'source'      => 'dispatch_ui',
-                    'computed_at' => now()->toDateTimeString(),
-                ];
-            }
+            // Recalcular ruta/cotización O -> stops... -> D
+            app(\App\Services\QuoteRecalcService::class)->recalcWithStops($ride->id, $tenantId);
 
-            // Crear ride usando nombres/enum reales (en minúsculas)
-            $r = new Ride();
-            $r->tenant_id         = $tenantId;
-            $r->status            = !empty($data['scheduled_for']) ? 'scheduled' : 'requested';
-            $r->requested_channel = $data['requested_channel'] ?? 'dispatch';
-
-            $r->passenger_id    = $passengerId;
-            $r->passenger_name  = $snapName;
-            $r->passenger_phone = $snapPhone;
-
-            $r->origin_label = $data['origin_label'] ?? null;
-            $r->origin_lat   = (float)$data['origin_lat'];
-            $r->origin_lng   = (float)$data['origin_lng'];
-
-            $r->dest_label = $data['dest_label'] ?? null;
-            $r->dest_lat   = isset($data['dest_lat']) ? (float)$data['dest_lat'] : null;
-            $r->dest_lng   = isset($data['dest_lng']) ? (float)$data['dest_lng'] : null;
-
-            $r->fare_mode      = $data['fare_mode'] ?? 'meter';
-            $r->payment_method = $data['payment_method'] ?? 'cash';
-            $r->notes          = $data['notes'] ?? null;
-            $r->pax            = $data['pax'] ?? 1;
-
-            // métricas / tarifa ya calculadas en el front o /api/dispatch/quote
-            $r->distance_m    = $data['distance_m']   ?? null;
-            $r->duration_s    = $data['duration_s']   ?? null;
-            $r->route_polyline= $data['route_polyline'] ?? null;
-            $r->quoted_amount = isset($data['quoted_amount']) ? round($data['quoted_amount']) : null; // enteros
-            $r->fare_snapshot = $snapshot ? json_encode($snapshot) : null;
-
-            $r->scheduled_for = $data['scheduled_for'] ?? null;
-            $r->requested_at  = now();
-            $r->created_at    = now();
-            $r->updated_at    = now();
-
-            $r->save();
-            try {
-                // Lee del settings: delay y demás
-                AutoDispatchService::kickoff(
-                    tenantId: $tenantId,
-                    rideId:   $r->id,
-                    lat:      (float)$r->origin_lat,
-                    lng:      (float)$r->origin_lng,
-                    km:       5.0,           // será sobreescrito por settings
-                    windowSec: 30,           // será sobreescrito por settings
-                    autoAssignIfSingle: false
-                );
-            } catch (\Throwable $e) {
-                \Log::warning('autodispatch failed: '.$e->getMessage());
-            }
-
-            return $r;
-        });
+            // History
+            DB::table('ride_status_history')->insert([
+                'tenant_id'   => $tenantId,
+                'ride_id'     => $ride->id,
+                'prev_status' => null,
+                'new_status'  => 'stops_set',
+                'meta'        => json_encode(['count' => count($stops), 'stops' => $stops]),
+                'created_at'  => now(),
+                'updated_at'  => now(),
+            ]);
+        }
 
         return response()->json($ride, 201);
     }
 
+    /** PATCH /api/rides/{ride}/stops  (panel) */
+    public function updateStops(Request $req, int $ride)
+    {
+        $tenantId = $this->tenantIdFrom($req);
 
+        $v = $req->validate([
+            'stops'       => 'nullable|array|max:2',
+            'stops.*.lat' => 'required_with:stops|numeric',
+            'stops.*.lng' => 'required_with:stops|numeric',
+            'stops.*.label' => 'nullable|string|max:160',
+        ]);
+
+        $row = DB::table('rides')
+            ->where('tenant_id', $tenantId)->where('id', $ride)
+            ->lockForUpdate()->first();
+
+        if (!$row) return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
+
+        // bloquear si ya está aceptado o en curso (acepta on_board y onboard por si hay mezcla)
+        if (in_array($row->status, ['accepted','en_route','arrived','on_board','onboard','finished','canceled'])) {
+            return response()->json(['ok'=>false,'msg'=>'No se pueden editar paradas después de aceptación'], 409);
+        }
+
+        $stops = $v['stops'] ?? [];
+        $stops = array_values(array_slice(array_map(fn ($s) => ['lat' => (float)$s['lat'], 'lng' => (float)$s['lng']], $stops), 0, 2));
+
+        DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $ride)
+            ->update([
+                'stops_json'  => $stops ? json_encode($stops) : null,
+                'stops_count' => count($stops),
+                'stop_index'  => 0,
+                'updated_at'  => now(),
+            ]);
+
+        // Invalida ofertas no respondidas (si aplica) y recalcula
+        DB::table('ride_offers')
+            ->where('tenant_id', $tenantId)->where('ride_id', $ride)
+            ->where('status', 'offered')
+            ->update(['status' => 'released', 'responded_at' => now(), 'updated_at' => now()]);
+
+        app(\App\Services\QuoteRecalcService::class)->recalcWithStops($ride, $tenantId);
+
+        DB::table('ride_status_history')->insert([
+            'tenant_id'   => $tenantId,
+            'ride_id'     => $ride,
+            'prev_status' => null,
+            'new_status'  => 'stops_updated',
+            'meta'        => json_encode(['count' => count($stops), 'stops' => $stops]),
+            'created_at'  => now(),
+            'updated_at'  => now(),
+        ]);
+
+        return response()->json(['ok' => true, 'stops_count' => count($stops), 'stops' => $stops]);
+    }
+
+    /** Helper antiguo (si tu UI lo usa) */
+    public function setStops(Request $req, int $ride)
+    {
+        return $this->updateStops($req, $ride);
+    }
+
+    /** Legacy simple setter (no tocar) */
     private function touchRideStatus(int $tenantId, int $rideId, string $new)
     {
-        // Solo cambiamos status y updated_at (sin columnas polémicas tipo assigned_at)
         $aff = DB::table('rides')
             ->where('tenant_id', $tenantId)
             ->where('id', $rideId)
@@ -160,46 +219,44 @@ class RideController extends Controller
         if ($aff === 0) abort(404, 'Ride no encontrado o de otro tenant');
     }
 
-    /** POST /api/driver/rides/{ride}/arrive */
+    /** POST /api/driver/rides/{ride}/arrived */
     public function arrive(Request $req, int $ride)
     {
         $tenantId = $this->tenantIdFrom($req);
-
-        // Si tienes SP para arrived, intenta primero:
         try {
             DB::statement('CALL sp_ride_arrived_v1(?,?)', [$tenantId, $ride]);
         } catch (\Throwable $e) {
-            // Fallback simple
-            $this->touchRideStatus($tenantId, $ride, 'arrived');
+            $this->commitStatusChange($tenantId, $ride, 'arrived', ['source' => 'api.fallback']);
         }
-
-        return response()->json(['ok'=>true, 'ride_id'=>$ride, 'status'=>'arrived']);
+        return response()->json(['ok' => true, 'ride_id' => $ride, 'status' => 'arrived']);
     }
 
-    /** POST /api/driver/rides/{ride}/board  (inicio de viaje / pasajero abordo) */
+    /** POST /api/driver/rides/{ride}/board */
     public function board(Request $req, int $ride)
     {
         $tenantId = $this->tenantIdFrom($req);
         try {
             DB::statement('CALL sp_ride_board_v1(?,?)', [$tenantId, $ride]);
         } catch (\Throwable $e) {
-            $this->touchRideStatus($tenantId, $ride, 'on_board'); // tu enum usa 'onboard'
+            // normalizamos a 'onboard' (ver commitStatusChange)
+            $this->commitStatusChange($tenantId, $ride, 'onboard', ['source' => 'api.fallback']);
         }
-        return response()->json(['ok'=>true, 'ride_id'=>$ride, 'status'=>'on_board']);
+        return response()->json(['ok' => true, 'ride_id' => $ride, 'status' => 'onboard']);
     }
 
-    /** POST /api/driver/rides/{ride}/finish  (fin de viaje) */
+    /** POST /api/driver/rides/{ride}/finish */
     public function finish(Request $req, int $ride)
     {
         $tenantId = $this->tenantIdFrom($req);
         try {
             DB::statement('CALL sp_ride_finish_v1(?,?)', [$tenantId, $ride]);
         } catch (\Throwable $e) {
-            $this->touchRideStatus($tenantId, $ride, 'finished');
+            $this->commitStatusChange($tenantId, $ride, 'finished', ['source' => 'api.fallback']);
         }
-        return response()->json(['ok'=>true, 'ride_id'=>$ride, 'status'=>'finished']);
+        return response()->json(['ok' => true, 'ride_id' => $ride, 'status' => 'finished']);
     }
 
+    /** GET /api/driver/rides/active */
     public function activeForDriver(Request $req)
     {
         $user = $req->user();
@@ -208,13 +265,13 @@ class RideController extends Controller
         // driver_id por user_id
         $driverId = DB::table('drivers')->where('user_id', $user->id)->value('id');
         if (!$driverId) {
-            return response()->json(['ok'=>true, 'item'=>null]); // sin driver vinculado
+            return response()->json(['ok' => true, 'item' => null]);
         }
 
-        // Estados de ride que consideramos "activos"
-        $activeRideStates = ['accepted','en_route','arrived','on_board'];
+        // Estados de ride que consideramos "activos" (acepta on_board y onboard)
+        $activeRideStates = ['accepted', 'en_route', 'arrived', 'on_board', 'onboard'];
 
-        // 1) Caso normal: hay offer aceptada para este driver y ride activo
+        // Caso normal: offer aceptada
         $q = DB::table('ride_offers as o')
             ->join('rides as r', 'r.id', '=', 'o.ride_id')
             ->where('o.tenant_id', $tenantId)
@@ -235,15 +292,36 @@ class RideController extends Controller
 
                 'r.id as ride_id',
                 'r.status as ride_status',
-                'r.origin_label','r.origin_lat','r.origin_lng',
-                'r.dest_label','r.dest_lat','r.dest_lng',
-                'r.quoted_amount','r.distance_m as ride_distance_m','r.duration_s as ride_duration_s',
+                'r.origin_label', 'r.origin_lat', 'r.origin_lng',
+                'r.dest_label',   'r.dest_lat',   'r.dest_lng',
+                'r.quoted_amount',
+                'r.distance_m as ride_distance_m',
+                'r.duration_s as ride_duration_s',
                 'r.route_polyline',
+
+                // ===== Stops =====
+                'r.stops_json','r.stops_count','r.stop_index',
             ]);
 
         $item = $q->first();
 
-        // 2) Fallback: asignación directa que no creó offer (driver_id en rides)
+        // Decodificar stops si hay item por offer
+        if ($item) {
+            $item->origin_lat = isset($item->origin_lat) ? (float)$item->origin_lat : null;
+            $item->origin_lng = isset($item->origin_lng) ? (float)$item->origin_lng : null;
+            $item->dest_lat   = isset($item->dest_lat)   ? (float)$item->dest_lat   : null;
+            $item->dest_lng   = isset($item->dest_lng)   ? (float)$item->dest_lng   : null;
+
+            $item->stops = [];
+            if (!empty($item->stops_json)) {
+                $tmp = json_decode($item->stops_json, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) {
+                    $item->stops = $tmp;
+                }
+            }
+        }
+
+        // Fallback: asignación directa
         if (!$item) {
             $r = DB::table('rides')
                 ->where('tenant_id', $tenantId)
@@ -253,6 +331,14 @@ class RideController extends Controller
                 ->first();
 
             if ($r) {
+                $stops = [];
+                if (!empty($r->stops_json)) {
+                    $tmp = json_decode($r->stops_json, true);
+                    if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) {
+                        $stops = $tmp;
+                    }
+                }
+
                 $item = (object)[
                     'offer_id'        => null,
                     'offer_status'    => 'accepted',
@@ -267,15 +353,21 @@ class RideController extends Controller
                     'ride_id'         => $r->id,
                     'ride_status'     => $r->status,
                     'origin_label'    => $r->origin_label,
-                    'origin_lat'      => (float)$r->origin_lat,
-                    'origin_lng'      => (float)$r->origin_lng,
+                    'origin_lat'      => isset($r->origin_lat) ? (float)$r->origin_lat : null,
+                    'origin_lng'      => isset($r->origin_lng) ? (float)$r->origin_lng : null,
                     'dest_label'      => $r->dest_label,
-                    'dest_lat'        => $r->dest_lat !== null ? (float)$r->dest_lat : null,
-                    'dest_lng'        => $r->dest_lng !== null ? (float)$r->dest_lng : null,
+                    'dest_lat'        => ($r->dest_lat !== null) ? (float)$r->dest_lat : null,
+                    'dest_lng'        => ($r->dest_lng !== null) ? (float)$r->dest_lng : null,
                     'quoted_amount'   => $r->quoted_amount,
                     'ride_distance_m' => $r->distance_m,
                     'ride_duration_s' => $r->duration_s,
                     'route_polyline'  => $r->route_polyline,
+
+                    // ===== Stops fallback =====
+                    'stops_json'      => $r->stops_json,
+                    'stops_count'     => $r->stops_count,
+                    'stop_index'      => $r->stop_index,
+                    'stops'           => $stops,
                 ];
             }
         }
@@ -286,7 +378,7 @@ class RideController extends Controller
         ]);
     }
 
-
+    /** POST /api/driver/rides/{ride}/cancel */
     public function cancelByDriver(Request $req, int $ride)
     {
         $data = $req->validate([
@@ -294,30 +386,30 @@ class RideController extends Controller
         ]);
 
         $user = $req->user();
-        $tenantId = (int)($req->header('X-Tenant-ID') ?? optional($user)->tenant_id ?? 1);
+        $tenantId = $this->tenantIdFrom($req);
 
-        $row = \DB::table('rides')
+        $row = DB::table('rides')
             ->where('tenant_id', $tenantId)
             ->where('id', $ride)
             ->lockForUpdate()
             ->first();
 
-        if (!$row) return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'], 404);
+        if (!$row) return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
 
         $status = strtolower($row->status ?? '');
-        if (in_array($status, ['finished','canceled'])) {
-            return response()->json(['ok'=>true]);
+        if (in_array($status, ['finished', 'canceled'])) {
+            return response()->json(['ok' => true]);
         }
 
         // valida que realmente sea su ride
-        $driverId = \DB::table('drivers')->where('tenant_id',$tenantId)->where('user_id',$user->id)->value('id');
+        $driverId = DB::table('drivers')->where('tenant_id', $tenantId)->where('user_id', $user->id)->value('id');
         if ((int)$row->driver_id !== (int)$driverId) {
-            return response()->json(['ok'=>false,'msg'=>'No autorizado'], 403);
+            return response()->json(['ok' => false, 'msg' => 'No autorizado'], 403);
         }
 
-        \DB::transaction(function () use ($tenantId, $row, $data, $driverId) {
-            \DB::table('rides')
-                ->where('tenant_id',$tenantId)->where('id',$row->id)
+        DB::transaction(function () use ($tenantId, $row, $data, $driverId) {
+            DB::table('rides')
+                ->where('tenant_id', $tenantId)->where('id', $row->id)
                 ->update([
                     'status'        => 'canceled',
                     'canceled_at'   => now(),
@@ -326,27 +418,174 @@ class RideController extends Controller
                     'updated_at'    => now(),
                 ]);
 
-            \DB::table('ride_status_history')->insert([
+            DB::table('ride_status_history')->insert([
                 'tenant_id'   => $tenantId,
                 'ride_id'     => $row->id,
                 'prev_status' => strtolower($row->status ?? null),
                 'new_status'  => 'canceled',
-                'meta'        => json_encode(['reason'=>$data['reason'] ?? null, 'by'=>'driver']),
+                'meta'        => json_encode(['reason' => $data['reason'] ?? null, 'by' => 'driver']),
                 'created_at'  => now(),
                 'updated_at'  => now(),
             ]);
 
-            \DB::table('drivers')
-                ->where('tenant_id',$tenantId)->where('id',$driverId)
-                ->update(['status'=>'idle','updated_at'=>now()]);
+            DB::table('drivers')
+                ->where('tenant_id', $tenantId)->where('id', $driverId)
+                ->update(['status' => 'idle', 'updated_at' => now()]);
 
-            \DB::table('ride_offers')
-                ->where('tenant_id',$tenantId)->where('ride_id',$row->id)
-                ->where('status','offered')
-                ->update(['status'=>'released','responded_at'=>now(),'updated_at'=>now()]);
+            DB::table('ride_offers')
+                ->where('tenant_id', $tenantId)->where('ride_id', $row->id)
+                ->where('status', 'offered')
+                ->update(['status' => 'released', 'responded_at' => now(), 'updated_at' => now()]);
         });
 
-        return response()->json(['ok'=>true]);
+        return response()->json(['ok' => true]);
     }
 
+    /** GET /api/rides/{ride} */
+public function show(Request $req, int $ride)
+{
+    $tenantId = $this->tenantIdFrom($req);
+
+    $row = DB::table('rides as r')
+        ->where('r.tenant_id', $tenantId)
+        ->where('r.id', $ride)
+        ->select([
+            'r.id','r.tenant_id','r.status','r.requested_channel',
+            'r.passenger_id','r.passenger_name','r.passenger_phone',
+            'r.origin_label','r.origin_lat','r.origin_lng',
+            'r.dest_label','r.dest_lat','r.dest_lng',
+            'r.fare_mode','r.payment_method','r.notes','r.pax',
+            'r.distance_m','r.duration_s','r.route_polyline',
+            'r.quoted_amount','r.total_amount',
+            'r.driver_id','r.vehicle_id','r.sector_id','r.stand_id','r.shift_id',
+            'r.scheduled_for','r.requested_at','r.accepted_at','r.arrived_at','r.onboard_at',
+            'r.finished_at','r.canceled_at','r.cancel_reason','r.canceled_by',
+            'r.created_by','r.created_at','r.updated_at',
+            // stops
+            'r.stops_json','r.stops_count','r.stop_index',
+        ])
+        ->first();
+
+    if (!$row) {
+        return response()->json(['ok' => false, 'message' => 'Ride no encontrado'], 404);
+    }
+
+    // Decodifica stops para que el front no tenga que parsear
+    $row->stops = $row->stops_json ? (json_decode($row->stops_json, true) ?: []) : [];
+
+    // Normaliza numéricos
+    $row->origin_lat = isset($row->origin_lat) ? (float)$row->origin_lat : null;
+    $row->origin_lng = isset($row->origin_lng) ? (float)$row->origin_lng : null;
+    $row->dest_lat   = isset($row->dest_lat)   ? (float)$row->dest_lat   : null;
+    $row->dest_lng   = isset($row->dest_lng)   ? (float)$row->dest_lng   : null;
+
+    $row->distance_m = isset($row->distance_m) ? (int)$row->distance_m   : null;
+    $row->duration_s = isset($row->duration_s) ? (int)$row->duration_s   : null;
+
+    $row->quoted_amount = isset($row->quoted_amount) ? (float)$row->quoted_amount : null;
+    $row->total_amount  = isset($row->total_amount)  ? (float)$row->total_amount  : null;
+
+    $row->stops_count = isset($row->stops_count) ? (int)$row->stops_count : 0;
+    $row->stop_index  = isset($row->stop_index)  ? (int)$row->stop_index  : 0;
+
+    return response()->json($row);
+}
+
+
+    /** Core para cambios de estado */
+    private function commitStatusChange(
+        int $tenantId,
+        int $rideId,
+        string $toStatus,
+        array $meta = []
+    ) {
+        // Normaliza 'on_board' -> 'onboard' para ser consistente
+        if ($toStatus === 'on_board') $toStatus = 'onboard';
+
+        return DB::transaction(function () use ($tenantId, $rideId, $toStatus, $meta) {
+            $row = DB::table('rides')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $rideId)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$row) abort(404, 'Ride no encontrado');
+            $fromStatus = strtolower($row->status ?? '');
+
+            $now = now();
+            $updates = [
+                'status'     => $toStatus,
+                'updated_at' => $now,
+            ];
+            switch ($toStatus) {
+                case 'arrived':  $updates['arrived_at']  = $now; break;
+                case 'onboard':  $updates['onboard_at']  = $now; break;
+                case 'finished': $updates['finished_at'] = $now; break;
+                case 'canceled': $updates['canceled_at'] = $updates['canceled_at'] ?? $now; break;
+            }
+
+            DB::table('rides')
+                ->where('tenant_id', $tenantId)->where('id', $rideId)
+                ->update($updates);
+
+            DB::table('ride_status_history')->insert([
+                'tenant_id'   => $tenantId,
+                'ride_id'     => $rideId,
+                'prev_status' => $fromStatus ?: null,
+                'new_status'  => $toStatus,
+                'meta'        => $meta ? json_encode($meta, JSON_UNESCAPED_UNICODE) : null,
+                'created_at'  => $now,
+                'updated_at'  => $now,
+            ]);
+
+            return [$fromStatus, $toStatus];
+        });
+    }
+
+    /** POST /api/rides/{ride}/stops/complete  (driver) */
+    public function completeStop(Request $req, int $ride)
+    {
+        $tenantId = $this->tenantIdFrom($req);
+
+        $row = DB::table('rides')
+            ->where('tenant_id', $tenantId)->where('id', $ride)
+            ->lockForUpdate()->first();
+
+        if (!$row) return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
+
+        if ($row->stops_count == 0) return response()->json(['ok' => false, 'msg' => 'Ride sin paradas'], 409);
+        if ($row->stop_index >= $row->stops_count) return response()->json(['ok' => true, 'msg' => 'Todas las paradas ya completadas']);
+
+        $stops   = $row->stops_json ? json_decode($row->stops_json, true) : [];
+        $idx     = (int)$row->stop_index;
+        $current = $stops[$idx] ?? null;
+
+        DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $ride)
+            ->update([
+                'stop_index' => $idx + 1,
+                'updated_at' => now(),
+            ]);
+
+        DB::table('ride_status_history')->insert([
+            'tenant_id'   => $tenantId,
+            'ride_id'     => $ride,
+            'prev_status' => $row->status,
+            'new_status'  => 'stop_done',
+            'meta'        => json_encode([
+                'seq' => $idx + 1,
+                'lat' => $current['lat'] ?? null,
+                'lng' => $current['lng'] ?? null,
+            ]),
+            'created_at'  => now(),
+            'updated_at'  => now(),
+        ]);
+
+        return response()->json([
+            'ok'         => true,
+            'stop_index' => $idx + 1,
+            'stops_count'=> $row->stops_count,
+        ]);
+    }
 }

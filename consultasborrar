@@ -1,3 +1,14 @@
+ minimapa reporte index 
+
+ <div class="map-mini"
+                   data-origin="{{ $r->origin_lat }},{{ $r->origin_lng }}"
+                   data-dest="{{ $r->dest_lat }},{{ $r->dest_lng }}"
+                   data-polyline="{{ $r->route_polyline ? base64_encode($r->route_polyline) : '' }}">
+              </div>
+
+
+
+
 con-- Disponible = status 'idle' y visto en los últimos 5 min, con turno abierto
 SELECT d.id, d.name, d.phone, d.last_lat, d.last_lng, s.id AS shift_id, s.vehicle_id
 FROM drivers d

@@ -11,6 +11,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Services\AutoDispatchService;
 
+use App\Models\Tenant;  
+
 use Illuminate\Support\Facades\Log;
 
 
@@ -26,144 +28,177 @@ class DispatchController extends Controller
     /** POST /api/dispatch/quote  (origin/destination -> distancia, duración, $) */
  
 
-    public function quote(Request $r)
+   public function quote(Request $r)
     {
         $v = $r->validate([
-            'origin.lat'      => 'required|numeric',
-            'origin.lng'      => 'required|numeric',
-            'destination.lat' => 'required|numeric',
-            'destination.lng' => 'required|numeric',
-            'round_to_step'   => 'nullable|numeric',
+            'origin.lat'        => 'required|numeric',
+            'origin.lng'        => 'required|numeric',
+            'destination.lat'   => 'required|numeric',
+            'destination.lng'   => 'required|numeric',
+            'round_to_step'     => 'nullable|numeric',
+            // NUEVO: paradas (máx 2)
+            'stops'             => 'nullable|array|max:2',
+            'stops.*.lat'       => 'required_with:stops|numeric',
+            'stops.*.lng'       => 'required_with:stops|numeric',
         ]);
 
-        // 1) Distancia/tiempo estimados (fallback sin Google/OSRM)
-        $lat1 = (float)$v['origin']['lat'];      $lng1 = (float)$v['origin']['lng'];
-        $lat2 = (float)$v['destination']['lat']; $lng2 = (float)$v['destination']['lng'];
-
-        $toRad = fn($d) => $d * M_PI / 180;
-        $R = 6371000; // m
-        $dLat = $toRad($lat2 - $lat1);
-        $dLng = $toRad($lng2 - $lng1);
-        $a = sin($dLat/2)**2 + cos($toRad($lat1)) * cos($toRad($lat2)) * sin($dLng/2)**2;
-        $c = 2 * asin(min(1, sqrt($a)));
-        $distStraight = $R * $c;            // metros línea recta
-        $distM = (int) round($distStraight * 1.25); // 25% extra por traza vial (aprox)
-
-        // Velocidad urbana promedio (ajústalo): 24 km/h -> 6.67 m/s
-        $speed_mps = 24_000 / 3600;
-        $durS = (int) max(180, round($distM / max(1e-6, $speed_mps))); // mínimo 3 min
-
-        // 2) Política de tarifa (si existe)
         $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
-        $pol = DB::table('tenant_fare_policies')->where('tenant_id', $tenantId)->first();
 
-        $base  = $pol->base_fee      ?? 25;
-        $perKm = $pol->per_km        ?? 8;
-        $perMin= $pol->per_min       ?? 0;
-        $minTot= $pol->min_total     ?? 0;
-        $night = 1.0;
+        // Política del tenant (incluye extras.stop_fee)
+        $pol = DB::table('tenant_fare_policies')->where('tenant_id',$tenantId)->orderByDesc('id')->first();
+        $base   = (float)($pol->base_fee        ?? 25);
+        $perKm  = (float)($pol->per_km          ?? 8);
+        $perMin = (float)($pol->per_min         ?? 0);
+        $minTot = (float)($pol->min_total       ?? 0);
+        $nightM = (float)($pol->night_multiplier?? 1.0);
 
-        // ventana nocturna configurable (si tienes columnas start/end). Si no, 22–06.
-        $now = now()->format('H:i:s');
-        $isNight = ($now >= '22:00:00' || $now <= '06:00:00');
-        if ($isNight) {
-            $night = $pol->night_multiplier ?? 1.0;
+        $extras = [];
+        if (!empty($pol?->extras)) {
+            $tmp = json_decode($pol->extras, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) $extras = $tmp;
         }
+        $stopFee = (float)($extras['stop_fee'] ?? 0.0);
 
-        // 3) Cálculo
+        // Construir puntos en orden: O -> (stops) -> D
+        $points = [];
+        $points[] = [(float)$v['origin']['lat'], (float)$v['origin']['lng']];
+        $stops = [];
+        if (!empty($v['stops'])) {
+            foreach (array_slice($v['stops'], 0, 2) as $s) {
+                $p = ['lat'=>(float)$s['lat'], 'lng'=>(float)$s['lng']];
+                $stops[] = $p;
+                $points[] = [$p['lat'],$p['lng']];
+            }
+        }
+        $points[] = [(float)$v['destination']['lat'], (float)$v['destination']['lng']];
+
+        // Distancia por tramos con Haversine + 25% por red vial
+        $toRad = fn($d)=>$d * M_PI / 180;
+        $R = 6371000; // m
+        $distStraight = 0.0;
+        for ($i=0; $i<count($points)-1; $i++){
+            [$A_lat,$A_lng] = $points[$i];
+            [$B_lat,$B_lng] = $points[$i+1];
+            $dLat = $toRad($B_lat - $A_lat);
+            $dLng = $toRad($B_lng - $A_lng);
+            $a = sin($dLat/2)**2 + cos($toRad($A_lat))*cos($toRad($B_lat))*sin($dLng/2)**2;
+            $c = 2 * asin(min(1, sqrt($a)));
+            $distStraight += $R * $c;
+        }
+        $distM = (int) round($distStraight * 1.25);
+        $speed_mps = 24_000 / 3600; // 24 km/h
+        $durS = (int) max(180, round($distM / max(1e-6, $speed_mps)));
+
+        // Tarifa = base + km*perKm + min*perMin + stopFee * nStops (+ nocturno, mínimo, redondeo)
         $km  = $distM / 1000.0;
         $min = $durS  / 60.0;
-        $amount = ($base + $km * $perKm + $min * $perMin);
-        if ($minTot > 0 && $amount < $minTot) $amount = $minTot;
-        $amount *= $night;
+        $amount = $base + ($km*$perKm) + ($min*$perMin) + ($stopFee * count($stops));
 
-        // 4) Redondeo a paso (pesos enteros por default)
-        $step = (float)($r->input('round_to_step', 1.00));
-        if ($step > 0) {
-            $amount = round($amount / $step) * $step;
+        // Ventana nocturna simple (22–06). Si tienes columnas en tabla, ajústalo igual que en el service.
+        $now = now()->format('H:i:s');
+        if ($now >= '22:00:00' || $now <= '06:00:00') {
+            $amount *= $nightM;
         }
-        $amount = (int) round($amount); // enteros
+
+        if ($minTot > 0 && $amount < $minTot) $amount = $minTot;
+
+        // Redondeo: respeta round_to_step si viene; si no, usa step=1
+        $step = (float)($r->input('round_to_step', 1.00));
+        if ($step > 0) $amount = round($amount / $step) * $step;
+        $amount = (int) round($amount);
 
         return response()->json([
             'ok'         => true,
             'amount'     => $amount,
             'distance_m' => $distM,
             'duration_s' => $durS,
+            'stops_n'    => count($stops),
         ]);
     }
 
-    public function store(Request $r){
-        $tenantId = auth()->user()->tenant_id ?? 1;
-        $v = $r->validate([
-            'origin.label'=>'required|string',
-            'origin.lat'  =>'required|numeric',
-            'origin.lng'  =>'required|numeric',
-            'destination.label'=>'required|string',
-            'destination.lat'  =>'required|numeric',
-            'destination.lng'  =>'required|numeric',
-            'pax'=>'nullable|integer|min:1|max:6',
-            'notes'=>'nullable|string|max:255',
-            'scheduled_at'=>'nullable|date',
-            'assign.driver_id'=>'nullable|integer',
-        ]);
-
-        $rt    = $this->geo->route($v['origin']['lat'],$v['origin']['lng'],$v['destination']['lat'],$v['destination']['lng']);
-        $price = $this->tarifar($rt['distance_m'],$rt['duration_s']);
-
-        $id = DB::table('services')->insertGetId([
-            'tenant_id'     => $tenantId,
-            'status'        => empty($v['assign']['driver_id']) ? 'offered' : 'accepted',
-            'origin_label'  => $v['origin']['label'],
-            'origin_lat'    => $v['origin']['lat'],
-            'origin_lng'    => $v['origin']['lng'],
-            'dest_label'    => $v['destination']['label'],
-            'dest_lat'      => $v['destination']['lat'],
-            'dest_lng'      => $v['destination']['lng'],
-            'distance_m'    => $rt['distance_m'],
-            'eta_s'         => $rt['duration_s'],
-            'price_total'   => $price,
-            'driver_id'     => $v['assign']['driver_id'] ?? null,
-            'requested_at'  => now(),
-            'scheduled_at'  => $v['scheduled_at'] ?? null,
-            'created_at'    => now(),
-            'updated_at'    => now(),
-        ]);
-
-        return ['ok'=>true,'service_id'=>$id,'status'=>empty($v['assign']['driver_id'])?'offered':'accepted'];
-    }
+   
 
   
-
-  
-     public function active(Request $r)
+    public function active(Request $r)
     {
         $tenantId = $this->tenantId($r);
 
-        // Estatus en minúsculas como en DB
-        $order = ['requested','accepted','offered','scheduled','assigned','arrived','boarding','onboard'];
+        // Estados y alias que aceptamos desde DB
+        $statuses = [
+            'requested','offered','accepted','assigned',
+            'en_route','enroute',     // alias
+            'arrived','boarding',
+            'on_board','onboard',     // alias
+            'scheduled',
+        ];
 
-       $rides = Ride::query()
-      ->where('tenant_id', $tenantId)
-      ->whereIn('status', $order)
-      ->orderByRaw("FIELD(status, '".implode("','", $order)."')")
-      ->orderByDesc('id')
-      ->limit(200)
-      ->select([
-        'id','status','passenger_name','passenger_phone',
-        'origin_label','origin_lat','origin_lng',
-        'dest_label','dest_lat','dest_lng',
-        'payment_method','pax','scheduled_for','requested_at','created_at',
-        DB::raw('distance_m+0   as distance_m'),
-        DB::raw('duration_s+0   as duration_s'),
-        DB::raw('quoted_amount+0 as quoted_amount'),
-      ])->get();
+        // Orden de presentación (incluye alias para que FIELD no rompa)
+        $orderForField = [
+            'requested','offered','accepted','assigned',
+            'en_route','enroute',
+            'arrived','boarding',
+            'on_board','onboard',
+            'scheduled',
+        ];
 
+        // Turno abierto (si existe) para tomar vehículo cuando el ride no lo tenga
+        // left join al turno ACTIVO del driver
+        $rides = \DB::table('rides as ri')
+            ->where('ri.tenant_id', $tenantId)
+            ->whereIn('ri.status', $statuses)
+            ->leftJoin('drivers as d', 'd.id', '=', 'ri.driver_id')
+            ->leftJoin('driver_shifts as sh', function ($j) {
+                $j->on('sh.driver_id', '=', 'd.id')
+                  ->whereNull('sh.ended_at');
+            })
+            // vehículo explícito en el ride
+            ->leftJoin('vehicles as v_r', 'v_r.id', '=', 'ri.vehicle_id')
+            // vehículo del turno (fallback)
+            ->leftJoin('vehicles as v_s', 'v_s.id', '=', 'sh.vehicle_id')
+            ->orderByRaw("FIELD(ri.status, '".implode("','", $orderForField)."')")
+            ->orderByDesc('ri.id')
+            ->limit(200)
+            ->selectRaw("
+                ri.id,
+                ri.status,
+                ri.passenger_name, ri.passenger_phone,
 
-        // Colas por paradero
-        $stands = TaxiStand::query()->get(['id','nombre','latitud','longitud']);
+                ri.origin_label,
+                (ri.origin_lat+0) as origin_lat,
+                (ri.origin_lng+0) as origin_lng,
+
+                ri.dest_label,
+                (ri.dest_lat+0)   as dest_lat,
+                (ri.dest_lng+0)   as dest_lng,
+
+                ri.payment_method,
+                ri.pax,
+                ri.scheduled_for,
+                ri.requested_at,
+                ri.created_at,
+
+                (ri.distance_m+0)    as distance_m,
+                (ri.duration_s+0)    as duration_s,
+                (ri.quoted_amount+0) as quoted_amount,
+
+                ri.stops_json, ri.stops_count, ri.stop_index,
+
+                d.id   as driver_id,
+                d.name as driver_name,
+                (d.last_lat+0) as driver_last_lat,
+                (d.last_lng+0) as driver_last_lng,
+
+                COALESCE(v_r.id,         v_s.id)         as vehicle_id,
+                COALESCE(v_r.economico,  v_s.economico)  as vehicle_economico,
+                COALESCE(v_r.plate,      v_s.plate)      as vehicle_plate
+            ")
+            ->get();
+
+        // Colas por paradero (igual que lo tenías)
+        $stands = \App\Models\TaxiStand::query()->get(['id','nombre','latitud','longitud']);
 
         $queues = $stands->map(function ($s) use ($tenantId) {
-            $count = DB::table('drivers')
+            $count = \DB::table('drivers')
                 ->where('drivers.tenant_id', $tenantId)
                 ->join('driver_shifts', 'driver_shifts.driver_id', '=', 'drivers.id')
                 ->whereNull('driver_shifts.ended_at')
@@ -193,6 +228,7 @@ class DispatchController extends Controller
             'queues' => $queues,
         ]);
     }
+
 
     public function driversLive(Request $r)
     {
@@ -294,8 +330,6 @@ class DispatchController extends Controller
     }
 
 
-
-
     public function nearbyDrivers(Request $r)
     {
         $r->validate(['lat'=>'required|numeric','lng'=>'required|numeric','km'=>'nullable|numeric']);
@@ -351,7 +385,7 @@ class DispatchController extends Controller
     /* =======================
      *  Operaciones: asignar / cancelar
      * ======================= */
-  // App/Http/Controllers/Api/DispatchController.php
+ 
     public function assign(Request $req)
     {
         $v = $req->validate([
@@ -703,24 +737,95 @@ class DispatchController extends Controller
     
 
     public function cancelReasons(Request $req)
-{
-    $tenantId = (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
+    {
+        $tenantId = (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
 
-    $rows = \DB::table('tenant_cancel_reasons')
-        ->where('tenant_id', $tenantId)
-        ->where('is_active', 1)
-        ->orderBy('sort_order')
-        ->pluck('label')
-        ->toArray();
+        $rows = \DB::table('tenant_cancel_reasons')
+            ->where('tenant_id', $tenantId)
+            ->where('is_active', 1)
+            ->orderBy('sort_order')
+            ->pluck('label')
+            ->toArray();
 
-    if (empty($rows)) {
-        $rows = ['Pasajero no responde','Dirección incorrecta','Esperó demasiado',
-                 'Emergencia del conductor','Otro'];
+        if (empty($rows)) {
+            $rows = ['Pasajero no responde','Dirección incorrecta','Esperó demasiado',
+                     'Emergencia del conductor','Otro'];
+        }
+
+        return response()->json(['ok'=>true, 'items'=>$rows]);
     }
 
-    return response()->json(['ok'=>true, 'items'=>$rows]);
-}
 
+   public function runtime(Request $req)
+    {
+        try {
+            // Soporta multitenant por header o user; default 1
+            $tenantId = (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
+
+            // settings sin depender de modelos
+            $settings = DB::table('dispatch_settings')->where('tenant_id', $tenantId)->first();
+
+            // timezone del tenant (fallback a config/app.php)
+            $tenantTz = DB::table('tenants')->where('id', $tenantId)->value('timezone')
+                      ?: config('app.timezone', 'UTC');
+
+            return response()->json([
+                'ok'                 => true,
+                'tenant_id'          => $tenantId,
+                'server_now_ms'      => (int) round(microtime(true) * 1000), // UTC ms
+                'tenant_tz'          => $tenantTz,
+                'delay_s'            => (int)($settings->auto_dispatch_delay_s ?? 20),
+                'auto_dispatch_enabled' => (bool)($settings->auto_dispatch_enabled ?? true),
+            ]);
+
+        } catch (\Throwable $e) {
+            Log::error('dispatch.runtime FAIL', ['msg'=>$e->getMessage(), 'trace'=>$e->getTraceAsString()]);
+            return response()->json([
+                'ok' => false,
+                'msg' => 'runtime error: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    // App/Http/Controllers/Api/DispatchController.php
+    public function assignScheduled(Request $req)
+    {
+        $v = $req->validate([
+            'ride_id'   => 'required|integer',
+            'driver_id' => 'required|integer',
+            'vehicle_id'=> 'nullable|integer',
+        ]);
+        $tenantId = (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
+
+        return DB::transaction(function() use($tenantId,$v){
+            $row = DB::table('rides')
+                ->where('tenant_id',$tenantId)->where('id',$v['ride_id'])
+                ->lockForUpdate()->first();
+
+            if (!$row) return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'],404);
+            if (strtolower($row->status) !== 'scheduled') {
+                return response()->json(['ok'=>false,'msg'=>'Sólo rides programados'],422);
+            }
+
+            DB::table('rides')
+              ->where('tenant_id',$tenantId)->where('id',$row->id)
+              ->update([
+                'driver_id'  => $v['driver_id'],
+                'vehicle_id' => $v['vehicle_id'] ?? $row->vehicle_id,
+                'updated_at' => now(),
+              ]);
+
+            // historial simple
+            DB::table('ride_status_history')->insert([
+              'tenant_id'=>$tenantId, 'ride_id'=>$row->id,
+              'prev_status'=>$row->status, 'new_status'=>'scheduled',
+              'meta'=>json_encode(['assign_scheduled'=>true,'driver_id'=>$v['driver_id']]),
+              'created_at'=>now(),'updated_at'=>now(),
+            ]);
+
+            return response()->json(['ok'=>true]);
+        });
+    }
 
   
 }

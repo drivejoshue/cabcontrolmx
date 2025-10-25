@@ -4,6 +4,7 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use App\Http\Controllers\Admin\RideAdminController;
 use Illuminate\Support\Facades\Schedule;
+use App\Services\ScheduledRidesService;
 
 // Corre cada minuto
 Schedule::call(function () {
@@ -28,3 +29,16 @@ Schedule::call(function () {
         ]);
     }
 })->everyMinute();
+
+Schedule::call(function () {
+    // si tienes multi-tenant, itéralo aquí:
+    $tenantIds = \DB::table('tenants')->pluck('id')->all() ?: [1];
+    foreach ($tenantIds as $tenId) {
+        try { ScheduledRidesService::fireDue((int)$tenId); } catch (\Throwable $e) {
+            \Log::warning('scheduled fireDue fail', ['tenant'=>$tenId,'msg'=>$e->getMessage()]);
+        }
+    }
+})
+->everyMinute()
+->name('rides.fireScheduled')
+->withoutOverlapping();
