@@ -10,33 +10,39 @@ use Illuminate\Http\Request;
 class PassengerController extends Controller
 {
     // GET /api/passengers/last-ride?phone=...
-    public function lastRide(Request $req)
-    {
-        $phone = trim((string) $req->query('phone',''));
-        if ($phone === '') return response()->json(null);
+  public function lastRide(Request $req)
+{
+    $phone = trim((string) $req->query('phone',''));
+    if ($phone === '') return response()->json(null);
 
-        $tenantId = $req->header('X-Tenant-ID')
-            ?? optional($req->user())->tenant_id
-            ?? 1;
+    $tenantId = $req->header('X-Tenant-ID')
+        ?? optional($req->user())->tenant_id
+        ?? 1;
 
-        $last = Ride::where('tenant_id', $tenantId)
-            ->where('passenger_phone', $phone)
-            ->orderByDesc('id')
-            ->first();
+    $last = Ride::where('tenant_id', $tenantId)
+        ->where('passenger_phone', $phone)
+        ->orderByDesc('id')
+        ->first();
 
-        if (!$last) return response()->json(null);
+    if (!$last) return response()->json(null);
 
-        return [
-            'passenger_name' => $last->passenger_name,
-            'notes'          => $last->notes,
-            'origin_label'   => $last->origin_label,
-            'origin_lat'     => $last->origin_lat,
-            'origin_lng'     => $last->origin_lng,
-            'dest_label'     => $last->dest_label,
-            'dest_lat'       => $last->dest_lat,
-            'dest_lng'       => $last->dest_lng,
-        ];
-    }
+    return [
+        'passenger_name' => $last->passenger_name,
+        'notes'          => $last->notes,
+        'origin_label'   => $last->origin_label,
+        'origin_lat'     => $last->origin_lat,
+        'origin_lng'     => $last->origin_lng,
+        'dest_label'     => $last->dest_label,
+        'dest_lat'       => $last->dest_lat,
+        'dest_lng'       => $last->dest_lng,
+        // ✅ AGREGAR CAMPOS DE STOPS
+        'id'             => $last->id,
+        'stops'          => $last->stops, // Esto usa el accessor getStopsAttribute
+        'stops_json'     => $last->stops_json,
+        'stops_count'    => $last->stops_count,
+        'stop_index'     => $last->stop_index,
+    ];
+}
 
     // GET /api/passengers/lookup?phone=...
     public function lookup(Request $req)

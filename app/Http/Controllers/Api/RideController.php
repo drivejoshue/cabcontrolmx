@@ -239,9 +239,9 @@ public function index(Request $req)
             DB::statement('CALL sp_ride_board_v1(?,?)', [$tenantId, $ride]);
         } catch (\Throwable $e) {
             // normalizamos a 'onboard' (ver commitStatusChange)
-            $this->commitStatusChange($tenantId, $ride, 'onboard', ['source' => 'api.fallback']);
+            $this->commitStatusChange($tenantId, $ride, 'on_board', ['source' => 'api.fallback']);
         }
-        return response()->json(['ok' => true, 'ride_id' => $ride, 'status' => 'onboard']);
+        return response()->json(['ok' => true, 'ride_id' => $ride, 'status' => 'on_board']);
     }
 
     /** POST /api/driver/rides/{ride}/finish */
@@ -500,7 +500,7 @@ public function show(Request $req, int $ride)
         array $meta = []
     ) {
         // Normaliza 'on_board' -> 'onboard' para ser consistente
-        if ($toStatus === 'on_board') $toStatus = 'onboard';
+        if ($toStatus === 'on_board') $toStatus = 'on_board';
 
         return DB::transaction(function () use ($tenantId, $rideId, $toStatus, $meta) {
             $row = DB::table('rides')
@@ -519,7 +519,7 @@ public function show(Request $req, int $ride)
             ];
             switch ($toStatus) {
                 case 'arrived':  $updates['arrived_at']  = $now; break;
-                case 'onboard':  $updates['onboard_at']  = $now; break;
+                case 'on_board':  $updates['onboard_at']  = $now; break;
                 case 'finished': $updates['finished_at'] = $now; break;
                 case 'canceled': $updates['canceled_at'] = $updates['canceled_at'] ?? $now; break;
             }

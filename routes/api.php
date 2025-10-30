@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\OfferController;
 use App\Http\Controllers\Api\QueueController;
 use App\Http\Controllers\Admin\DispatchSettingsController;
 use App\Http\Controllers\Admin\DispatchBoardsController;
+use App\Http\Controllers\Api\DriverVehiclesController;
 
 /* =========================
  *  DISPATCH (panel)
@@ -85,6 +86,9 @@ Route::get('/passengers/lookup',    [PassengerController::class, 'lookup']);
  *  DRIVER (Maui) - Sanctum
  * ========================= */
 Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
+
+     Route::get('/vehicles', [DriverVehiclesController::class, 'index']);
+
     Route::post('/shifts/start',  [DriverShiftController::class, 'start']);
     Route::post('/shifts/finish', [DriverShiftController::class, 'finish']);
 
@@ -102,7 +106,7 @@ Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
     Route::get ('/geo/geocode', [GeoController::class,'geocode']);
     Route::post('/geo/route',   [GeoController::class,'route']);
 
-    Route::post('/driver/rides/{ride}/complete-stop', [RideController::class, 'completeStop']);
+    Route::post('/rides/{ride}/complete-stop', [RideController::class, 'completeStop']);
 
     Route::match(['put','post'], '/location', [DriverLocationController::class, 'update']);
 });

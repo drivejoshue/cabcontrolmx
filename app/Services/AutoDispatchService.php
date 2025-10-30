@@ -7,37 +7,50 @@ use App\Models\DispatchSetting;
 class AutoDispatchService
 {
     /** Lee settings por tenant con defaults sanos */
-    public static function settings(int $tenantId): object
-    {
-        $row = DispatchSetting::query()
-            ->where('tenant_id', $tenantId)
-            ->orderByDesc('id')
-            ->first();
+  public static function settings(int $tenantId): object
+{
+    $row = \App\Models\DispatchSetting::query()
+        ->where('tenant_id', $tenantId)
+        ->orderByDesc('id')
+        ->first();
 
-        // Flags y nombres compatibles
-        $enabled   = $row->auto_dispatch_enabled ?? $row->auto_enabled ?? true;
-        $delay     = $row->auto_dispatch_delay_s ?? $row->auto_delay_sec ?? 20;
-        $radius    = $row->auto_dispatch_radius_km ?? 5.0;
-        $limitN    = $row->auto_dispatch_preview_n ?? $row->wave_size_n ?? 12;
-        $expires   = $row->offer_expires_sec ?? 180;
-        $autoSingle= $row->auto_assign_if_single ?? false;
+    // Flags y nombres compatibles (null-safe)
+    $enabled     = data_get($row, 'auto_dispatch_enabled',
+                    data_get($row, 'auto_enabled', true));
+    $delay       = data_get($row, 'auto_dispatch_delay_s',
+                    data_get($row, 'auto_delay_sec', 20));
+    $radius      = data_get($row, 'auto_dispatch_radius_km', 5.0);
+    $limitN      = data_get($row, 'auto_dispatch_preview_n',
+                    data_get($row, 'wave_size_n', 12));
+    $expires     = data_get($row, 'offer_expires_sec', 180);
+    $autoSingle  = data_get($row, 'auto_assign_if_single', false);
 
-        // TTL de ping (segundos) — usa el que tengas, con fallbacks
-        $freshSec  = $row->driver_fresh_sec
-                   ?? $row->loc_fresh_sec
-                   ?? $row->ping_max_age_sec
-                   ?? 120; // default: 120s
+    // TTL de ping (segundos)
+    $freshSec    = data_get($row, 'driver_fresh_sec',
+                    data_get($row, 'loc_fresh_sec',
+                    data_get($row, 'ping_max_age_sec', 120)));
 
-        return (object)[
-            'enabled'               => (bool)  $enabled,
-            'delay_s'               => (int)   $delay,
-            'radius_km'             => (float) $radius,
-            'limit_n'               => (int)   $limitN,
-            'expires_s'             => (int)   $expires,
-            'auto_assign_if_single' => (bool)  $autoSingle,
-            'fresh_s'               => (int)   $freshSec,
-        ];
-    }
+    // Fare bidding: acepta singular o plural en BD
+    $allowFare   = (bool) data_get($row, 'allow_fare_bidding',
+                        data_get($row, 'allow_fare_biddings', false));
+
+    return (object)[
+        'enabled'                => (bool)  $enabled,
+        'delay_s'                => (int)   $delay,
+        'radius_km'              => (float) $radius,
+        'limit_n'                => (int)   $limitN,
+        'expires_s'              => (int)   $expires,
+        'auto_assign_if_single'  => (bool)  $autoSingle,
+        'fresh_s'                => (int)   $freshSec,
+
+        // principal (lo que deben leer las UIs)
+        'allow_fare_bidding'     => (bool)  $allowFare,
+
+        // compatibilidad temporal (DEPRECATED)
+        'allow_fare_biddings'    => (bool)  $allowFare,
+    ];
+}
+
 
     /**
      * Dispara una ola de ofertas para un ride.

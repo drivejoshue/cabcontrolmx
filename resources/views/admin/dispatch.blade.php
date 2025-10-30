@@ -267,7 +267,51 @@
 
 <style>
 
+.cc-metrics-panel {
+  background: var(--cc-card-bg);
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
 
+.cc-metrics-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.cc-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.cc-metric-item {
+  text-align: center;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--cc-soft-bg);
+  transition: all 0.3s ease;
+}
+
+.cc-metric-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.cc-metric-value {
+  font-size: 1.2em;
+  font-weight: bold;
+  color: var(--bs-primary);
+}
+
+.cc-metric-label {
+  font-size: 0.75em;
+  color: var(--cc-muted);
+}
 /* puntito/halo para programados */
 .cc-dot-prog{
   display:inline-block; width:.55rem; height:.55rem; margin-right:.25rem;

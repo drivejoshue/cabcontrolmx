@@ -203,7 +203,7 @@ function decodePolyline(str){let i=0,lat=0,lng=0,c=[];while(i<str.length){let b,
 function toLatLngPair(list){const la=parseFloat(list?.[0]), ln=parseFloat(list?.[1]);return (Number.isFinite(la)&&Number.isFinite(ln))?[la,ln]:null}
 async function fetchPolylineIfMissing(origin,dest){
   try{
-    const r=await fetch("{{ route('panel.geo.route') }}",{
+    const r=await fetch("{{ route('api.geo.route') }}",{
       method:'POST',
       headers:{'Content-Type':'application/json','X-CSRF-TOKEN':'{{ csrf_token() }}'},
       body:JSON.stringify({from:{lat:origin[0],lng:origin[1]},to:{lat:dest[0],lng:dest[1]},mode:'driving'})

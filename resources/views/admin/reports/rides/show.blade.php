@@ -216,7 +216,7 @@ function toLatLngPair(arr){
 }
 async function fetchPolylineIfMissing(origin,dest){
   try{
-    const r=await fetch("{{ route('panel.geo.route') }}",{
+    const r=await fetch("{{ route('api.geo.route') }}",{
       method:'POST',
       headers:{'Content-Type':'application/json','X-CSRF-TOKEN':'{{ csrf_token() }}'},
       body:JSON.stringify({from:{lat:origin[0],lng:origin[1]},to:{lat:dest[0],lng:dest[1]},mode:'driving'})

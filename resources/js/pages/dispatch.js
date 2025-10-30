@@ -516,7 +516,10 @@ async function refreshDispatch(){
 function normalizeStops(ride){
   if (Array.isArray(ride.stops)) return ride.stops;
   if (ride.stops_json) {
-    try { const a = JSON.parse(ride.stops_json); return Array.isArray(a) ? a : []; } catch {}
+    try {
+      const a = JSON.parse(ride.stops_json);
+      return Array.isArray(a) ? a : [];
+    } catch {}
   }
   return [];
 }
@@ -806,43 +809,43 @@ async function highlightRideOnMap(ride) {
     }
     window._stopMarkers = [];
 
-    // 2) Datos base
+    // 2) Datos base - AÑADIR: asegurar stops
     const from = (Number.isFinite(+ride.origin_lat) && Number.isFinite(+ride.origin_lng))
       ? { lat: +ride.origin_lat, lng: +ride.origin_lng } : null;
     const to   = (Number.isFinite(+ride.dest_lat)   && Number.isFinite(+ride.dest_lng))
       ? { lat: +ride.dest_lat,   lng: +ride.dest_lng   } : null;
 
-    // stops robusto (array directo, array casteado o string JSON)
-    let stops = [];
-    if (Array.isArray(ride.stops)) {
-      stops = ride.stops;
-    } else if (Array.isArray(ride.stops_json)) {
-      stops = ride.stops_json;
-    } else if (ride.stops_json && typeof ride.stops_json === 'string') {
-      try {
-        const a = JSON.parse(ride.stops_json);
-        if (Array.isArray(a)) stops = a;
-      } catch {}
-    }
+    // stops robusto - USAR LA FUNCIÓN normalizeStops QUE YA TIENES
+    let stops = normalizeStops(ride);
 
-    // 3) Marcadores
+    // 3) Marcadores - AÑADIR: dibujar stops
     if (from) {
-      fromMarker = L.marker([from.lat, from.lng], { icon: (typeof IconOrigin !== 'undefined' ? IconOrigin : undefined) });
+      fromMarker = L.marker([from.lat, from.lng], { 
+        icon: (typeof IconOrigin !== 'undefined' ? IconOrigin : undefined) 
+      });
       fromMarker.addTo(layerRoute);
     }
-    if (to) {
-      toMarker = L.marker([to.lat, to.lng], { icon: (typeof IconDest !== 'undefined' ? IconDest : undefined) });
-      toMarker.addTo(layerRoute);
-    }
+    
+    // DIBUJAR STOPS
     stops.forEach((s, i) => {
       const lt = +s.lat, lg = +s.lng;
       if (!Number.isFinite(lt) || !Number.isFinite(lg)) return;
-      const mk = L.marker([lt, lg], { icon: (typeof IconStop !== 'undefined' ? IconStop : undefined), title: `Parada ${i + 1}` });
+      const mk = L.marker([lt, lg], { 
+        icon: (typeof IconStop !== 'undefined' ? IconStop : undefined), 
+        title: `Parada ${i + 1}` 
+      });
       mk.addTo(layerRoute);
       window._stopMarkers.push(mk);
     });
+    
+    if (to) {
+      toMarker = L.marker([to.lat, to.lng], { 
+        icon: (typeof IconDest !== 'undefined' ? IconDest : undefined) 
+      });
+      toMarker.addTo(layerRoute);
+    }
 
-    // 4) Ruta
+    // 4) Ruta - MANTENER el código existente pero asegurar que incluye stops
     let latlngs = null;
 
     // 4.1) Usa polyline de BD si existe
@@ -853,7 +856,7 @@ async function highlightRideOnMap(ride) {
       } catch {}
     }
 
-    // 4.2) Si no hay polyline, pide al backend (no envía stops si están vacíos)
+    // 4.2) Si no hay polyline, pide al backend INCLUYENDO STOPS
     if ((!latlngs || !latlngs.length) && from && to) {
       try {
         const body = { from, to, mode: 'driving' };
@@ -872,15 +875,13 @@ async function highlightRideOnMap(ride) {
           } else if (Array.isArray(j?.points)) {
             latlngs = j.points.map(p => [ +p[0], +p[1] ]);
           }
-        } else {
-          // si falla HTTP, seguimos al fallback manual
         }
       } catch {
         // sigue al fallback
       }
     }
 
-    // 4.3) Fallback final: línea O -> stops -> D
+    // 4.3) Fallback final: línea O -> stops -> D - CORREGIR para usar stops
     if ((!latlngs || !latlngs.length) && from && to) {
       const seq = [from, ...stops, to];
       latlngs = seq
@@ -890,15 +891,23 @@ async function highlightRideOnMap(ride) {
 
     // 4.4) Dibuja polyline si hay al menos 2 puntos
     if (latlngs && latlngs.length >= 2) {
-      const pl = L.polyline(latlngs, { className: 'cc-route', weight: 5, opacity: 0.9 });
+      const pl = L.polyline(latlngs, { 
+        className: 'cc-route', 
+        weight: 5, 
+        opacity: 0.9,
+        color: isDarkMode() ? '#943DD4' : '#0717F0'
+      });
       pl.addTo(layerRoute);
       window.__routeLine = pl;
     }
 
-    // 5) Fit bounds
+    // 5) Fit bounds - INCLUIR STOPS en los bounds
     const bounds = [];
     if (from) bounds.push([from.lat, from.lng]);
-    stops.forEach(s => { if (Number.isFinite(+s.lat) && Number.isFinite(+s.lng)) bounds.push([+s.lat, +s.lng]); });
+    stops.forEach(s => { 
+      if (Number.isFinite(+s.lat) && Number.isFinite(+s.lng)) 
+        bounds.push([+s.lat, +s.lng]); 
+    });
     if (to) bounds.push([to.lat, to.lng]);
 
     if (bounds.length >= 1) {
@@ -1429,7 +1438,11 @@ async function drawPreviewLinesStagger(ride, candidates, topN = 12) {
 async function focusRideOnMap(rideId){
   // intenta cache primero
   const cached = window._ridesIndex?.get?.(rideId);
-  if (cached) return highlightRideOnMap(cached);
+  if (cached) {
+    // Asegurar que el ride del cache tiene stops
+    const rideWithStops = await hydrateRideStops(cached);
+    return highlightRideOnMap(rideWithStops);
+  }
 
   // ruta correcta del show:
   const r = await fetch(`/api/rides/${rideId}`, { headers:{ Accept:'application/json' } });
@@ -1439,10 +1452,14 @@ async function focusRideOnMap(rideId){
     return;
   }
   const ride = await r.json();
+  
+  // Asegurar stops
+  const rideWithStops = await hydrateRideStops(ride);
+  
   if (window.__DISPATCH_DEBUG__) {
-  console.log('[focusRideOnMap] GET /api/rides/'+rideId, debugBrief(ride), ride);
-}
-  return highlightRideOnMap(ride);
+    console.log('[focusRideOnMap] GET /api/rides/'+rideId, debugBrief(rideWithStops), rideWithStops);
+  }
+  return highlightRideOnMap(rideWithStops);
 }
 
 
@@ -1606,16 +1623,6 @@ function fmtWhen_db(s) {
   return `${fmtHM12_fromDb(s)} · ${fmtShortDay_fromDb(s)}`;
 }
 
-function normalizeStops(ride){
-  if (Array.isArray(ride.stops)) return ride.stops;
-  if (ride.stops_json) {
-    try {
-      const a = JSON.parse(ride.stops_json);
-      return Array.isArray(a) ? a : [];
-    } catch {}
-  }
-  return [];
-}
 
 
 // === Ride Card: estilos pro (se insertan una sola vez) ======================
@@ -1943,16 +1950,41 @@ if (!window.__rides_actions_wired__) {
 function renderAssignPanel(ride, candidates){
   _assignRide = ride; _assignSelected = null;
 
-  try {
- if (_assignPickupMarker) { layerSuggested.removeLayer(_assignPickupMarker); _assignPickupMarker = null; }
-    if (Number.isFinite(ride.origin_lat) && Number.isFinite(ride.origin_lng)) {
-      const layer = (typeof layerSuggested !== 'undefined') ? layerSuggested : layerRoute;
-      const ic    = (typeof IconOrigin !== 'undefined') ? IconOrigin : (typeof IconDest !== 'undefined' ? IconDest : undefined);
-      _assignPickupMarker = L.marker([ride.origin_lat, ride.origin_lng], {
-        icon: ic, zIndexOffset: 950
-      }).addTo(layer).bindTooltip('Pasajero', {offset:[0,-26]});
+ try {
+    // limpiar pickup anterior, esté donde esté
+    if (window._assignPickupMarker) {
+      try { (layerSuggested || layerRoute || map).removeLayer(window._assignPickupMarker); } catch {}
+      try { map.removeLayer(window._assignPickupMarker); } catch {}
+      window._assignPickupMarker = null;
     }
-  } catch {}
+
+    // ✅ convertir a número antes de validar
+    const lat = Number(ride?.origin_lat);
+    const lng = Number(ride?.origin_lng);
+
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      const targetLayer = (typeof layerSuggested !== 'undefined' && map.hasLayer(layerSuggested))
+        ? layerSuggested
+        : (layerRoute || map);
+
+      // icono (fallback si no existen los PNG)
+      const ic = (typeof IconOrigin !== 'undefined') ? IconOrigin
+               : (typeof IconDest   !== 'undefined') ? IconDest
+               : L.divIcon({className:'cc-pin-fallback', html:'<div style="width:16px;height:16px;border-radius:50%;background:#2F6FED;border:2px solid #fff"></div>', iconSize:[16,16], iconAnchor:[8,8]});
+
+      // ❗ pane: markerPane por encima de polylines
+      window._assignPickupMarker = L.marker([lat, lng], {
+        icon: ic,
+        pane: (map.getPanes()?.markerPane ? 'markerPane' : undefined),
+        zIndexOffset: 950,
+        riseOnHover: true
+      })
+      .bindTooltip('Pasajero', { offset:[0,-26] })
+      .addTo(targetLayer);
+    }
+  } catch (err) {
+    console.warn('[assignPanel] no se pudo pintar pickup:', err);
+  }
 
   const el = document.getElementById('assignPanelBody');
   if (!candidates.length){
@@ -2061,6 +2093,14 @@ function clearSuggestedLines() {
         _assignPickupMarker = null;
       }
     } catch {}
+    try {
+  if (window._assignPickupMarker) {
+    try { (layerSuggested || layerRoute || map).removeLayer(window._assignPickupMarker); } catch {}
+    try { map.removeLayer(window._assignPickupMarker); } catch {}
+    window._assignPickupMarker = null;
+  }
+} catch {}
+
 
   } catch (err) {
     console.warn('[clearSuggestedLines] error', err);
@@ -2144,6 +2184,8 @@ function openAssignFlow(ride){
     .catch(e => { console.warn('nearby-drivers error', e); renderAssignPanel(ride, []); });
 }
 
+
+
 // ADD: POST de asignación + UI
 async function confirmAssign(ride, driver){
   try{
@@ -2176,13 +2218,26 @@ async function confirmAssign(ride, driver){
 
 // ==== Cargar settings desde Laravel (model/service) ====
 async function loadDispatchSettings() {
+  const tenantId = (typeof getTenantId === 'function' ? getTenantId() : (window.currentTenantId || ''));
+
   try {
-    const tenantId = (typeof getTenantId === 'function' ? getTenantId() : (window.currentTenantId || ''));
-    const r = await fetch('/api/dispatch/settings', {
+    // mandamos tenant_id también en query para que el backend tenga fallback
+    const r = await fetch(`/api/dispatch/settings?tenant_id=${encodeURIComponent(tenantId)}`, {
       method: 'GET',
-      headers: { 'Accept': 'application/json', 'X-Tenant-ID': tenantId },
+      headers: {
+        'Accept': 'application/json',
+        'X-Tenant-ID': tenantId || ''   // fallback si tu middleware usa header
+      },
       credentials: 'same-origin'
     });
+
+    // si no es 2xx, intenta leer texto para log
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      console.warn('[settings] HTTP ' + r.status, txt);
+      throw new Error('HTTP ' + r.status);
+    }
+
     const json = await r.json();
     window.ccDispatchSettings = {
       auto_dispatch_enabled:           !!json.auto_dispatch_enabled,
@@ -2191,15 +2246,19 @@ async function loadDispatchSettings() {
       auto_dispatch_preview_radius_km: Number(json.auto_dispatch_preview_radius_km ?? 5),
       offer_expires_sec:               Number(json.offer_expires_sec ?? 180),
       auto_assign_if_single:           !!json.auto_assign_if_single,
+      allow_fare_bidding:              !!json.allow_fare_bidding,   // <- importante
     };
     console.debug('[settings] OK', window.ccDispatchSettings);
   } catch (e) {
-    console.warn('[settings] error; defaults');
+    console.warn('[settings] error; defaults', e);
     window.ccDispatchSettings = window.ccDispatchSettings || {
       auto_dispatch_enabled: true,
       auto_dispatch_delay_s: 20,
       auto_dispatch_preview_n: 12,
-      auto_dispatch_preview_radius_km: 5
+      auto_dispatch_preview_radius_km: 5,
+      offer_expires_sec: 180,
+      auto_assign_if_single: false,
+      allow_fare_bidding: false,
     };
   }
 }
@@ -2426,6 +2485,47 @@ async function loadActiveRides() {
 }
 
 
+/* =========================
+ *  INVERTIR RUTA (REGreso)
+ * ========================= */
+function invertRoute() {
+  // Guardar valores actuales
+  const fromLat = qs('#fromLat').value;
+  const fromLng = qs('#fromLng').value;
+  const fromAddr = qs('#inFrom').value;
+  
+  const toLat = qs('#toLat').value;
+  const toLng = qs('#toLng').value;
+  const toAddr = qs('#inTo').value;
+
+  // Validar que tenemos ambos puntos
+  if (!fromLat || !fromLng || !toLat || !toLng) {
+    showToast('Se necesitan origen y destino para invertir', 'warning');
+    return;
+  }
+
+  // Intercambiar valores
+  qs('#fromLat').value = toLat;
+  qs('#fromLng').value = toLng;
+  qs('#inFrom').value = toAddr;
+
+  qs('#toLat').value = fromLat;
+  qs('#toLng').value = fromLng;
+  qs('#inTo').value = fromAddr;
+
+  // Limpiar paradas automáticamente en regreso
+  clearAllStops();
+  
+  // Redibujar ruta
+  drawRoute({ quiet: true });
+  autoQuoteIfReady();
+  
+  showToast('Ruta invertida - Paradas limpiadas', 'success');
+}
+
+// Añadir al DOMContentLoaded
+qs('#btnInvertRoute')?.addEventListener('click', invertRoute);
+
 // Pinta tarjetas de "Ahora" (esperando/ofertados) en #panel-active
 function renderRightNowCards(rides){
   const host = document.getElementById('panel-active');
@@ -2451,6 +2551,152 @@ function renderRightNowCards(rides){
   // badge de la pestaña
   const b = document.querySelector('#tab-active-cards .badge');
   if (b) b.textContent = String(waiting.length);
+}
+
+/* =========================
+ *  MÉTRICAS EN VIVO DE FLOTA
+ * ========================= */
+class FleetMetrics {
+  constructor() {
+    this.metrics = {
+      total: 0,
+      free: 0,
+      busy: 0,
+      offline: 0,
+      inQueue: 0,
+      onTrip: 0
+    };
+    this.metricsEl = null;
+    this.init();
+  }
+
+  init() {
+    this.createMetricsPanel();
+    this.updateLive();
+  }
+
+  createMetricsPanel() {
+    const html = `
+      <div id="fleetMetrics" class="cc-metrics-panel">
+        <div class="cc-metrics-header">
+          <h6>📊 Métricas Flota</h6>
+          <span class="cc-metrics-time" id="metricsTime"></span>
+        </div>
+        <div class="cc-metrics-grid">
+          <div class="cc-metric-item" data-metric="total">
+            <div class="cc-metric-value">0</div>
+            <div class="cc-metric-label">Total</div>
+          </div>
+          <div class="cc-metric-item" data-metric="free">
+            <div class="cc-metric-value">0</div>
+            <div class="cc-metric-label">Libres</div>
+          </div>
+          <div class="cc-metric-item" data-metric="busy">
+            <div class="cc-metric-value">0</div>
+            <div class="cc-metric-label">Ocupados</div>
+          </div>
+          <div class="cc-metric-item" data-metric="onTrip">
+            <div class="cc-metric-value">0</div>
+            <div class="cc-metric-label">En Viaje</div>
+          </div>
+          <div class="cc-metric-item" data-metric="inQueue">
+            <div class="cc-metric-value">0</div>
+            <div class="cc-metric-label">En Cola</div>
+          </div>
+          <div class="cc-metric-item" data-metric="offline">
+            <div class="cc-metric-value">0</div>
+            <div class="cc-metric-label">Offline</div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Insertar en algún lugar visible (ej: arriba del mapa)
+    const mapContainer = document.querySelector('.map-container');
+    if (mapContainer) {
+      mapContainer.insertAdjacentHTML('afterbegin', html);
+      this.metricsEl = document.getElementById('fleetMetrics');
+    }
+  }
+
+  calculateMetrics(drivers, queues) {
+    const metrics = {
+      total: drivers.length,
+      free: 0,
+      busy: 0,
+      offline: 0,
+      inQueue: 0,
+      onTrip: 0
+    };
+
+    drivers.forEach(driver => {
+      const state = visualState(driver);
+      switch(state) {
+        case 'free': metrics.free++; break;
+        case 'busy': metrics.busy++; break;
+        case 'offline': metrics.offline++; break;
+        case 'on_board': metrics.onTrip++; break;
+        default: metrics.busy++;
+      }
+    });
+
+    // Calcular en cola desde queues
+    metrics.inQueue = queues.reduce((sum, queue) => 
+      sum + (queue.drivers?.length || 0), 0
+    );
+
+    this.metrics = metrics;
+    this.updateDisplay();
+  }
+
+  updateDisplay() {
+    Object.keys(this.metrics).forEach(key => {
+      const valueEl = this.metricsEl?.querySelector(`[data-metric="${key}"] .cc-metric-value`);
+      if (valueEl) {
+        valueEl.textContent = this.metrics[key];
+        // Animación suave
+        valueEl.style.transform = 'scale(1.1)';
+        setTimeout(() => valueEl.style.transform = 'scale(1)', 200);
+      }
+    });
+
+    // Actualizar timestamp
+    const timeEl = document.getElementById('metricsTime');
+    if (timeEl) {
+      timeEl.textContent = new Date().toLocaleTimeString();
+    }
+  }
+
+  updateLive() {
+    // Actualizar cada 5 segundos
+    setInterval(() => {
+      if (window._lastDrivers && window._lastQueues) {
+        this.calculateMetrics(window._lastDrivers, window._lastQueues);
+      }
+    }, 5000);
+  }
+}
+
+class SmartNotifications {
+  static show(type, message, options = {}) {
+    const config = {
+      success: { icon: '✅', duration: 3000 },
+      warning: { icon: '⚠️', duration: 5000 },
+      error: { icon: '❌', duration: 7000 },
+      info: { icon: 'ℹ️', duration: 4000 }
+    }[type];
+
+    // Usar Toast de Bootstrap o librería similar
+    this.showToast(`${config.icon} ${message}`, config.duration);
+  }
+
+  static rideAssigned(ride, driver) {
+    this.show('success', `Viaje #${ride.id} asignado a ${driver.name}`);
+  }
+
+  static driverArrived(ride) {
+    this.show('info', `Conductor llegó al punto de recogida`);
+  }
 }
 
 
@@ -2983,51 +3229,190 @@ document.addEventListener('DOMContentLoaded', async () => {
   qs('#toggle-stands')?.addEventListener('change',   e=> e.target.checked? layerStands.addTo(map):  map.removeLayer(layerStands));
 
   // recordar último ride por teléfono
- // recordar último ride por teléfono (no sobreescribir si ya hay puntos)
 qs('#pass-phone')?.addEventListener('blur', async (e) => {
   const phone = (e.target.value || '').trim();
   if (!phone) return;
 
-  // 1) Si ya hay A o B definidos, NO toques la ruta.
   const hasA = !!(qs('#fromLat')?.value && qs('#fromLng')?.value);
   const hasB = !!(qs('#toLat')?.value   && qs('#toLng')?.value);
-  if (hasA || hasB) {
-    // (opcional) muestra un mini aviso o abre un selector de rutas previas
-    // showPhonePresetToast(phone);  // <- pendiente de implementar si quieres el flotante
-    return;
-  }
+  if (hasA || hasB) return;
 
   try {
     const r = await fetch(`/api/passengers/last-ride?phone=${encodeURIComponent(phone)}`);
     if (!r.ok) return;
-    const j = await r.json(); if (!j) return;
+    const lastRide = await r.json(); 
+    if (!lastRide) return;
 
-    // 2) Rellena nombre/notas solo si están vacíos.
-    if (j.passenger_name && !qs('#pass-name')?.value) qs('#pass-name').value = j.passenger_name;
-    if (j.notes && !qs('#ride-notes')?.value) qs('#ride-notes').value = j.notes;
+    console.log('Last ride with stops data:', lastRide);
 
-    // 3) Antes de pintar pines nuevos, limpia artefactos previos (resaltados, previas).
+    // Rellenar datos básicos
+    if (lastRide.passenger_name && !qs('#pass-name')?.value) {
+      qs('#pass-name').value = lastRide.passenger_name;
+    }
+    if (lastRide.notes && !qs('#ride-notes')?.value) {
+      qs('#ride-notes').value = lastRide.notes;
+    }
+
+    // Limpiar mapa
     try { 
-      // limpia líneas “suggested/preview” y asignaciones
-      if (typeof clearAssignArtifacts === 'function') clearAssignArtifacts();
-
-      // borra grupos de highlight previos (rutas marcadas por focus/ver)
+      clearAssignArtifacts?.();
       if (window.rideMarkers) {
-        try { window.rideMarkers.forEach(g => { try { g.remove(); } catch {} }); } catch {}
-        try { window.rideMarkers.clear(); } catch {}
+        window.rideMarkers.forEach(g => { try { g.remove(); } catch {} });
+        window.rideMarkers.clear();
       }
     } catch {}
 
-    // 4) Pinta ÚNICAMENTE si vienen coords válidas
-    if (Number.isFinite(j.origin_lat) && Number.isFinite(j.origin_lng)) {
-      setFrom([j.origin_lat, j.origin_lng], j.origin_label);
+    // Establecer origen y destino
+    if (Number.isFinite(lastRide.origin_lat) && Number.isFinite(lastRide.origin_lng)) {
+      setFrom([lastRide.origin_lat, lastRide.origin_lng], lastRide.origin_label);
     }
-    if (Number.isFinite(j.dest_lat) && Number.isFinite(j.dest_lng)) {
-      setTo([j.dest_lat, j.dest_lng], j.dest_label);
+    if (Number.isFinite(lastRide.dest_lat) && Number.isFinite(lastRide.dest_lng)) {
+      setTo([lastRide.dest_lat, lastRide.dest_lng], lastRide.dest_label);
     }
-  } catch {/* silencioso */}
+
+    // ✅ CARGAR STOPS DIRECTAMENTE DESDE LA RESPUESTA
+    await loadStopsFromLastRide(lastRide);
+    
+  } catch (err) {
+    console.warn('Error in phone autocomplete:', err);
+  }
 });
 
+// Función para cargar stops desde la respuesta del last-ride
+async function loadStopsFromLastRide(lastRide) {
+  try {
+    console.log('Loading stops from last ride:', lastRide);
+    
+    let stops = [];
+    
+    // Usar el array de stops si está disponible
+    if (Array.isArray(lastRide.stops) && lastRide.stops.length > 0) {
+      stops = lastRide.stops;
+      console.log('Using stops array:', stops);
+    }
+    // Fallback: usar stops_json si existe
+    else if (lastRide.stops_json) {
+      try {
+        const parsed = JSON.parse(lastRide.stops_json);
+        if (Array.isArray(parsed)) {
+          stops = parsed;
+          console.log('Using parsed stops_json:', stops);
+        }
+      } catch (e) {
+        console.warn('Error parsing stops_json:', e);
+      }
+    }
+    // Último fallback: cargar el ride completo si tenemos ID
+    else if (lastRide.id) {
+      try {
+        console.log('Fetching full ride details for ID:', lastRide.id);
+        const rideResp = await fetch(`/api/rides/${lastRide.id}`);
+        if (rideResp.ok) {
+          const fullRide = await rideResp.json();
+          stops = normalizeStops(fullRide);
+          console.log('Using stops from full ride fetch:', stops);
+        }
+      } catch (e) {
+        console.warn('Error loading ride details:', e);
+      }
+    }
+    
+    // Establecer stops en el formulario si los encontramos
+    if (stops.length > 0) {
+      console.log('Setting stops in form:', stops);
+      setStopsInForm(stops);
+    } else {
+      console.log('No stops found in last ride');
+    }
+    
+  } catch (err) {
+    console.warn('Error loading stops from last ride:', err);
+  }
+}
+
+// Función para establecer stops en el formulario
+// Función para establecer stops en el formulario - CORREGIDA
+function setStopsInForm(stops) {
+  if (!Array.isArray(stops) || stops.length === 0) return;
+  
+  console.log('Setting stops in form:', stops);
+  
+  // Limpiar stops anteriores PERO mantener las filas visibles según sea necesario
+  if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
+  if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
+  
+  // Limpiar campos pero NO ocultar filas todavía
+  const stopFields = [
+    '#stop1Lat', '#stop1Lng', '#inStop1',
+    '#stop2Lat', '#stop2Lng', '#inStop2'
+  ];
+  
+  stopFields.forEach(selector => {
+    const el = qs(selector);
+    if (el) el.value = '';
+  });
+  
+  // Mostrar filas según la cantidad de stops
+  const stop1Row = qs('#stop1Row');
+  const stop2Row = qs('#stop2Row');
+  
+  // Ocultar ambas filas primero
+  if (stop1Row) stop1Row.style.display = 'none';
+  if (stop2Row) stop2Row.style.display = 'none';
+  
+  // Establecer nuevos stops y mostrar filas según corresponda
+  stops.forEach((stop, index) => {
+    if (index >= 2) return; // Máximo 2 stops
+    
+    const lat = Number(stop.lat);
+    const lng = Number(stop.lng);
+    const label = stop.label || stop.address || '';
+    
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      if (index === 0) {
+        // Primer stop
+        if (stop1Row) stop1Row.style.display = '';
+        setStop1([lat, lng], label);
+        console.log('Set stop1:', lat, lng, label);
+      } else if (index === 1) {
+        // Segundo stop
+        if (stop2Row) stop2Row.style.display = '';
+        setStop2([lat, lng], label);
+        console.log('Set stop2:', lat, lng, label);
+      }
+    }
+  });
+  
+  // Redibujar ruta
+  setTimeout(() => {
+    drawRoute({quiet: true});
+    autoQuoteIfReady();
+  }, 300);
+}
+
+// Y modifica también la función clearAllStops para que sea más específica:
+function clearAllStops() {
+  // Limpiar marcadores
+  if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
+  if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
+  
+  // Limpiar campos
+  const stopFields = [
+    '#stop1Lat', '#stop1Lng', '#inStop1',
+    '#stop2Lat', '#stop2Lng', '#inStop2'
+  ];
+  
+  stopFields.forEach(selector => {
+    const el = qs(selector);
+    if (el) el.value = '';
+  });
+  
+  // Ocultar filas
+  const stop1Row = qs('#stop1Row');
+  const stop2Row = qs('#stop2Row');
+  if (stop1Row) stop1Row.style.display = 'none';
+  if (stop2Row) stop2Row.style.display = 'none';
+}
 
   // crear ride
   // Crear ride (dispatch)
@@ -3130,7 +3515,7 @@ qs('#btnCreate')?.addEventListener('click', async () => {
 
     // ===== Limpiar UI (incluye stops) =====
     try {
-      ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount'].forEach(id=>{
+      ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount','pax',].forEach(id=>{
         const el = qs('#'+id); if (el) el.value='';
       });
       ['fromLat','fromLng','toLat','toLng'].forEach(id=>{
@@ -3152,7 +3537,15 @@ qs('#btnCreate')?.addEventListener('click', async () => {
       const rs = document.getElementById('routeSummary');
       if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
       resetWhenNow?.();
+
     } catch {}
+     try {
+  if (window._assignPickupMarker) {
+    try { (layerSuggested || layerRoute || map).removeLayer(window._assignPickupMarker); } catch {}
+    try { map.removeLayer(window._assignPickupMarker); } catch {}
+    window._assignPickupMarker = null;
+  }
+} catch {}
 
     // ===== Feedback + Tabs =====
     if (isScheduledStatus?.(ride)) {
@@ -3173,47 +3566,70 @@ qs('#btnCreate')?.addEventListener('click', async () => {
 });
 
 
-
+  
 
 
 
   // limpiar
-  qs('#btnClear')?.addEventListener('click', ()=>{
-    ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
-    ['fromLat','fromLng','toLat','toLng'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
-    layerRoute.clearLayers();
-    if (fromMarker){ fromMarker.remove(); fromMarker=null; }
-    if (toMarker){   toMarker.remove();   toMarker=null;  }
-    if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
-    if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
-     // Limpiar campos de las paradas
-    qs('#stop1Lat').value = ''; qs('#stop1Lng').value = '';
-    qs('#inStop1').value  = ''; qs('#stop1Row').style.display = 'none';
-    qs('#stop2Lat').value = ''; qs('#stop2Lng').value = '';
-    qs('#inStop2').value  = ''; qs('#stop2Row').style.display = 'none';
+ // util opcional
+function removeFromAnyLayer(marker) {
+  if (!marker) return;
+  try {
+    if (typeof layerSuggested !== 'undefined' && layerSuggested?.hasLayer?.(marker)) {
+      layerSuggested.removeLayer(marker);
+      return;
+    }
+  } catch {}
+  try {
+    if (typeof layerRoute !== 'undefined' && layerRoute?.hasLayer?.(marker)) {
+      layerRoute.removeLayer(marker);
+      return;
+    }
+  } catch {}
+  try { marker.remove(); } catch {}
+}
 
-    const rs = document.getElementById('routeSummary');
-    if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
-    resetWhenNow();
-  });
+// === Limpia formulario + mapa (crear/editar ride) ===
+function clearRideFormAndMap() {
+  try {
+      ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount','pax',].forEach(id=>{
+        const el = qs('#'+id); if (el) el.value='';
+      });
+      ['fromLat','fromLng','toLat','toLng'].forEach(id=>{
+        const el = qs('#'+id); if (el) el.value='';
+      });
+      layerRoute?.clearLayers?.();
+      if (fromMarker){ fromMarker.remove(); fromMarker=null; }
+      if (toMarker){   toMarker.remove();   toMarker=null;  }
+      if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
+      if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
+      const s1Lat = qs('#stop1Lat'), s1Lng = qs('#stop1Lng'), s2Lat = qs('#stop2Lat'), s2Lng = qs('#stop2Lng');
+      const inS1 = qs('#inStop1'), inS2 = qs('#inStop2');
+      const row1 = qs('#stop1Row'), row2 = qs('#stop2Row');
+      if (s1Lat) s1Lat.value=''; if (s1Lng) s1Lng.value='';
+      if (s2Lat) s2Lat.value=''; if (s2Lng) s2Lng.value='';
+      if (inS1) inS1.value='';   if (inS2) inS2.value='';
+      if (row1) row1.style.display='none';
+      if (row2) row2.style.display='none';
+      const rs = document.getElementById('routeSummary');
+      if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
+      resetWhenNow?.();
 
-   qs('#btnReset')?.addEventListener('click', ()=>{
-    ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
-    ['fromLat','fromLng','toLat','toLng'].forEach(id=>{ const el = qs('#'+id); if (el) el.value=''; });
-    layerRoute.clearLayers();
-    if (fromMarker){ fromMarker.remove(); fromMarker=null; }
-    if (toMarker){   toMarker.remove();   toMarker=null;  }
-     if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
-    if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
-     // Limpiar campos de las paradas
-    qs('#stop1Lat').value = ''; qs('#stop1Lng').value = '';
-    qs('#inStop1').value  = ''; qs('#stop1Row').style.display = 'none';
-    qs('#stop2Lat').value = ''; qs('#stop2Lng').value = '';
-    qs('#inStop2').value  = ''; qs('#stop2Row').style.display = 'none';
-    const rs = document.getElementById('routeSummary');
-    if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
-    resetWhenNow();
-  });
+    } catch {}
+     try {
+  if (window._assignPickupMarker) {
+    try { (layerSuggested || layerRoute || map).removeLayer(window._assignPickupMarker); } catch {}
+    try { map.removeLayer(window._assignPickupMarker); } catch {}
+    window._assignPickupMarker = null;
+  }
+} catch {}
+
+}
+
+// === Enlazar a ambos botones ===
+qs('#btnClear') ?.addEventListener('click', clearRideFormAndMap);
+qs('#btnReset') ?.addEventListener('click', clearRideFormAndMap);
+
 
    qs('#btnDuplicate')?.addEventListener('click', (e)=>{
   e.preventDefault();
