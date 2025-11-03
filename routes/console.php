@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Artisan;
 use App\Http\Controllers\Admin\RideAdminController;
 use Illuminate\Support\Facades\Schedule;
 use App\Services\ScheduledRidesService;
+use App\Services\OfferBroadcaster;
 
 // Corre cada minuto
 Schedule::call(function () {
@@ -30,6 +31,7 @@ Schedule::call(function () {
     }
 })->everyMinute();
 
+
 Schedule::call(function () {
     // si tienes multi-tenant, itéralo aquí:
     $tenantIds = \DB::table('tenants')->pluck('id')->all() ?: [1];
@@ -41,4 +43,45 @@ Schedule::call(function () {
 })
 ->everyMinute()
 ->name('rides.fireScheduled')
+->withoutOverlapping();
+
+
+// ===== Expirar OFERTAS vencidas y notificar al driver =====
+Schedule::call(function () {
+    $now = now();
+
+    // Procesa por chunks para no cargar demasiadas filas en memoria
+    DB::table('ride_offers')
+        ->select('id','tenant_id','driver_id','ride_id')
+        ->where('status','offered')
+        ->whereNotNull('expires_at')
+        ->where('expires_at','<',$now)
+        ->orderBy('id')
+        ->chunkById(500, function ($rows) use ($now) {
+            foreach ($rows as $r) {
+                // protege contra condiciones de carrera: solo cambia si aún está "offered"
+                $updated = DB::table('ride_offers')
+                    ->where('id', $r->id)
+                    ->where('status', 'offered')
+                    ->update([
+                        'status'       => 'expired',
+                        'responded_at' => $now,
+                        'updated_at'   => $now,
+                    ]);
+
+                if ($updated) {
+                    // Emite evento realtime al driver (private-tenant.{tenantId}.driver.{driverId})
+                    OfferBroadcaster::emitStatus(
+                        (int)$r->tenant_id,
+                        (int)$r->driver_id,
+                        (int)$r->ride_id,
+                        (int)$r->id,
+                        'expired'
+                    );
+                }
+            }
+        });
+})
+->everyMinute()
+->name('offers.expire')
 ->withoutOverlapping();

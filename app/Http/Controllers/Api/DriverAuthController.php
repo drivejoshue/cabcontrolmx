@@ -43,41 +43,41 @@ class DriverAuthController extends Controller
     }
 
    
-public function me(Request $r)
-{
-    $user = $r->user();
-    $tenantId = $r->header('X-Tenant-ID') ?: ($user->tenant_id ?? 1);  // ← override por header
+    public function me(Request $r)
+    {
+        $user = $r->user();
+        $tenantId = $r->header('X-Tenant-ID') ?: ($user->tenant_id ?? 1);  // ← override por header
 
-    $driver = DB::table('drivers')
-        ->where('tenant_id',$tenantId)
-        ->where('user_id',$user->id)
-        ->first();
-
-    $shift = null; $vehicle = null;
-    if ($driver) {
-        $shift = DB::table('driver_shifts')
+        $driver = DB::table('drivers')
             ->where('tenant_id',$tenantId)
-            ->where('driver_id',$driver->id)
-            ->whereNull('ended_at')
-            ->orderByDesc('started_at')
+            ->where('user_id',$user->id)
             ->first();
 
-        if ($shift && $shift->vehicle_id) {
-            $vehicle = DB::table('vehicles')
+        $shift = null; $vehicle = null;
+        if ($driver) {
+            $shift = DB::table('driver_shifts')
                 ->where('tenant_id',$tenantId)
-                ->where('id',$shift->vehicle_id)
-                ->select('id','economico','plate','brand','model','type')
+                ->where('driver_id',$driver->id)
+                ->whereNull('ended_at')
+                ->orderByDesc('started_at')
                 ->first();
-        }
-    }
 
-    return response()->json([
-        'ok'=>true,
-        'user'=>['id'=>$user->id,'name'=>$user->name,'email'=>$user->email,'tenant_id'=>$tenantId],
-        'driver'=>$driver,
-        'current_shift'=>$shift,
-        'vehicle'=>$vehicle,
-    ]);
-}
+            if ($shift && $shift->vehicle_id) {
+                $vehicle = DB::table('vehicles')
+                    ->where('tenant_id',$tenantId)
+                    ->where('id',$shift->vehicle_id)
+                    ->select('id','economico','plate','brand','model','type')
+                    ->first();
+            }
+        }
+
+        return response()->json([
+            'ok'=>true,
+            'user'=>['id'=>$user->id,'name'=>$user->name,'email'=>$user->email,'tenant_id'=>$tenantId],
+            'driver'=>$driver,
+            'current_shift'=>$shift,
+            'vehicle'=>$vehicle,
+        ]);
+    }
 
 }

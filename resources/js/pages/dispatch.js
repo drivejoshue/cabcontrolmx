@@ -3280,54 +3280,47 @@ qs('#pass-phone')?.addEventListener('blur', async (e) => {
 
 // Función para cargar stops desde la respuesta del last-ride
 async function loadStopsFromLastRide(lastRide) {
-  try {
-    console.log('Loading stops from last ride:', lastRide);
-    
-    let stops = [];
-    
-    // Usar el array de stops si está disponible
-    if (Array.isArray(lastRide.stops) && lastRide.stops.length > 0) {
-      stops = lastRide.stops;
-      console.log('Using stops array:', stops);
-    }
-    // Fallback: usar stops_json si existe
-    else if (lastRide.stops_json) {
-      try {
-        const parsed = JSON.parse(lastRide.stops_json);
-        if (Array.isArray(parsed)) {
-          stops = parsed;
-          console.log('Using parsed stops_json:', stops);
+    try {
+        console.log('Loading stops from last ride:', lastRide);
+        
+        // ✅ PREVENIR DOBLE EJECUCIÓN
+        if (window.loadingStops) return;
+        window.loadingStops = true;
+        
+        let stops = [];
+        
+        // Usar el array de stops si está disponible
+        if (Array.isArray(lastRide.stops) && lastRide.stops.length > 0) {
+            stops = lastRide.stops;
+            console.log('Using stops array:', stops);
         }
-      } catch (e) {
-        console.warn('Error parsing stops_json:', e);
-      }
-    }
-    // Último fallback: cargar el ride completo si tenemos ID
-    else if (lastRide.id) {
-      try {
-        console.log('Fetching full ride details for ID:', lastRide.id);
-        const rideResp = await fetch(`/api/rides/${lastRide.id}`);
-        if (rideResp.ok) {
-          const fullRide = await rideResp.json();
-          stops = normalizeStops(fullRide);
-          console.log('Using stops from full ride fetch:', stops);
+        // Fallback: usar stops_json si existe
+        else if (lastRide.stops_json) {
+            try {
+                const parsed = JSON.parse(lastRide.stops_json);
+                if (Array.isArray(parsed)) {
+                    stops = parsed;
+                    console.log('Using parsed stops_json:', stops);
+                }
+            } catch (e) {
+                console.warn('Error parsing stops_json:', e);
+            }
         }
-      } catch (e) {
-        console.warn('Error loading ride details:', e);
-      }
+        
+        // ✅ SOLO establecer stops si encontramos datos válidos
+        if (stops.length > 0) {
+            console.log('Setting stops in form:', stops);
+            setStopsInForm(stops);
+        } else {
+            console.log('No stops found in last ride');
+        }
+        
+    } catch (err) {
+        console.warn('Error loading stops from last ride:', err);
+    } finally {
+        // ✅ LIMPIAR FLAG
+        window.loadingStops = false;
     }
-    
-    // Establecer stops en el formulario si los encontramos
-    if (stops.length > 0) {
-      console.log('Setting stops in form:', stops);
-      setStopsInForm(stops);
-    } else {
-      console.log('No stops found in last ride');
-    }
-    
-  } catch (err) {
-    console.warn('Error loading stops from last ride:', err);
-  }
 }
 
 // Función para establecer stops en el formulario
@@ -3387,31 +3380,31 @@ function setStopsInForm(stops) {
   setTimeout(() => {
     drawRoute({quiet: true});
     autoQuoteIfReady();
-  }, 300);
+  }, 500);
 }
 
 // Y modifica también la función clearAllStops para que sea más específica:
-function clearAllStops() {
-  // Limpiar marcadores
-  if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
-  if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
-  
-  // Limpiar campos
-  const stopFields = [
-    '#stop1Lat', '#stop1Lng', '#inStop1',
-    '#stop2Lat', '#stop2Lng', '#inStop2'
-  ];
-  
-  stopFields.forEach(selector => {
-    const el = qs(selector);
-    if (el) el.value = '';
-  });
-  
-  // Ocultar filas
-  const stop1Row = qs('#stop1Row');
-  const stop2Row = qs('#stop2Row');
-  if (stop1Row) stop1Row.style.display = 'none';
-  if (stop2Row) stop2Row.style.display = 'none';
+function clearRoute() {
+    try {
+        // Limpiar polyline del mapa
+        if (window.routeLine) {
+            window.routeLine.remove();
+            window.routeLine = null;
+        }
+        
+        // Limpiar cualquier otra ruta que pueda estar en el mapa
+        if (window.map && window.map._layers) {
+            Object.values(window.map._layers).forEach(layer => {
+                if (layer instanceof L.Polyline) {
+                    window.map.removeLayer(layer);
+                }
+            });
+        }
+        
+        console.log('Ruta anterior limpiada');
+    } catch (error) {
+        console.warn('Error limpiando ruta:', error);
+    }
 }
 
   // crear ride

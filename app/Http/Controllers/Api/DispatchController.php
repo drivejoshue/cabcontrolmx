@@ -441,7 +441,10 @@ class DispatchController extends Controller
                 'ok'  => true,
                 'via' => 'sp_create_offer_v2',
                 'offer_id' => $offerId,
+
+
             ]);
+            \App\Services\OfferBroadcaster::emitNew($offerId);
 
         } catch (\Throwable $e) {
             $msg = $e->getMessage();
@@ -469,6 +472,8 @@ class DispatchController extends Controller
                         'ok'  => true,
                         'via' => 'sp_assign_direct_v1'
                     ]);
+
+                    \App\Services\OfferBroadcaster::emitNew($offerId);
 
                 } catch (\Throwable $e2) {
                     // 3) Fallback #2 (DEV): asignación directa manual del ride (sin oferta).
@@ -732,6 +737,7 @@ class DispatchController extends Controller
         );
 
         return response()->json(['ok'=>true] + $res);
+        
     }
 
     

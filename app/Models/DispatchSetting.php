@@ -28,6 +28,10 @@ class DispatchSetting extends Model
         'auto_dispatch_delay_s',
         'auto_dispatch_preview_n',
          'stop_fee',
+           // 👇 nuevos
+        'max_queue',
+        'queue_sla_minutes',
+        'central_priority',
     ];
 
     protected $casts = [
@@ -47,6 +51,10 @@ class DispatchSetting extends Model
         'auto_dispatch_delay_s'       => 'integer',
         'auto_dispatch_preview_n'     => 'integer',
          'stop_fee'                         => 'float',
+          // 👇 nuevos
+        'max_queue'                => 'integer',
+        'queue_sla_minutes'        => 'integer',
+        'central_priority'         => 'boolean',
     ];
 
     // Única por tenant (ya hay UNIQUE en la tabla)

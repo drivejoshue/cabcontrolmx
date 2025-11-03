@@ -97,6 +97,19 @@ class Ride extends Model
     }
 
 
+    public const ST_QUEUED = 'queued';
+
+    public function scopeOfferable($q) {
+      return $q->whereNull('driver_id')
+               ->whereIn('status', ['requested','offered','queued']);
+    }
+
+    public function scopeCancelable($q) {
+      return $q->whereIn('status', [
+        'requested','offered','queued','accepted','en_route','arrived','on_board'
+      ]);
+    }
+
     public function statusHistory()
     {
         return $this->hasMany(RideStatusHistory::class, 'ride_id')->orderBy('created_at');

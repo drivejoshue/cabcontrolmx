@@ -225,9 +225,13 @@ public function index(Request $req)
         $tenantId = $this->tenantIdFrom($req);
         try {
             DB::statement('CALL sp_ride_arrived_v1(?,?)', [$tenantId, $ride]);
+
         } catch (\Throwable $e) {
             $this->commitStatusChange($tenantId, $ride, 'arrived', ['source' => 'api.fallback']);
         }
+        $driverId = \DB::table('drivers')->where('tenant_id',$tenantId)->where('user_id',$req->user()->id)->value('id');
+
+        if ($driverId) Realtime::toDriver($tenantId,(int)$driverId)->emit('ride.update', ['ride_id'=>$ride,'status'=>'arrived']);
         return response()->json(['ok' => true, 'ride_id' => $ride, 'status' => 'arrived']);
     }
 
@@ -241,142 +245,193 @@ public function index(Request $req)
             // normalizamos a 'onboard' (ver commitStatusChange)
             $this->commitStatusChange($tenantId, $ride, 'on_board', ['source' => 'api.fallback']);
         }
+        $driverId = \DB::table('drivers')->where('tenant_id',$tenantId)->where('user_id',$req->user()->id)->value('id');
+
+     if ($driverId) Realtime::toDriver($tenantId,(int)$driverId)->emit('ride.update', ['ride_id'=>$ride,'status'=>'on_board']);
+
         return response()->json(['ok' => true, 'ride_id' => $ride, 'status' => 'on_board']);
     }
 
     /** POST /api/driver/rides/{ride}/finish */
-    public function finish(Request $req, int $ride)
-    {
-        $tenantId = $this->tenantIdFrom($req);
-        try {
-            DB::statement('CALL sp_ride_finish_v1(?,?)', [$tenantId, $ride]);
-        } catch (\Throwable $e) {
-            $this->commitStatusChange($tenantId, $ride, 'finished', ['source' => 'api.fallback']);
-        }
-        return response()->json(['ok' => true, 'ride_id' => $ride, 'status' => 'finished']);
-    }
+   public function finish(Request $req, int $ride)
+{
+    $tenantId = $this->tenantIdFrom($req);
 
-    /** GET /api/driver/rides/active */
-    public function activeForDriver(Request $req)
-    {
-        $user = $req->user();
-        $tenantId = $req->header('X-Tenant-ID') ?? optional($user)->tenant_id ?? 1;
+    // 1) Ejecuta SP de cierre + promoción (usa ride_id SIEMPRE)
+    $row  = \DB::selectOne('CALL sp_ride_finish_v1(?,?)', [$tenantId, $ride]);
+    $mode = $row->mode ?? 'finished';
+    $next = $row->next_ride_id ?? null;
 
-        // driver_id por user_id
-        $driverId = DB::table('drivers')->where('user_id', $user->id)->value('id');
-        if (!$driverId) {
-            return response()->json(['ok' => true, 'item' => null]);
-        }
+    // 2) Snapshot para DISPATCH: si total_amount es NULL, fijarlo a quoted_amount
+    $snap = \DB::table('rides')->where('id',$ride)->select('requested_channel','total_amount','quoted_amount','driver_id')->first();
+    $driverId = (int)($snap->driver_id ?? 0);
 
-        // Estados de ride que consideramos "activos" (acepta on_board y onboard)
-        $activeRideStates = ['accepted', 'en_route', 'arrived', 'on_board', 'onboard'];
-
-        // Caso normal: offer aceptada
-        $q = DB::table('ride_offers as o')
-            ->join('rides as r', 'r.id', '=', 'o.ride_id')
-            ->where('o.tenant_id', $tenantId)
-            ->where('o.driver_id', $driverId)
-            ->where('o.status', 'accepted')
-            ->whereIn('r.status', $activeRideStates)
-            ->orderByDesc('o.id')
-            ->select([
-                'o.id as offer_id',
-                'o.status as offer_status',
-                'o.sent_at',
-                'o.responded_at',
-                'o.expires_at',
-                'o.eta_seconds',
-                'o.distance_m',
-                'o.round_no',
-                'o.is_direct',
-
-                'r.id as ride_id',
-                'r.status as ride_status',
-                'r.origin_label', 'r.origin_lat', 'r.origin_lng',
-                'r.dest_label',   'r.dest_lat',   'r.dest_lng',
-                'r.quoted_amount',
-                'r.distance_m as ride_distance_m',
-                'r.duration_s as ride_duration_s',
-                'r.route_polyline',
-
-                // ===== Stops =====
-                'r.stops_json','r.stops_count','r.stop_index',
-            ]);
-
-        $item = $q->first();
-
-        // Decodificar stops si hay item por offer
-        if ($item) {
-            $item->origin_lat = isset($item->origin_lat) ? (float)$item->origin_lat : null;
-            $item->origin_lng = isset($item->origin_lng) ? (float)$item->origin_lng : null;
-            $item->dest_lat   = isset($item->dest_lat)   ? (float)$item->dest_lat   : null;
-            $item->dest_lng   = isset($item->dest_lng)   ? (float)$item->dest_lng   : null;
-
-            $item->stops = [];
-            if (!empty($item->stops_json)) {
-                $tmp = json_decode($item->stops_json, true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) {
-                    $item->stops = $tmp;
-                }
-            }
-        }
-
-        // Fallback: asignación directa
-        if (!$item) {
-            $r = DB::table('rides')
-                ->where('tenant_id', $tenantId)
-                ->where('driver_id', $driverId)
-                ->whereIn('status', $activeRideStates)
-                ->orderByDesc('id')
-                ->first();
-
-            if ($r) {
-                $stops = [];
-                if (!empty($r->stops_json)) {
-                    $tmp = json_decode($r->stops_json, true);
-                    if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) {
-                        $stops = $tmp;
-                    }
-                }
-
-                $item = (object)[
-                    'offer_id'        => null,
-                    'offer_status'    => 'accepted',
-                    'sent_at'         => null,
-                    'responded_at'    => null,
-                    'expires_at'      => null,
-                    'eta_seconds'     => null,
-                    'distance_m'      => null,
-                    'round_no'        => 0,
-                    'is_direct'       => 1,
-
-                    'ride_id'         => $r->id,
-                    'ride_status'     => $r->status,
-                    'origin_label'    => $r->origin_label,
-                    'origin_lat'      => isset($r->origin_lat) ? (float)$r->origin_lat : null,
-                    'origin_lng'      => isset($r->origin_lng) ? (float)$r->origin_lng : null,
-                    'dest_label'      => $r->dest_label,
-                    'dest_lat'        => ($r->dest_lat !== null) ? (float)$r->dest_lat : null,
-                    'dest_lng'        => ($r->dest_lng !== null) ? (float)$r->dest_lng : null,
-                    'quoted_amount'   => $r->quoted_amount,
-                    'ride_distance_m' => $r->distance_m,
-                    'ride_duration_s' => $r->duration_s,
-                    'route_polyline'  => $r->route_polyline,
-
-                    // ===== Stops fallback =====
-                    'stops_json'      => $r->stops_json,
-                    'stops_count'     => $r->stops_count,
-                    'stop_index'      => $r->stop_index,
-                    'stops'           => $stops,
-                ];
-            }
-        }
-
-        return response()->json([
-            'ok'   => true,
-            'item' => $item ?: null,
+    if (($snap->requested_channel ?? null) === 'dispatch' && $snap->total_amount === null) {
+        \DB::table('rides')->where('id',$ride)->update([
+            'total_amount' => $snap->quoted_amount,
+            'updated_at'   => now(),
         ]);
     }
+
+    // 3) Emitir eventos por driver (todos por ride_id)
+    try {
+        if ($mode === 'promoted' && $next) {
+            \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.promoted', [
+                'ride_id' => (int)$next,
+            ]);
+            \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('queue.remove', [
+                'ride_id' => (int)$next,
+            ]);
+            \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('offers.update', [
+                'ride_id' => (int)$next,
+                'status'  => 'accepted',
+            ]);
+        } else {
+            \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.finished', [
+                'ride_id' => (int)$ride,
+            ]);
+        }
+    } catch (\Throwable $e) { /* polling fallback */ }
+
+    return response()->json(['ok'=>true, 'ride_id'=>$ride, 'status'=>'finished', 'promoted'=>$next]);
+}
+
+
+    /** GET /api/driver/rides/active */
+ public function activeForDriver(Request $req)
+{
+    $user = $req->user();
+    $tenantId = $req->header('X-Tenant-ID') ?? optional($user)->tenant_id ?? 1;
+
+    // driver_id por user_id
+    $driverId = DB::table('drivers')->where('user_id', $user->id)->value('id');
+    if (!$driverId) {
+        return response()->json(['ok' => true, 'item' => null]);
+    }
+
+    // Estados considerados "activos"
+    $activeRideStates = ['accepted','assigned','en_route','enroute','arrived','on_board','onboard'];
+
+    // Caso normal: offer aceptada y ride asignado al mismo driver (clave)
+    $q = DB::table('ride_offers as o')
+        ->join('rides as r', 'r.id', '=', 'o.ride_id')
+        ->where('o.tenant_id', $tenantId)
+        ->where('o.driver_id', $driverId)
+        ->where('o.status', 'accepted')
+        ->where('r.driver_id', $driverId)                 // ⬅ asegura que el ride está ligado a este driver
+        ->whereIn('r.status', $activeRideStates)
+        ->orderByDesc('r.updated_at')                     // ⬅ el más “vivo”
+        ->orderByDesc('o.id')
+        ->select([
+            // ---- offer ----
+            'o.id as offer_id',
+            'o.status as offer_status',
+            'o.sent_at',
+            'o.responded_at',
+            'o.expires_at',
+            'o.eta_seconds',
+            'o.distance_m',
+            'o.round_no',
+            'o.is_direct',
+
+            // ---- ride ----
+            'r.id as ride_id',
+            'r.status as ride_status',
+            'r.driver_id',                                // ⬅ lo pediste para el UI
+            'r.origin_label','r.origin_lat','r.origin_lng',
+            'r.dest_label','r.dest_lat','r.dest_lng',
+            'r.quoted_amount',
+            'r.distance_m as ride_distance_m',
+            'r.duration_s as ride_duration_s',
+            'r.route_polyline',
+
+            // ---- stops ----
+            'r.stops_json','r.stops_count','r.stop_index',
+        ]);
+
+    $item = $q->first();
+
+    // Normalización + stops
+    $normalize = function($it) {
+        if (!$it) return $it;
+        $it->origin_lat = isset($it->origin_lat) ? (float)$it->origin_lat : null;
+        $it->origin_lng = isset($it->origin_lng) ? (float)$it->origin_lng : null;
+        $it->dest_lat   = isset($it->dest_lat)   ? (float)$it->dest_lat   : null;
+        $it->dest_lng   = isset($it->dest_lng)   ? (float)$it->dest_lng   : null;
+
+        $it->stops = [];
+        if (!empty($it->stops_json)) {
+            $tmp = json_decode($it->stops_json, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) {
+                $it->stops = $tmp;
+            }
+        }
+        return $it;
+    };
+
+    $item = $normalize($item);
+
+    // Fallback: si por cualquier razón no hay offer aceptada,
+    // toma el ride activo directo del driver.
+    if (!$item) {
+        $r = DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('driver_id', $driverId)
+            ->whereIn('status', $activeRideStates)
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($r) {
+            $stops = [];
+            if (!empty($r->stops_json)) {
+                $tmp = json_decode($r->stops_json, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) {
+                    $stops = $tmp;
+                }
+            }
+
+            $item = (object)[
+                // offer synth
+                'offer_id'        => null,
+                'offer_status'    => 'accepted',
+                'sent_at'         => null,
+                'responded_at'    => null,
+                'expires_at'      => null,
+                'eta_seconds'     => null,
+                'distance_m'      => null,
+                'round_no'        => 0,
+                'is_direct'       => 1,
+
+                // ride real
+                'ride_id'         => $r->id,
+                'ride_status'     => $r->status,
+                'driver_id'       => $r->driver_id,
+                'origin_label'    => $r->origin_label,
+                'origin_lat'      => isset($r->origin_lat) ? (float)$r->origin_lat : null,
+                'origin_lng'      => isset($r->origin_lng) ? (float)$r->origin_lng : null,
+                'dest_label'      => $r->dest_label,
+                'dest_lat'        => ($r->dest_lat !== null) ? (float)$r->dest_lat : null,
+                'dest_lng'        => ($r->dest_lng !== null) ? (float)$r->dest_lng : null,
+                'quoted_amount'   => $r->quoted_amount,
+                'ride_distance_m' => $r->distance_m,
+                'ride_duration_s' => $r->duration_s,
+                'route_polyline'  => $r->route_polyline,
+
+                // stops
+                'stops_json'      => $r->stops_json,
+                'stops_count'     => $r->stops_count,
+                'stop_index'      => $r->stop_index,
+                'stops'           => $stops,
+            ];
+        }
+    }
+
+    return response()->json([
+        'ok'   => true,
+        'item' => $item ?: null,
+    ]);
+}
 
     /** POST /api/driver/rides/{ride}/cancel */
     public function cancelByDriver(Request $req, int $ride)

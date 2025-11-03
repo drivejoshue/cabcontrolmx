@@ -12,41 +12,46 @@ class DriverLocationController
     }
 
       public function update(Request $r)
-    {
-        $user = $r->user();
-        $tenantId = $r->header('X-Tenant-ID') ?: ($user->tenant_id ?? 1);
+{
+    $user = $r->user();
+    $tenantId = $r->header('X-Tenant-ID') ?: ($user->tenant_id ?? 1);
 
-        $data = $r->validate([
-            'lat'  => 'required|numeric',
-            'lng'  => 'required|numeric',
-            'busy' => 'nullable|boolean',
-            'speed_kmh' => 'nullable|numeric',
+    $data = $r->validate([
+        'lat'  => 'required|numeric',
+        'lng'  => 'required|numeric',
+        'busy' => 'nullable|boolean',
+        'speed_kmh' => 'nullable|numeric',
+    ]);
+
+    $driver = DB::table('drivers')
+        ->where('tenant_id',$tenantId)->where('user_id',$user->id)->first();
+    if(!$driver) return response()->json(['ok'=>false,'msg'=>'No driver'], 403);
+
+    // === TZ local del tenant ===
+    $tz = DB::table('tenants')->where('id', $tenantId)->value('timezone')
+        ?: config('app.timezone', 'UTC');
+    $now = now($tz);
+
+    DB::table('driver_locations')->insert([
+        'tenant_id' => $tenantId,
+        'driver_id' => $driver->id,
+        'lat' => $data['lat'],
+        'lng' => $data['lng'],
+        'speed_kmh' => $data['speed_kmh'] ?? null,
+        'reported_at' => $now,     // <- local del tenant
+        'created_at'  => $now,     // <- local del tenant
+    ]);
+
+    if (array_key_exists('busy', $v)) {
+        \DB::table('drivers')->where('id',$driverId)->update([
+            'status' => $v['busy'] ? 'busy' : 'idle',
+            'updated_at'=>now(),
         ]);
-
-        $driver = DB::table('drivers')
-            ->where('tenant_id',$tenantId)->where('user_id',$user->id)->first();
-        if(!$driver) return response()->json(['ok'=>false,'msg'=>'No driver'], 403);
-
-        DB::table('driver_locations')->insert([
-            'tenant_id' => $tenantId, 'driver_id'=>$driver->id,
-            'lat'=>$data['lat'], 'lng'=>$data['lng'],
-            'speed_kmh'=>$data['speed_kmh'] ?? null,
-            'reported_at'=>now(), 'created_at'=>now(), 
-        ]);
-
-        // Ajusta estado manual si viene busy explícito
-        if (array_key_exists('busy',$data)) {
-            $new = $data['busy'] ? 'busy' : 'idle';
-            DB::table('drivers')->where('id',$driver->id)->update([
-                'status'=>$new, 
-            ]);
-        } else {
-            // si no mandan busy y el driver no tiene ride activo, lo mantenemos como está
-        }
-
-        // Mantén el watchdog aparte para offline por inactividad
-        return response()->json(['ok'=>true]);
     }
+
+    return response()->json(['ok'=>true]);
+}
+
 
     private function resolveDriverId(Request $req, ?int $driverParam): ?int
     {

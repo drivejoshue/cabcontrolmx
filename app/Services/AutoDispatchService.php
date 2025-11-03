@@ -34,6 +34,11 @@ class AutoDispatchService
     $allowFare   = (bool) data_get($row, 'allow_fare_bidding',
                         data_get($row, 'allow_fare_biddings', false));
 
+      // 👇 nuevos con defaults del DDL
+    $maxQueue    = (int)   data_get($row,'max_queue', 2);
+    $queueSlaMin = (int)   data_get($row,'queue_sla_minutes', 20);
+    $centralPrio = (bool)  data_get($row,'central_priority', 1);
+
     return (object)[
         'enabled'                => (bool)  $enabled,
         'delay_s'                => (int)   $delay,
@@ -48,6 +53,12 @@ class AutoDispatchService
 
         // compatibilidad temporal (DEPRECATED)
         'allow_fare_biddings'    => (bool)  $allowFare,
+
+
+        // 👇 exposición de la política de cola
+        'max_queue'             => $maxQueue,
+        'queue_sla_minutes'     => $queueSlaMin,
+        'central_priority'      => $centralPrio,
     ];
 }
 
@@ -200,6 +211,7 @@ class AutoDispatchService
             $isMissing = str_contains($msg, '1305') || str_contains($msg, 'does not exist');
             if (!$isMissing) {
                 return ['ok'=>false,'via'=>'sp_offer_wave_v1','error'=>$msg];
+                \App\Services\OfferBroadcaster::emitNew($offerId);
             }
         }
 
@@ -266,6 +278,7 @@ class AutoDispatchService
             }
 
             return ['ok'=>true,'via'=>'fallback','offers_created'=>$created,'fresh_s'=>$freshS];
+            \App\Services\OfferBroadcaster::emitNew($offerId);
         } catch (\Throwable $e2) {
             return ['ok'=>false,'via'=>'fallback','error'=>$e2->getMessage()];
         }
