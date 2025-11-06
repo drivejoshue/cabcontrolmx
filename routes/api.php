@@ -12,11 +12,45 @@ use App\Http\Controllers\Api\DriverShiftController;
 use App\Http\Controllers\Api\DriverLocationController;
 use App\Http\Controllers\Api\DispatchController;
 use App\Http\Controllers\Api\OfferController;
-use App\Http\Controllers\Api\QueueController; // Cola de OFERTAS
-use App\Http\Controllers\Admin\DispatchSettingsController;
+use App\Http\Controllers\Api\QueueController; 
 use App\Http\Controllers\Admin\DispatchBoardsController;
 use App\Http\Controllers\Api\DriverVehiclesController;
+use App\Http\Controllers\Admin\DispatchSettingsController;
+use Illuminate\Http\Request;
+use App\Events\DriverEvent;
 
+
+Route::post('/test-driver-event', function (Request $request) {
+    // Autenticar como usuario de prueba
+    $user = \App\Models\User::where('email', 'driver@test.com')->first();
+    
+    if (!$user) {
+        return response()->json(['error' => 'User not found'], 404);
+    }
+
+    auth()->login($user);
+
+    $driver = \App\Models\Driver::where('user_id', $user->id)->first();
+
+    event(new DriverEvent(
+        tenantId: 1,
+        driverId: $driver->id,
+        type: 'offers.new',
+        payload: [
+            'ride_id' => 789,
+            'offer_id' => 999,
+            'message' => 'Test from API endpoint',
+            'from_api' => true
+        ]
+    ));
+
+    return response()->json([
+        'status' => 'success',
+        'message' => 'Event sent',
+        'user_id' => $user->id,
+        'driver_id' => $driver->id
+    ]);
+});
 /* =========== DISPATCH (panel) =========== */
 Route::post('/dispatch/quote', [DispatchController::class, 'quote'])->name('api.dispatch.quote');
 Route::post('/dispatch/tick',  [DispatchController::class, 'tick']);

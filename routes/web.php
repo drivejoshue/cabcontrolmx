@@ -18,9 +18,10 @@ use App\Http\Controllers\Admin\DispatchSettingsController;
 use App\Http\Controllers\Admin\TenantFarePolicyController;
 
 // API controllers (panel con sesión)
-use App\Http\Controllers\API\SectorController as ApiSectorController;
-use App\Http\Controllers\API\TaxiStandController as ApiTaxiStandController;
+use App\Http\Controllers\Api\SectorController as ApiSectorController;
+use App\Http\Controllers\Api\TaxiStandController as ApiTaxiStandController;
 use App\Http\Controllers\Admin\Reports\RidesReportController;
+use App\Http\Controllers\Api\QueueController;
 
 Route::redirect('/', '/login');
 

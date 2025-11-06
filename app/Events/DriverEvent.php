@@ -5,6 +5,7 @@ namespace App\Events;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 
 class DriverEvent implements ShouldBroadcastNow
 {
@@ -21,20 +22,36 @@ class DriverEvent implements ShouldBroadcastNow
         $this->driverId = $driverId;
         $this->type = $type;
         $this->payload = $payload;
+
+        Log::info("🚀 DriverEvent Created", [
+            'tenant' => $tenantId,
+            'driver' => $driverId,
+            'type' => $type,
+            'channel' => "tenant.{$tenantId}.driver.{$driverId}"
+        ]);
     }
 
     public function broadcastOn()
     {
-        return new PrivateChannel("tenant.{$this->tenantId}.driver.{$this->driverId}");
+        $channel = new PrivateChannel("tenant.{$this->tenantId}.driver.{$this->driverId}");
+        
+        Log::info("📡 Broadcasting to channel", [
+            'channel' => $channel->name,
+            'event_type' => $this->type,
+            'driver' => $this->driverId
+        ]);
+        
+        return $channel;
     }
 
     public function broadcastAs()
     {
-        return $this->type; // p.ej. offers.update, ride.active, ride.queued, ride.promoted
+        return $this->type;
     }
 
     public function broadcastWith(): array
     {
+        Log::info("📦 Event payload", $this->payload);
         return $this->payload;
     }
 }

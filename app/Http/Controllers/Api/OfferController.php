@@ -217,7 +217,7 @@ public function show($offerId, Request $req)
 
         return response()->json(['ok' => true, 'item' => $o]);
     }
-}
+
 
 
 

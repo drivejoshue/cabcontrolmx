@@ -2,6 +2,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
+use App\Http\Controllers\Api\QueueController; 
 
 class OfferBroadcaster
 {

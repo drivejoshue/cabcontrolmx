@@ -1,5 +1,5 @@
 <?php
-// app/Http/Controllers/Api/QueueController.php
+
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
@@ -9,8 +9,7 @@ use Illuminate\Support\Facades\DB;
 use App\Services\OfferBroadcaster;
 
 class QueueController extends Controller
-{   
-    $tenantId = Auth::user()->tenant_id ?? null;
+{
     /** Lista la cola del driver autenticado (orden por queued_at/queued_position) */
     public function index(Request $req)
     {
@@ -19,11 +18,12 @@ class QueueController extends Controller
         abort_if(!$driverId || !$tenantId, 401);
 
         $rows = DB::table('ride_offers as ro')
-            ->join('rides as r', function($j){
-                $j->on('r.id','=','ro.ride_id');
+            ->join('rides as r', function ($j) {
+                $j->on('r.id', '=', 'ro.ride_id');
             })
-            ->where('ro.driver_id',$driverId)
-            ->where('ro.status','queued')
+            ->where('ro.driver_id', $driverId)
+            // ->where('ro.tenant_id', $tenantId) // ← descomenta si tienes columna tenant_id en ride_offers
+            ->where('ro.status', 'queued')
             ->orderByRaw('COALESCE(ro.queued_at, ro.created_at) ASC, COALESCE(ro.queued_position, 9999) ASC, ro.id ASC')
             ->select([
                 'ro.id as offer_id','ro.ride_id','ro.queued_at','ro.queued_position','ro.queued_reason',
@@ -43,62 +43,74 @@ class QueueController extends Controller
         ]);
 
         $driverId = Auth::user()->driver_id ?? null;
-        abort_if(!$driverId, 401);
+        $tenantId = Auth::user()->tenant_id ?? null;
+        abort_if(!$driverId || !$tenantId, 401);
 
-        $offer = DB::table('ride_offers')->where('id',$v['offer_id'])->first();
-        abort_if(!$offer || $offer->driver_id != $driverId || $offer->status !== 'queued', 404);
+        $offer = DB::table('ride_offers')->where('id', $v['offer_id'])->first();
+        abort_if(!$offer || (int)$offer->driver_id !== (int)$driverId || $offer->status !== 'queued', 404);
 
-        // simple: resta 1 al position sin colisionar (puedes mejorar con window functions)
         $pos = (int)($offer->queued_position ?? 9999);
         $newPos = max(1, $pos - 1);
 
-        DB::table('ride_offers')->where('id',$offer->id)->update([
-            'queued_position' => $newPos,
-            'updated_at'      => now(),
-        ]);
-    OfferBroadcaster::queueAdd((int)$tenantId,(int)$driverId,(int)$offer->ride_id); // opcional: add/update
-   
+        if ($newPos !== $pos) {
+            DB::table('ride_offers')->where('id', $offer->id)->update([
+                'queued_position' => $newPos,
+                'updated_at'      => now(),
+            ]);
+        }
 
-        return response()->json(['ok'=>true,'offer_id'=>$offer->id,'position'=>$newPos]);
+        // Notificación opcional (add/update)
+        OfferBroadcaster::queueAdd((int)$tenantId, (int)$driverId, (int)$offer->ride_id);
+
+        return response()->json(['ok' => true, 'offer_id' => (int)$offer->id, 'position' => $newPos]);
     }
 
     /** Elimina una oferta de la cola del driver (pasa a released) */
-    public function drop($offerId)
+    public function drop(int $offerId)
     {
         $driverId = Auth::user()->driver_id ?? null;
-        abort_if(!$driverId, 401);
+        $tenantId = Auth::user()->tenant_id ?? null;
+        abort_if(!$driverId || !$tenantId, 401);
 
         $affected = DB::table('ride_offers')
-            ->where('id',$offerId)
-            ->where('driver_id',$driverId)
-            ->where('status','queued')
+            ->where('id', $offerId)
+            ->where('driver_id', $driverId)
+            ->where('status', 'queued')
             ->update([
                 'status'       => 'released',
                 'responded_at' => now(),
                 'updated_at'   => now(),
             ]);
 
-        abort_if($affected===0, 404);
- $off = DB::table('ride_offers')->where('id',$offerId)->first();
-    if ($off) OfferBroadcaster::queueRemove((int)$off->tenant_id,(int)$off->driver_id,(int)$off->ride_id);
-        return response()->json(['ok'=>true]);
+        abort_if($affected === 0, 404);
+
+        $off = DB::table('ride_offers')->where('id', $offerId)->first();
+        if ($off) {
+            OfferBroadcaster::queueRemove((int)$tenantId, (int)$driverId, (int)$off->ride_id);
+        }
+
+        return response()->json(['ok' => true]);
     }
 
     /** Limpia toda la cola del driver */
     public function clearAll(Request $req)
     {
         $driverId = Auth::user()->driver_id ?? null;
-        abort_if(!$driverId, 401);
+        $tenantId = Auth::user()->tenant_id ?? null;
+        abort_if(!$driverId || !$tenantId, 401);
 
         DB::table('ride_offers')
-            ->where('driver_id',$driverId)
-            ->where('status','queued')
+            ->where('driver_id', $driverId)
+            // ->where('tenant_id', $tenantId) // ← descomenta si aplica
+            ->where('status', 'queued')
             ->update([
                 'status'       => 'released',
                 'responded_at' => now(),
                 'updated_at'   => now(),
             ]);
- OfferBroadcaster::queueClear((int)$tenantId,(int)$driverId);
-        return response()->json(['ok'=>true]);
+
+        OfferBroadcaster::queueClear((int)$tenantId, (int)$driverId);
+
+        return response()->json(['ok' => true]);
     }
 }

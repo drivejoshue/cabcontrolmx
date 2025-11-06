@@ -42,10 +42,10 @@ class DriverLocationController
         'created_at'  => $now,     // <- local del tenant
     ]);
 
-    if (array_key_exists('busy', $v)) {
-        \DB::table('drivers')->where('id',$driverId)->update([
-            'status' => $v['busy'] ? 'busy' : 'idle',
-            'updated_at'=>now(),
+   if (array_key_exists('busy', $data)) {
+    DB::table('drivers')->where('id', $driver->id)->update([
+        'status'     => $data['busy'] ? 'busy' : 'idle',
+        'updated_at' => $now,
         ]);
     }
 
