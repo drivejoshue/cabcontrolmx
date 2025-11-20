@@ -4,6 +4,7 @@ use App\Http\Middleware\EnsureUserIsAdmin;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Middleware\HandleCors;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -16,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         // Lo que va al grupo web
         $middleware->appendToGroup('web', SetTenantFromUser::class);
+        $middleware->append(HandleCors::class);
 
         // 👇 Alias para usar 'admin' en routes/web.php
         $middleware->alias([

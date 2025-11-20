@@ -11,6 +11,7 @@ protected $casts = [
 'allow_marketplace' => 'boolean',
 'utc_offset_minutes'=> 'integer',
 'latitud' => 'float',
+ 'coverage_radius_km' => 'float',
 'longitud' => 'float',
 ];
 }

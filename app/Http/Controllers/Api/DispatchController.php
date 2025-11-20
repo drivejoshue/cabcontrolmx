@@ -7,9 +7,12 @@ use App\Models\Driver;
 use App\Models\DriverLocation;
 use App\Models\TaxiStand;
 use Carbon\Carbon;
+use App\Services\FareQuoteService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Services\AutoDispatchService;
+use App\Services\OfferBroadcaster;
+
 
 use App\Models\Tenant;  
 
@@ -27,8 +30,29 @@ class DispatchController extends Controller
 
     /** POST /api/dispatch/quote  (origin/destination -> distancia, duración, $) */
  
+private static function emitFreshOffers(int $tenantId, int $rideId, int $freshWindowSeconds = 8): void
+{
+    $nowMinus = \Carbon\Carbon::now()->subSeconds($freshWindowSeconds);
 
-   public function quote(Request $r)
+    $ids = \DB::table('ride_offers')
+        ->where('tenant_id', $tenantId)
+        ->where('ride_id',   $rideId)
+        ->where('status',    'offered')
+        ->whereNull('responded_at')
+        // usa sent_at si la tienes; si no, cae a created_at
+        ->where(function($q) use ($nowMinus) {
+            $q->where('sent_at', '>=', $nowMinus)
+              ->orWhere('created_at','>=', $nowMinus);
+        })
+        ->pluck('id');
+
+    foreach ($ids as $oid) {
+        \App\Services\OfferBroadcaster::emitNew((int)$oid);
+    }
+}
+
+
+public function quote(Request $r, FareQuoteService $fareQuote)
     {
         $v = $r->validate([
             'origin.lat'        => 'required|numeric',
@@ -36,7 +60,6 @@ class DispatchController extends Controller
             'destination.lat'   => 'required|numeric',
             'destination.lng'   => 'required|numeric',
             'round_to_step'     => 'nullable|numeric',
-            // NUEVO: paradas (máx 2)
             'stops'             => 'nullable|array|max:2',
             'stops.*.lat'       => 'required_with:stops|numeric',
             'stops.*.lng'       => 'required_with:stops|numeric',
@@ -44,76 +67,42 @@ class DispatchController extends Controller
 
         $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
 
-        // Política del tenant (incluye extras.stop_fee)
-        $pol = DB::table('tenant_fare_policies')->where('tenant_id',$tenantId)->orderByDesc('id')->first();
-        $base   = (float)($pol->base_fee        ?? 25);
-        $perKm  = (float)($pol->per_km          ?? 8);
-        $perMin = (float)($pol->per_min         ?? 0);
-        $minTot = (float)($pol->min_total       ?? 0);
-        $nightM = (float)($pol->night_multiplier?? 1.0);
+        $origin = [
+            'lat' => (float)$v['origin']['lat'],
+            'lng' => (float)$v['origin']['lng'],
+        ];
 
-        $extras = [];
-        if (!empty($pol?->extras)) {
-            $tmp = json_decode($pol->extras, true);
-            if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) $extras = $tmp;
-        }
-        $stopFee = (float)($extras['stop_fee'] ?? 0.0);
+        $destination = [
+            'lat' => (float)$v['destination']['lat'],
+            'lng' => (float)$v['destination']['lng'],
+        ];
 
-        // Construir puntos en orden: O -> (stops) -> D
-        $points = [];
-        $points[] = [(float)$v['origin']['lat'], (float)$v['origin']['lng']];
         $stops = [];
         if (!empty($v['stops'])) {
-            foreach (array_slice($v['stops'], 0, 2) as $s) {
-                $p = ['lat'=>(float)$s['lat'], 'lng'=>(float)$s['lng']];
-                $stops[] = $p;
-                $points[] = [$p['lat'],$p['lng']];
+            foreach ($v['stops'] as $s) {
+                $stops[] = [
+                    'lat' => (float)$s['lat'],
+                    'lng' => (float)$s['lng'],
+                ];
             }
         }
-        $points[] = [(float)$v['destination']['lat'], (float)$v['destination']['lng']];
 
-        // Distancia por tramos con Haversine + 25% por red vial
-        $toRad = fn($d)=>$d * M_PI / 180;
-        $R = 6371000; // m
-        $distStraight = 0.0;
-        for ($i=0; $i<count($points)-1; $i++){
-            [$A_lat,$A_lng] = $points[$i];
-            [$B_lat,$B_lng] = $points[$i+1];
-            $dLat = $toRad($B_lat - $A_lat);
-            $dLng = $toRad($B_lng - $A_lng);
-            $a = sin($dLat/2)**2 + cos($toRad($A_lat))*cos($toRad($B_lat))*sin($dLng/2)**2;
-            $c = 2 * asin(min(1, sqrt($a)));
-            $distStraight += $R * $c;
-        }
-        $distM = (int) round($distStraight * 1.25);
-        $speed_mps = 24_000 / 3600; // 24 km/h
-        $durS = (int) max(180, round($distM / max(1e-6, $speed_mps)));
+        // Si viene round_to_step en el request, se usa; si no, null y el service aplica política del tenant
+        $roundToStep = $r->has('round_to_step')
+            ? (float)$r->input('round_to_step')
+            : null;
 
-        // Tarifa = base + km*perKm + min*perMin + stopFee * nStops (+ nocturno, mínimo, redondeo)
-        $km  = $distM / 1000.0;
-        $min = $durS  / 60.0;
-        $amount = $base + ($km*$perKm) + ($min*$perMin) + ($stopFee * count($stops));
-
-        // Ventana nocturna simple (22–06). Si tienes columnas en tabla, ajústalo igual que en el service.
-        $now = now()->format('H:i:s');
-        if ($now >= '22:00:00' || $now <= '06:00:00') {
-            $amount *= $nightM;
-        }
-
-        if ($minTot > 0 && $amount < $minTot) $amount = $minTot;
-
-        // Redondeo: respeta round_to_step si viene; si no, usa step=1
-        $step = (float)($r->input('round_to_step', 1.00));
-        if ($step > 0) $amount = round($amount / $step) * $step;
-        $amount = (int) round($amount);
+        $res = $fareQuote->quoteForTenantAndPoints(
+            tenantId:    $tenantId,
+            origin:      $origin,
+            destination: $destination,
+            stops:       $stops,
+            roundToStep: $roundToStep,
+        );
 
         return response()->json([
-            'ok'         => true,
-            'amount'     => $amount,
-            'distance_m' => $distM,
-            'duration_s' => $durS,
-            'stops_n'    => count($stops),
-        ]);
+            'ok' => true,
+        ] + $res);
     }
 
    
@@ -386,7 +375,7 @@ class DispatchController extends Controller
      *  Operaciones: asignar / cancelar
      * ======================= */
  
-    public function assign(Request $req)
+ public function assign(Request $req)
     {
         $v = $req->validate([
             'ride_id'   => 'required|integer',
@@ -441,10 +430,7 @@ class DispatchController extends Controller
                 'ok'  => true,
                 'via' => 'sp_create_offer_v2',
                 'offer_id' => $offerId,
-
-
             ]);
-            \App\Services\OfferBroadcaster::emitNew($offerId);
 
         } catch (\Throwable $e) {
             $msg = $e->getMessage();
@@ -472,8 +458,6 @@ class DispatchController extends Controller
                         'ok'  => true,
                         'via' => 'sp_assign_direct_v1'
                     ]);
-
-                    \App\Services\OfferBroadcaster::emitNew($offerId);
 
                 } catch (\Throwable $e2) {
                     // 3) Fallback #2 (DEV): asignación directa manual del ride (sin oferta).
@@ -526,184 +510,62 @@ class DispatchController extends Controller
 
 
 
-    public function cancel(Request $r, int $ride)
-    {
-        $r->validate(['reason' => 'nullable|string|max:160']);
-        $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
 
-        \Log::info('dispatch.cancel IN', [
-            'tenantId' => $tenantId,
-            'ride'     => $ride,
-            'reason'   => $r->input('reason'),
-            'user_id'  => optional($r->user())->id,
+public function cancelRide(Request $r, int $ride)
+{
+    $data = $r->validate(['reason' => 'nullable|string|max:160']);
+    $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
+
+    return DB::transaction(function () use ($tenantId, $ride, $data) {
+        $row = DB::table('rides')->where('tenant_id',$tenantId)->where('id',$ride)->lockForUpdate()->first();
+        if (!$row) return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'], 404);
+
+        $status = strtolower($row->status ?? '');
+        if (in_array($status, ['finished','canceled'])) return response()->json(['ok'=>true]);
+
+        DB::table('rides')->where('tenant_id',$tenantId)->where('id',$ride)->update([
+            'status'=>'canceled','canceled_at'=>now(),
+            'cancel_reason'=>$data['reason'] ?? null,'canceled_by'=>'ops','updated_at'=>now(),
         ]);
 
-        try {
-            return DB::transaction(function () use ($tenantId, $ride, $r) {
-                $row = DB::table('rides')
-                    ->where('tenant_id', $tenantId)
-                    ->where('id', $ride)
-                    ->lockForUpdate()
-                    ->first();
+        DB::table('ride_status_history')->insert([
+            'tenant_id'=>$tenantId,'ride_id'=>$ride,
+            'prev_status'=>$status,'new_status'=>'canceled',
+            'meta'=>json_encode(['reason'=>$data['reason'] ?? null,'by'=>'ops']),
+            'created_at'=>now(),'updated_at'=>now(),
+        ]);
 
-                if (!$row) {
-                    \Log::warning('dispatch.cancel ride not found', compact('tenantId','ride'));
-                    return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
-                }
+        // leer ofertas afectadas
+        $offered = DB::table('ride_offers')->where('tenant_id',$tenantId)->where('ride_id',$ride)->where('status','offered')
+                   ->get(['id','tenant_id','driver_id','ride_id']);
+        $accepted = DB::table('ride_offers')->where('tenant_id',$tenantId)->where('ride_id',$ride)->where('status','accepted')
+                   ->get(['id','tenant_id','driver_id','ride_id']);
 
-                $prev = strtolower($row->status ?? '');
-                if (in_array($prev, ['finished','canceled'])) {
-                    \Log::info('dispatch.cancel idempotent', compact('ride','prev'));
-                    return response()->json(['ok' => true]);
-                }
+        // cerrar ofertas
+        DB::table('ride_offers')->where('tenant_id',$tenantId)->where('ride_id',$ride)->where('status','offered')
+          ->update(['status'=>'released','responded_at'=>now(),'updated_at'=>now()]);
+        // opcional accepted->canceled:
+        DB::table('ride_offers')->where('tenant_id',$tenantId)->where('ride_id',$ride)->where('status','accepted')
+          ->update(['status'=>'canceled','responded_at'=>now(),'updated_at'=>now()]);
 
-                // 1) ride -> canceled
-                DB::table('rides')
-                    ->where('tenant_id', $tenantId)
-                    ->where('id', $ride)
-                    ->update([
-                        'status'        => 'canceled',
-                        'canceled_at'   => now(),
-                        'cancel_reason' => $r->input('reason'),
-                        'canceled_by'   => 'dispatch',
-                        'updated_at'    => now(),
-                    ]);
-
-                // 2) historial (OJO: agregamos 'status' requerido por tu tabla)
-                DB::table('ride_status_history')->insert([
-                    'tenant_id'   => $tenantId,
-                    'ride_id'     => $ride,
-                    'status'      => 'canceled',  // <-- clave para tu schema
-                    'prev_status' => $prev,
-                    'new_status'  => 'canceled',
-                    'meta'        => json_encode([
-                        'reason' => $r->input('reason'),
-                        'by'     => 'dispatch'
-                    ]),
-                    'created_at'  => now(),
-                    'updated_at'  => now(),
-                ]);
-
-                // 3) ofertas: offered -> released, accepted -> canceled
-                DB::table('ride_offers')
-                    ->where('tenant_id', $tenantId)
-                    ->where('ride_id',   $ride)
-                    ->where('status',    'offered')
-                    ->update([
-                        'status'       => 'released',
-                        'responded_at' => now(),
-                        'updated_at'   => now(),
-                    ]);
-
-                DB::table('ride_offers')
-                    ->where('tenant_id', $tenantId)
-                    ->where('ride_id',   $ride)
-                    ->where('status',    'accepted')
-                    ->update([
-                        'status'       => 'canceled',
-                        'responded_at' => now(),
-                        'updated_at'   => now(),
-                    ]);
-
-                // 4) si tenía driver, regresarlo a idle
-                if (!empty($row->driver_id)) {
-                    DB::table('drivers')
-                        ->where('tenant_id', $tenantId)
-                        ->where('id',        $row->driver_id)
-                        ->update([
-                            'status'     => 'idle',
-                            'updated_at' => now(),
-                        ]);
-                }
-
-                \Log::info('dispatch.cancel OK', ['ride' => $ride]);
-                return response()->json(['ok' => true]);
-            });
-        } catch (\Throwable $e) {
-            \Log::error('dispatch.cancel FAIL', [
-                'ride' => $ride,
-                'ex'   => $e->getMessage(),
-                'trace'=> $e->getTraceAsString(),
-            ]);
-            return response()->json(['ok' => false, 'msg' => $e->getMessage()], 500);
+        // EMITIR
+        foreach ($offered as $o) {
+            OfferBroadcaster::emitStatus((int)$o->tenant_id,(int)$o->driver_id,(int)$o->ride_id,(int)$o->id,'released');
         }
-    }
+        foreach ($accepted as $o) {
+            OfferBroadcaster::emitStatus((int)$o->tenant_id,(int)$o->driver_id,(int)$o->ride_id,(int)$o->id,'canceled');
+        }
 
-
-
-
-    public function cancelRide(Request $r, int $ride)
-    {
-        $data = $r->validate([
-            'reason' => 'nullable|string|max:160',
-        ]);
-
-        $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
-
-        return DB::transaction(function () use ($tenantId, $ride, $data) {
-
-            // Lock del ride de este tenant
-            $row = DB::table('rides')
-                ->where('tenant_id', $tenantId)
-                ->where('id', $ride)
-                ->lockForUpdate()
-                ->first();
-
-            if (!$row) return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'], 404);
-
-            $status = strtolower($row->status ?? '');
-            if (in_array($status, ['finished','canceled'])) {
-                // idempotente
-                return response()->json(['ok'=>true]);
-            }
-
-            // 1) Ride -> canceled
-            DB::table('rides')
-                ->where('tenant_id', $tenantId)
-                ->where('id', $ride)
-                ->update([
-                    'status'        => 'canceled',
-                    'canceled_at'   => now(),
-                    'cancel_reason' => $data['reason'] ?? null,
-                    'canceled_by'   => 'ops',
-                    'updated_at'    => now(),
-                ]);
-
-            // 2) Historial
-            DB::table('ride_status_history')->insert([
-                'tenant_id'   => $tenantId,
-                'ride_id'     => $ride,
-                'prev_status' => $status,
-                'new_status'  => 'canceled',
-                'meta'        => json_encode(['reason'=>$data['reason'] ?? null, 'by'=>'ops']),
-                'created_at'  => now(),
-                'updated_at'  => now(),
+        if (!empty($row->driver_id)) {
+            \App\Services\Realtime::toDriver($tenantId, (int)$row->driver_id)->emit('ride.canceled', [
+                'ride_id'=>(int)$ride, 'reason'=>$data['reason'] ?? null
             ]);
+        }
 
-            // 3) Si tenía driver, regresarlo a idle
-            if (!empty($row->driver_id)) {
-                DB::table('drivers')
-                  ->where('tenant_id', $tenantId)
-                  ->where('id', $row->driver_id)
-                  ->update(['status'=>'idle','updated_at'=>now()]);
-            }
+        return response()->json(['ok'=>true]);
+    });
+}
 
-            // 4) Cerrar ofertas vivas de este ride
-            DB::table('ride_offers')
-              ->where('tenant_id', $tenantId)
-              ->where('ride_id', $ride)
-              ->where('status','offered')
-              ->update(['status'=>'released','responded_at'=>now(),'updated_at'=>now()]);
-
-            // (Opcional) marcar aceptadas como 'canceled' para rastro
-            // DB::table('ride_offers')
-            //   ->where('tenant_id',$tenantId)->where('ride_id',$ride)
-            //   ->where('status','accepted')
-            //   ->update(['status'=>'canceled','responded_at'=>now(),'updated_at'=>now()]);
-
-            return response()->json(['ok'=>true]);
-        });
-    }
 
 
 

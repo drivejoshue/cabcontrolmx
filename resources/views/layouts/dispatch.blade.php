@@ -14,6 +14,9 @@
 
   {{-- Hoja dinámica (light/dark) de AdminKit --}}
   <link id="themeStylesheet" rel="stylesheet" href="{{ Vite::asset('resources/css/adminkit/light.css') }}">
+
+
+  
   @vite('resources/css/app.css')
   @stack('styles')
 

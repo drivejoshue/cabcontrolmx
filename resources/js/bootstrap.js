@@ -1,38 +1,67 @@
-import Echo from 'laravel-echo';
+import Echo from 'laravel-echo'
+import Pusher from 'pusher-js'
 
-console.log('🔄 Inicializando Echo...');
-console.log('REVERB_HOST:', import.meta.env.VITE_REVERB_HOST);
-console.log('REVERB_PORT:', import.meta.env.VITE_REVERB_PORT);
-console.log('REVERB_APP_KEY:', import.meta.env.VITE_REVERB_APP_KEY);
+window.Pusher = Pusher
+// Activar logs para debugging
+window.Pusher.logToConsole = true
 
+console.log('📍 Dispatch - Origen actual:', window.location.origin)
+console.log('🔗 Dispatch - Hostname:', window.location.hostname)
+
+console.log('🔄 Dispatch - Inicializando Echo...')
+console.log('REVERB_HOST:', import.meta.env.VITE_REVERB_HOST)
+console.log('REVERB_PORT:', import.meta.env.VITE_REVERB_PORT)
+console.log('REVERB_SCHEME:', import.meta.env.VITE_REVERB_SCHEME)
+console.log('REVERB_APP_KEY:', import.meta.env.VITE_REVERB_APP_KEY)
+
+const host = import.meta.env.VITE_REVERB_HOST
+const port = Number(import.meta.env.VITE_REVERB_PORT)
+const scheme = import.meta.env.VITE_REVERB_SCHEME
+
+console.log('🔧 Dispatch - Configuración final:', { host, port, scheme })
+
+// Configuración de Echo para el Dispatch
 window.Echo = new Echo({
-    broadcaster: 'reverb',
-    key: import.meta.env.VITE_REVERB_APP_KEY || 'localkey',
-    wsHost: import.meta.env.VITE_REVERB_HOST || '127.0.0.1',
-    wsPort: Number(import.meta.env.VITE_REVERB_PORT || 8080),
-    wssPort: Number(import.meta.env.VITE_REVERB_PORT || 8080),
-    forceTLS: false,
-    enabledTransports: ['ws', 'wss'],
-});
+  broadcaster: 'reverb',
+  key: import.meta.env.VITE_REVERB_APP_KEY,
+  wsHost: host,
+  wsPort: port,
+  wssPort: port,
+  forceTLS: scheme === 'https',
+  enabledTransports: ['ws', 'wss'],
+  enableStats: false,
+})
 
-// Debug de conexión
+// Logs de conexión para debugging
+window.Echo.connector.pusher.connection.bind('connecting', () => {
+  console.log('🔄 Dispatch - Conectando a Reverb...')
+})
+
 window.Echo.connector.pusher.connection.bind('connected', () => {
-    console.log('✅ CONECTADO a Reverb correctamente');
-});
+  console.log('✅ Dispatch - CONECTADO a Reverb correctamente')
+})
+
+window.Echo.connector.pusher.connection.bind('failed', (error) => {
+  console.log('❌ Dispatch - FALLO la conexión:', error)
+})
 
 window.Echo.connector.pusher.connection.bind('error', (error) => {
-    console.log('❌ ERROR de conexión:', error);
-});
+  console.log('💥 Dispatch - ERROR de conexión:', error)
+})
 
-// Suscribir al canal
-const channel = window.Echo.channel('public-test');
-console.log('📡 Suscrito al canal: public-test');
+window.Echo.connector.pusher.connection.bind('state_change', (states) => {
+  console.log('🔄 Dispatch - Estado cambiado:', states.previous, '->', states.current)
+})
 
-channel.listen('.TestEvent', (e) => {
-    console.log('🎉 EVENTO RECIBIDO:', e);
-});
+// Solo para testing - escuchar eventos públicos
+const publicChannel = window.Echo.channel('public-test')
+console.log('📡 Dispatch - Suscrito al canal público: public-test')
 
-// También escuchar todos los eventos para debug
-channel.listenToAll((event, data) => {
-    console.log('🔍 TODOS LOS EVENTOS:', event, data);
-});
+publicChannel.listen('.TestEvent', (e) => {
+  console.log('🎉 Dispatch - EVENTO RECIBIDO:', e)
+})
+
+// También puedes escuchar los eventos que envías para verificar
+publicChannel.listenToAll((event, data) => {
+  console.log('🔍 Dispatch - Evento global:', event, data)
+})

@@ -88,7 +88,7 @@ class QueueController extends Controller
         if ($off) {
             OfferBroadcaster::queueRemove((int)$tenantId, (int)$driverId, (int)$off->ride_id);
         }
-
+        
         return response()->json(['ok' => true]);
     }
 

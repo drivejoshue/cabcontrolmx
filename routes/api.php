@@ -16,6 +16,11 @@ use App\Http\Controllers\Api\QueueController;
 use App\Http\Controllers\Admin\DispatchBoardsController;
 use App\Http\Controllers\Api\DriverVehiclesController;
 use App\Http\Controllers\Admin\DispatchSettingsController;
+use App\Http\Controllers\Api\PassengerAuthController;
+use App\Http\Controllers\Api\PassengerRideController;
+use App\Http\Controllers\Api\PassengerAppQuoteController; // 👈 IMPORTANTE
+
+use App\Http\Controllers\Api\RatingController;
 use Illuminate\Http\Request;
 use App\Events\DriverEvent;
 
@@ -51,6 +56,35 @@ Route::post('/test-driver-event', function (Request $request) {
         'driver_id' => $driver->id
     ]);
 });
+
+// ==== APP PASAJERO ====
+Route::prefix('passenger')->group(function () {
+    // Quote para app pasajero (usa PassengerAppQuoteController)
+    Route::post('/quote', [PassengerAppQuoteController::class, 'quote']);
+
+    // Crear ride desde app pasajero (cuando ya tengamos el flujo)
+    Route::post('/rides', [PassengerRideController::class, 'store']);
+    // luego: /rides/active, /rides/history, etc.
+
+     Route::post('/rides/{ride}/accept-offer', [PassengerRideController::class, 'acceptOffer']);
+    Route::post('/rides/{ride}/reject-offer', [PassengerRideController::class, 'rejectOffer']);
+
+        Route::post('/rides/{ride}/cancel', [PassengerRideController::class, 'cancel']);
+
+
+
+
+});
+
+// Calificaciones
+Route::post('/ratings', [RatingController::class, 'store']);
+Route::get('/ratings/driver/{driverId}', [RatingController::class, 'getDriverRatings']);
+Route::get('/ratings/passenger/{passengerId}', [RatingController::class, 'getPassengerRatings']);
+Route::get('/ratings/ride/{rideId}', [RatingController::class, 'getRideRatings']);
+
+// Auth pasajero (Firebase sync)
+Route::post('/passenger/auth-sync', [PassengerAuthController::class, 'syncFromFirebase']);
+
 /* =========== DISPATCH (panel) =========== */
 Route::post('/dispatch/quote', [DispatchController::class, 'quote'])->name('api.dispatch.quote');
 Route::post('/dispatch/tick',  [DispatchController::class, 'tick']);
@@ -100,7 +134,7 @@ Route::prefix('rides')->group(function () {
     Route::patch('{ride}/stops', [RideController::class,'updateStops']);
 });
 
-/* =========== PASAJEROS =========== */
+/* =========== PASAJEROS (panel) =========== */
 Route::get('/passengers/last-ride', [PassengerController::class, 'lastRide']);
 Route::get('/passengers/lookup',    [PassengerController::class, 'lookup']);
 
@@ -113,7 +147,8 @@ Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
     Route::post('/shifts/finish', [DriverShiftController::class, 'finish']);
 
     Route::get ('/offers',                 [OfferController::class, 'index']);
-        Route::get('/offers/{offer}', [OfferController::class,'show']);   // ← NUEVO
+    Route::get('/offers/{offer}', [OfferController::class,'show']);   // ← NUEVO
+    Route::get ('/offers/debug',          [OfferController::class, 'debugServerTime']);
 
     Route::post('/offers/{offer}/accept',  [OfferController::class, 'accept']);
     Route::post('/offers/{offer}/reject',  [OfferController::class, 'reject']);
@@ -136,6 +171,8 @@ Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
     Route::get   ('/queue',         [QueueController::class, 'index']);
     Route::post  ('/queue/promote', [QueueController::class, 'promote']);
     Route::delete('/queue/{offer}', [QueueController::class, 'drop']);
+    Route::post('/offers/{offer}/bid', [OfferController::class, 'bid']);
+
     Route::delete('/queue',         [QueueController::class, 'clearAll']);
 
     // ==== TAXI STAND (BASE) ====

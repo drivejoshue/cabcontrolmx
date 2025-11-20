@@ -1,3 +1,124 @@
+rating
+-- Crear tabla ratings
+CREATE TABLE `ratings` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tenant_id` int(10) UNSIGNED NOT NULL DEFAULT '1',
+  `ride_id` bigint(20) UNSIGNED NOT NULL,
+  `rater_type` enum('passenger','driver') NOT NULL,
+  `rater_id` bigint(20) UNSIGNED NOT NULL,
+  `rated_type` enum('passenger','driver') NOT NULL,
+  `rated_id` bigint(20) UNSIGNED NOT NULL,
+  `rating` tinyint(3) UNSIGNED NOT NULL,
+  `comment` text COLLATE utf8mb4_unicode_ci,
+  `punctuality` tinyint(3) UNSIGNED DEFAULT NULL,
+  `courtesy` tinyint(3) UNSIGNED DEFAULT NULL,
+  `vehicle_condition` tinyint(3) UNSIGNED DEFAULT NULL,
+  `driving_skills` tinyint(3) UNSIGNED DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `ratings_tenant_id_ride_id_index` (`tenant_id`,`ride_id`),
+  KEY `ratings_tenant_id_rater_type_rater_id_index` (`tenant_id`,`rater_type`,`rater_id`),
+  KEY `ratings_tenant_id_rated_type_rated_id_index` (`tenant_id`,`rated_type`,`rated_id`),
+  KEY `ratings_tenant_id_created_at_index` (`tenant_id`,`created_at`),
+  KEY `ratings_ride_id_foreign` (`ride_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Agregar foreign key constraint
+ALTER TABLE `ratings`
+  ADD CONSTRAINT `ratings_ride_id_foreign` 
+  FOREIGN KEY (`ride_id`) 
+  REFERENCES `rides` (`id`) 
+  ON DELETE CASCADE;
+-- Índice adicional para búsquedas por combinación única
+ALTER TABLE `ratings` 
+ADD UNIQUE KEY `ratings_ride_rater_rated_unique` 
+(`ride_id`, `rater_type`, `rated_type`);
+
+-- Crear vista para promedio de ratings de drivers
+CREATE VIEW driver_ratings_summary AS
+SELECT 
+    rated_id as driver_id,
+    tenant_id,
+    COUNT(*) as total_ratings,
+    ROUND(AVG(rating), 1) as average_rating,
+    ROUND(AVG(punctuality), 1) as avg_punctuality,
+    ROUND(AVG(courtesy), 1) as avg_courtesy,
+    ROUND(AVG(vehicle_condition), 1) as avg_vehicle_condition,
+    ROUND(AVG(driving_skills), 1) as avg_driving_skills
+FROM ratings 
+WHERE rated_type = 'driver' 
+GROUP BY rated_id, tenant_id;
+
+-- Crear vista para promedio de ratings de passengers
+CREATE VIEW passenger_ratings_summary AS
+SELECT 
+    rated_id as passenger_id,
+    tenant_id,
+    COUNT(*) as total_ratings,
+    ROUND(AVG(rating), 1) as average_rating,
+    ROUND(AVG(punctuality), 1) as avg_punctuality,
+    ROUND(AVG(courtesy), 1) as avg_courtesy
+FROM ratings 
+WHERE rated_type = 'passenger' 
+GROUP BY rated_id, tenant_id;
+
+-- Insertar calificación de ejemplo (passenger calificando driver)
+INSERT INTO `ratings` (
+  `tenant_id`, `ride_id`, `rater_type`, `rater_id`, 
+  `rated_type`, `rated_id`, `rating`, `comment`,
+  `punctuality`, `courtesy`, `vehicle_condition`, `driving_skills`,
+  `created_at`, `updated_at`
+) VALUES (
+  1, 1, 'passenger', 1,
+  'driver', 1, 5, 'Excelente servicio, muy puntual',
+  5, 5, 4, 5,
+  NOW(), NOW()
+);
+
+-- Insertar calificación de ejemplo (driver calificando passenger)
+INSERT INTO `ratings` (
+  `tenant_id`, `ride_id`, `rater_type`, `rater_id`, 
+  `rated_type`, `rated_id`, `rating`, `comment`,
+  `punctuality`, `courtesy`,
+  `created_at`, `updated_at`
+) VALUES (
+  1, 1, 'driver', 1,
+  'passenger', 1, 4, 'Pasajero amable y puntual',
+  5, 4,
+  NOW(), NOW()
+);
+
+-- Consultar calificaciones de un driver
+SELECT r.*, rides.passenger_name, rides.passenger_phone
+FROM ratings r
+JOIN rides ON rides.id = r.ride_id
+WHERE r.rated_type = 'driver' 
+AND r.rated_id = 1 
+AND r.tenant_id = 1
+ORDER BY r.created_at DESC;
+
+-- Obtener promedio de un driver
+SELECT 
+    rated_id as driver_id,
+    COUNT(*) as total_ratings,
+    ROUND(AVG(rating), 1) as average_rating,
+    ROUND(AVG(punctuality), 1) as avg_punctuality,
+    ROUND(AVG(courtesy), 1) as avg_courtesy,
+    ROUND(AVG(vehicle_condition), 1) as avg_vehicle_condition,
+    ROUND(AVG(driving_skills), 1) as avg_driving_skills
+FROM ratings 
+WHERE rated_type = 'driver' 
+AND rated_id = 1
+AND tenant_id = 1;
+
+-- Verificar si ya existe calificación para un ride
+SELECT COUNT(*) as exists_rating 
+FROM ratings 
+WHERE ride_id = 1 
+AND rater_type = 'passenger' 
+AND rated_type = 'driver';
+
  minimapa reporte index 
 
  <div class="map-mini"

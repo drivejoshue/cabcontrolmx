@@ -126,6 +126,12 @@ $tenantId = auth()->check() ? (auth()->user()->tenant_id ?? 1) : 1;
           <span class="align-middle">Conductores</span>
         </a>
       </li>
+      <li class="sidebar-item {{ $is('ratings.*') }}">
+    <a class="sidebar-link" href="{{ Route::has('ratings.index') ? route('ratings.index') : url('/ratings/reports') }}">
+        <i class="align-middle" data-feather="star"></i>
+        <span class="align-middle">Calificaciones</span>
+    </a>
+</li>
 
       <li class="sidebar-item {{ $is('admin.reports.revenue*') }}">
         <a class="sidebar-link"

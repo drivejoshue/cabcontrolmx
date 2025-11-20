@@ -22,6 +22,9 @@ use App\Http\Controllers\Api\SectorController as ApiSectorController;
 use App\Http\Controllers\Api\TaxiStandController as ApiTaxiStandController;
 use App\Http\Controllers\Admin\Reports\RidesReportController;
 use App\Http\Controllers\Api\QueueController;
+use App\Http\Controllers\Api\RatingReportController;
+use App\Support\Broadcast\OfferBroadcaster;
+use App\Events\TestEvent;
 
 Route::redirect('/', '/login');
 
@@ -40,7 +43,25 @@ Route::post('/logout', function (Request $request) {
 | Admin (web + auth)
 |--------------------------------------------------------------------------
 */
+
+Route::get('/debug/driver/{tenant}/{driver}/offer', function (int $tenant, int $driver) {
+    $payload = [
+        'offer_id'   => 123,
+        'ride_id'    => 456,
+        'fare'       => 72.50,
+        'pickup'     => ['lat'=>19.43,'lng'=>-99.13,'label'=>'Zócalo'],
+        'dropoff'    => ['lat'=>19.40,'lng'=>-99.16,'label'=>'Condesa'],
+        'expires_in' => 25, // seg
+    ];
+    OfferBroadcaster::new($tenant, $driver, $payload);
+    return ['ok'=>true, 'sent'=>'offers.new', 'tenant'=>$tenant, 'driver'=>$driver];
+});
+
 Route::middleware(['auth'])->group(function () {
+
+    // Rutas para reportes de ratings
+Route::get('/ratings/reports', [RatingReportController::class, 'index'])->name('ratings.index');
+Route::get('/ratings/driver/{driverId}', [RatingReportController::class, 'showDriver'])->name('ratings.show');
 
     // Dashboard & Dispatch
     Route::get('/admin',           [DashboardController::class, 'index'])->name('admin.dashboard');
@@ -123,7 +144,32 @@ Route::middleware(['auth'])->group(function () {
 
 });
 
+Route::get('/dispatch/test-driver/{tenantId}/{driverId}', function ($tenantId, $driverId) {
+    \Log::info("🧪 TEST EVENT - Specific driver", [
+        'tenant_id' => $tenantId,
+        'driver_id' => $driverId
+    ]);
 
+    broadcast(new \App\Events\DriverEvent(
+        tenantId: $tenantId,
+        driverId: $driverId,
+        type: 'TestEvent',
+        payload: [
+            'message' => 'Test específico desde Dispatch',
+            'tenant_id' => $tenantId,
+            'driver_id' => $driverId,
+            'timestamp' => now()->toDateTimeString()
+        ]
+    ));
+
+    return response()->json([
+        'sent' => true,
+        'tenant_id' => $tenantId,
+        'driver_id' => $driverId,
+        'channel' => "tenant.{$tenantId}.driver.{$driverId}",
+        'message' => 'Evento enviado correctamente'
+    ]);
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -146,6 +192,13 @@ Route::prefix('api')
 Route::get('/dashboard', fn () => redirect()->route('admin.dashboard'))
     ->middleware('auth')
     ->name('dashboard');
+
+
+
+Route::get('/debug/test-event', function () {
+    event(new TestEvent('Hola desde Laravel @ '.now()));
+    return ['ok' => true];
+});
 
 /*
 |--------------------------------------------------------------------------
