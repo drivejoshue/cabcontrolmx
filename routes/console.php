@@ -6,7 +6,8 @@ use App\Http\Controllers\Admin\RideAdminController;
 use Illuminate\Support\Facades\Schedule;
 use App\Services\ScheduledRidesService;
 use App\Services\OfferBroadcaster;
-
+use Illuminate\Support\Facades\Schedule;
+use App\Console\Commands\TenantsBill;
 // Corre cada minuto
 Schedule::call(function () {
     $now = now();
@@ -85,3 +86,9 @@ Schedule::call(function () {
 ->everyMinute()
 ->name('offers.expire')
 ->withoutOverlapping();
+
+// O por firma:
+Schedule::command('tenants:bill')->dailyAt('03:00');
+
+// O por clase:
+Schedule::command(TenantsBill::class)->dailyAt('03:00');

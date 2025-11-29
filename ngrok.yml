@@ -1,0 +1,17 @@
+version: "2"
+authtoken: 2kWurtJUqX8GmRbZLkzeklgypIY_WjZVDsKRMFsoAe7N5JRC
+tunnels:
+  frontend:
+    addr: 8080
+    proto: http
+    hostname: orbana-app.ngrok-free.dev
+    
+  reverb:
+    addr: 6001
+    proto: http
+    hostname: orbana-ws.ngrok-free.dev
+    
+  api:
+    addr: 8000
+    proto: http
+    hostname: orbana-api.ngrok-free.dev

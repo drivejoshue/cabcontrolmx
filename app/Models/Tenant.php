@@ -14,4 +14,16 @@ protected $casts = [
  'coverage_radius_km' => 'float',
 'longitud' => 'float',
 ];
+
+public function billingProfile()
+{
+    return $this->hasOne(TenantBillingProfile::class);
+}
+
+public function invoices()
+{
+    return $this->hasMany(TenantInvoice::class);
+}
+
+
 }

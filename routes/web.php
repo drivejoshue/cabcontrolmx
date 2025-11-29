@@ -13,7 +13,7 @@ use App\Http\Controllers\Admin\VehicleController;
 use App\Http\Controllers\Admin\DriverController;
 
 // ✨ Nuevos controladores (admin)
-use App\Http\Controllers\Admin\TenantController;
+//use App\Http\Controllers\Admin\TenantController;
 use App\Http\Controllers\Admin\DispatchSettingsController;
 use App\Http\Controllers\Admin\TenantFarePolicyController;
 
@@ -25,6 +25,14 @@ use App\Http\Controllers\Api\QueueController;
 use App\Http\Controllers\Api\RatingReportController;
 use App\Support\Broadcast\OfferBroadcaster;
 use App\Events\TestEvent;
+
+use App\Http\Controllers\SysAdmin\TenantController;
+use App\Http\Controllers\SysAdmin\TenantBillingController;
+use App\Http\Controllers\SysAdmin\TenantInvoiceController;
+use App\Http\Controllers\SysAdmin\VehicleDocumentController;
+use App\Http\Controllers\SysAdmin\TenantCommissionReportController;
+use App\Http\Controllers\SysAdmin\DashboardController as SysAdminDashboardController;
+
 
 Route::redirect('/', '/login');
 
@@ -140,6 +148,47 @@ Route::get('/ratings/driver/{driverId}', [RatingReportController::class, 'showDr
     Route::get ('/admin/reportes/viajes/{ride}',    [RidesReportController::class, 'show'])->name('admin.reports.rides.show');
     Route::get ('/admin/reportes/viajes.csv',       [RidesReportController::class, 'exportCsv'])->name('admin.reports.rides.csv');
     });
+
+
+
+Route::prefix('sysadmin')
+    ->middleware(['auth','can:sysadmin']) // o tu middleware propio
+    ->group(function () {
+
+      
+
+
+        // Tenants (registro y edición)
+        Route::get('tenants', [TenantController::class, 'index'])->name('sysadmin.tenants.index');
+        Route::get('tenants/create', [TenantController::class, 'create'])->name('sysadmin.tenants.create');
+        Route::post('tenants', [TenantController::class, 'store'])->name('sysadmin.tenants.store');
+        Route::get('tenants/{tenant}/edit', [TenantController::class, 'edit'])->name('sysadmin.tenants.edit');
+        Route::post('tenants/{tenant}', [TenantController::class, 'update'])->name('sysadmin.tenants.update');
+
+        // Billing de tenant (ya lo teníamos)
+        Route::get('tenants/{tenant}/billing', [TenantBillingController::class, 'show'])->name('sysadmin.tenants.billing.show');
+        Route::post('tenants/{tenant}/billing', [TenantBillingController::class, 'update'])->name('sysadmin.tenants.billing.update');
+
+        // Facturas de tenants
+        Route::get('invoices', [TenantInvoiceController::class, 'index'])->name('sysadmin.invoices.index');
+        Route::get('invoices/{invoice}', [TenantInvoiceController::class, 'show'])->name('sysadmin.invoices.show');
+
+        // Documentos de vehículos (ya los teníamos)
+        Route::get('tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'index'])
+            ->name('sysadmin.vehicles.documents.index');
+        Route::post('tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'store'])
+            ->name('sysadmin.vehicles.documents.store');
+        Route::post('vehicle-documents/{document}/review', [VehicleDocumentController::class, 'review'])
+            ->name('sysadmin.vehicle-documents.review');
+        Route::get('vehicle-documents/{document}/download', [VehicleDocumentController::class, 'download'])
+            ->name('sysadmin.vehicle-documents.download');
+             Route::get('tenants/{tenant}/reports/commissions', [TenantCommissionReportController::class, 'index'])
+            ->name('sysadmin.tenants.reports.commissions');
+         Route::get('/', [SysAdminDashboardController::class, 'index'])
+            ->name('sysadmin.dashboard');
+
+
+    });
   
 
 });
@@ -205,4 +254,7 @@ Route::get('/debug/test-event', function () {
 | Auth scaffolding (Breeze)
 |--------------------------------------------------------------------------
 */
+
+
+
 require __DIR__ . '/auth.php';

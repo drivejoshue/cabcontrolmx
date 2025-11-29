@@ -24,6 +24,14 @@ class Driver extends Model
      public function user()   { return $this->belongsTo(\App\Models\User::class); }
     public function tenant() { return $this->belongsTo(\App\Models\Tenant::class); }
 
+public function wallet()
+{
+    return $this->hasOne(DriverWallet::class);
+}
 
+public function walletMovements()
+{
+    return $this->hasMany(DriverWalletMovement::class);
+}
 
 }

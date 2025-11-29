@@ -3,14 +3,26 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\OfferBroadcaster;
 use App\Services\RideBroadcaster;
 use App\Services\Realtime;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use App\Services\DriverWalletService;
+use App\Models\Ride;
+
 
 class RideController extends Controller
-{
+{   
+     protected DriverWalletService $walletService;
+
+    public function __construct(DriverWalletService $walletService)
+    {
+        $this->walletService = $walletService;
+    }
+
     /** Helper tenant */
     private function tenantIdFrom(Request $req): int
     {
@@ -218,143 +230,82 @@ class RideController extends Controller
     // POST /api/rides/{ride}/stops/complete
     // private function commitStatusChange
 
+    /** POST /api/rides */
+    public function store(Request $req)
+    {
+        $data = $req->validate([
+            'passenger_name'  => 'nullable|string|max:120',
+            'passenger_phone' => 'nullable|string|max:40',
 
+            'origin_label' => 'nullable|string|max:160',
+            'origin_lat'   => 'required|numeric',
+            'origin_lng'   => 'required|numeric',
 
-public function store(Request $req)
-{
-    $data = $req->validate([
-        'passenger_name'  => 'nullable|string|max:120',
-        'passenger_phone' => 'nullable|string|max:40',
+            'dest_label' => 'nullable|string|max:160',
+            'dest_lat'   => 'nullable|numeric',
+            'dest_lng'   => 'nullable|numeric',
 
-        'origin_label' => 'nullable|string|max:160',
-        'origin_lat'   => 'required|numeric',
-        'origin_lng'   => 'required|numeric',
+            'stops'          => 'nullable|array|max:2',
+            'stops.*.lat'    => 'required_with:stops|numeric',
+            'stops.*.lng'    => 'required_with:stops|numeric',
+            'stops.*.label'  => 'nullable|string|max:160',
 
-        'dest_label' => 'nullable|string|max:160',
-        'dest_lat'   => 'nullable|numeric',
-        'dest_lng'   => 'nullable|numeric',
+            'payment_method'   => 'nullable|in:cash,transfer,card,corp',
+            'fare_mode'        => 'nullable|in:meter,fixed',
+            'notes'            => 'nullable|string|max:500',
+            'pax'              => 'nullable|integer|min:1|max:10',
+            'scheduled_for'    => 'nullable|date',
 
-        'stops'          => 'nullable|array|max:2',
-        'stops.*.lat'    => 'required_with:stops|numeric',
-        'stops.*.lng'    => 'required_with:stops|numeric',
-        'stops.*.label'  => 'nullable|string|max:160',
+            'quoted_amount'     => 'nullable|numeric',
+            'distance_m'        => 'nullable|integer',
+            'duration_s'        => 'nullable|integer',
+            'route_polyline'    => 'nullable|string',
+            'requested_channel' => 'nullable|in:dispatch,passenger_app,driver_app,api',
+        ]);
 
-        'payment_method'   => 'nullable|in:cash,transfer,card,corp',
-        'fare_mode'        => 'nullable|in:meter,fixed',
-        'notes'            => 'nullable|string|max:500',
-        'pax'              => 'nullable|integer|min:1|max:10',
-        'scheduled_for'    => 'nullable|date',
+        $tenantId = $this->tenantIdFrom($req);
 
-        'quoted_amount'     => 'nullable|numeric',
-        'distance_m'        => 'nullable|integer',
-        'duration_s'        => 'nullable|integer',
-        'route_polyline'    => 'nullable|string',
-        'requested_channel' => 'nullable|in:dispatch,passenger_app,driver_app,api',
-    ]);
+        if (array_key_exists('quoted_amount', $data) && $data['quoted_amount'] !== null) {
+            $data['fare_mode'] = 'fixed';
+        }
 
-    $tenantId = $this->tenantIdFrom($req);
+        $ride = app(\App\Services\CreateRideService::class)->create($data, $tenantId);
 
-    // Si viene quoted_amount, forzamos fare_mode = fixed
-    if (array_key_exists('quoted_amount', $data) && $data['quoted_amount'] !== null) {
-        $data['fare_mode'] = 'fixed';
-    }
+        // Stops (conserva label)
+        $stops = $data['stops'] ?? [];
+        if (!empty($stops)) {
+            $stops = array_values(array_slice(array_map(function ($s) {
+                return [
+                    'lat'   => isset($s['lat'])   ? (float)$s['lat']   : null,
+                    'lng'   => isset($s['lng'])   ? (float)$s['lng']   : null,
+                    'label' => isset($s['label']) ? (trim((string)$s['label']) ?: null) : null,
+                ];
+            }, $stops), 0, 2));
 
-    /** @var \App\Models\Ride $ride */
-    $ride = app(\App\Services\CreateRideService::class)->create($data, $tenantId);
+            DB::table('rides')
+                ->where('tenant_id', $tenantId)->where('id', $ride->id)
+                ->update([
+                    'stops_json'  => json_encode($stops),
+                    'stops_count' => count($stops),
+                    'stop_index'  => 0,
+                    'updated_at'  => now(),
+                ]);
 
-    // ----------------------------
-    // Stops (se mantienen igual)
-    // ----------------------------
-    $stops = $data['stops'] ?? [];
-    if (!empty($stops)) {
-        $stops = array_values(array_slice(array_map(function ($s) {
-            return [
-                'lat'   => isset($s['lat'])   ? (float)$s['lat']   : null,
-                'lng'   => isset($s['lng'])   ? (float)$s['lng']   : null,
-                'label' => isset($s['label']) ? (trim((string)$s['label']) ?: null) : null,
-            ];
-        }, $stops), 0, 2));
+            app(\App\Services\QuoteRecalcService::class)->recalcWithStops($ride->id, $tenantId);
 
-        DB::table('rides')
-            ->where('tenant_id', $tenantId)->where('id', $ride->id)
-            ->update([
-                'stops_json'  => json_encode($stops),
-                'stops_count' => count($stops),
-                'stop_index'  => 0,
+            DB::table('ride_status_history')->insert([
+                'tenant_id'   => $tenantId,
+                'ride_id'     => $ride->id,
+                'prev_status' => null,
+                'new_status'  => 'stops_set',
+                'meta'        => json_encode(['count' => count($stops), 'stops' => $stops]),
+                'created_at'  => now(),
                 'updated_at'  => now(),
             ]);
-
-        app(\App\Services\QuoteRecalcService::class)->recalcWithStops($ride->id, $tenantId);
-
-        DB::table('ride_status_history')->insert([
-            'tenant_id'   => $tenantId,
-            'ride_id'     => $ride->id,
-            'prev_status' => null,
-            'new_status'  => 'stops_set',
-            'meta'        => json_encode(['count' => count($stops), 'stops' => $stops]),
-            'created_at'  => now(),
-            'updated_at'  => now(),
-        ]);
-    }
-
-    // ==========================================
-    // 🔥 Auto-wave inmediata para passenger_app
-    // ==========================================
-    try {
-        // Canal real: primero lo que vino en el request, si no lo que quedó en el ride
-        $channel = $data['requested_channel'] ?? $ride->requested_channel ?? null;
-
-        // Solo si es app de pasajero y NO es programado
-        if ($channel === 'passenger_app'
-            && empty($data['scheduled_for'])
-            && empty($ride->scheduled_for)
-        ) {
-            $settings = \App\Services\AutoDispatchService::settings($tenantId);
-
-            $km       = (float)($settings->radius_km ?? 5);
-            $expires  = (int)  ($settings->expires_s  ?? 180);
-            $limitN   = (int)  ($settings->limit_n    ?? 6);
-            $autoSingle = (bool)($settings->auto_assign_if_single ?? false);
-
-            $result = \App\Services\AutoDispatchService::kickoff(
-                tenantId: $tenantId,
-                rideId:   (int)$ride->id,
-                lat:      (float)$ride->origin_lat,
-                lng:      (float)$ride->origin_lng,
-                km:       $km,
-                expires:  $expires,
-                limitN:   $limitN,
-                autoAssignIfSingle: $autoSingle,
-            );
-
-            // si quieres ver en logs:
-            \Log::info('Auto-dispatch passenger_app kickoff', [
-                'ride_id' => $ride->id,
-                'tenant_id' => $tenantId,
-                'settings' => [
-                    'km' => $km,
-                    'expires' => $expires,
-                    'limit_n' => $limitN,
-                    'auto_assign_if_single' => $autoSingle,
-                ],
-                'result' => $result,
-            ]);
-
-            // opcional: regresarlo en la respuesta
-            $ride->auto_dispatch = $result;
         }
-    } catch (\Throwable $e) {
-        \Log::error('Auto-dispatch passenger_app FAILED', [
-            'ride_id'   => $ride->id ?? null,
-            'tenant_id' => $tenantId,
-            'msg'       => $e->getMessage(),
-        ]);
-        // No rompemos el flujo del pasajero: igual regresa 201
+
+        return response()->json($ride, 201);
     }
-
-    return response()->json($ride, 201);
-}
-
 
     /** PATCH /api/rides/{ride}/stops  (panel) */
     public function updateStops(Request $req, int $ride)
@@ -478,6 +429,8 @@ public function store(Request $req)
 
         // 3) Emitir
         RideBroadcaster::finished($tenantId, $ride, $snap->total_amount ?? $snap->quoted_amount ?? null);
+         // 👇 Aquí invocamos el cobro de comisión para tenant global
+        $this->walletService->handleRideFinished($ride);
 
         try {
             if ($mode === 'promoted' && $next) {
@@ -623,19 +576,349 @@ public function store(Request $req)
     }
 
 
-    /** GET /api/rides/{ride}/ratings - Obtener calificaciones del ride */
-public function getRatings(Request $req, int $ride)
+   public function confirmAcceptance(Request $req, int $rideId)
 {
-    $tenantId = $this->tenantIdFrom($req);
-
-    $ratings = DB::table('ratings')
-        ->where('tenant_id', $tenantId)
-        ->where('ride_id', $ride)
-        ->get();
-
-    return response()->json([
-        'ok' => true,
-        'ratings' => $ratings
+    $v = $req->validate([
+        'tenant_id' => 'required|integer',
+        'driver_id' => 'required|integer',
+        'offer_id'  => 'required|integer',
     ]);
+
+    $tenantId = (int)$v['tenant_id'];
+    $driverId = (int)$v['driver_id'];
+
+    // Verificar que el driver es el ganador
+    $rideRow = DB::table('rides')
+        ->where('id', $rideId)
+        ->where('tenant_id', $tenantId)
+        ->where('driver_id', $driverId)
+        ->first();
+
+    if (!$rideRow) {
+        return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
+    }
+
+    // Enviar primera ubicación del driver
+    $driverLocation = DB::table('driver_locations')
+        ->where('driver_id', $driverId)
+        ->where('tenant_id', $tenantId)
+        ->orderByDesc('id')
+        ->first();
+
+    if ($driverLocation) {
+        RideBroadcaster::location(
+            $tenantId,
+            (int)$rideRow->id,
+            (float)$driverLocation->lat,
+            (float)$driverLocation->lng,
+            $driverLocation->bearing ? (float)$driverLocation->bearing : null
+        );
+    }
+  // Reutilizamos el mismo flujo
+    RideBroadcaster::bootstrapLocationAndRoute($tenantId, $rideId, $driverId);
+
+   
+
+    return response()->json(['ok' => true]);
 }
+
+protected function broadcastDriverToPickupRoute(int $tenantId, int $rideId, int $driverId): void
+{
+    $ride = DB::table('rides')->where('id', $rideId)
+        ->where('tenant_id', $tenantId)
+        ->first();
+
+    if (!$ride || !$ride->origin_lat || !$ride->origin_lng) {
+        return;
+    }
+
+    $driverLocation = DB::table('driver_locations')
+        ->where('driver_id', $driverId)
+        ->where('tenant_id', $tenantId)
+        ->orderByDesc('id')
+        ->first();
+
+    if (!$driverLocation) {
+        return;
+    }
+
+    // Llamas a tu servicio de rutas (Google/OSRM)
+    $route = app(\App\Services\RouteEstimator::class)
+        ->estimate(
+            originLat:  (float)$driverLocation->lat,
+            originLng:  (float)$driverLocation->lng,
+            destLat:    (float)$ride->origin_lat,
+            destLng:    (float)$ride->origin_lng,
+        );
+
+    if (!$route || empty($route->polyline)) {
+        return;
+    }
+
+    RideBroadcaster::driverToPickupRoute(
+        $tenantId,
+        $rideId,
+        $route->polyline,
+        $route->distance_m,
+        $route->duration_s,
+    );
 }
+
+
+    public function driverCardForPassenger(Request $r, int $ride)
+    {
+        $tenantId    = (int)($r->input('tenant_id') ?? $this->tenantIdFrom($r));
+        $firebaseUid = $r->input('firebase_uid');
+
+        \Log::info('driverCardForPassenger IN', [
+            'tenant_id'    => $tenantId,
+            'ride'         => $ride,
+            'firebase_uid' => $firebaseUid,
+        ]);
+
+        $rideRow = DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $ride)
+            ->first();
+
+        if (!$rideRow) {
+            return response()->json([
+                'ok'  => false,
+                'msg' => 'Ride no encontrado',
+            ], 404);
+        }
+
+        // Si todavía no tiene conductor asignado
+        if (!$rideRow->driver_id) {
+            return response()->json([
+                'ok'                      => true,
+                'driver_id'                =>null, 
+                'driver_name'             => null,
+                'avatar_url'              => null,
+                'rating'                  => null,
+                'total_trips'             => null,
+                'car_brand'               => null,
+                'car_model'               => null,
+                'car_year'                => null,
+                'car_color'               => null,
+                'plate'                   => null,
+                'economico'               => null,
+                'eta_minutes'             => null, // compat
+                'eta_pickup_minutes'      => null,
+                'eta_destination_minutes' => null,
+            ]);
+        }
+
+        // ---- DRIVER ----
+        $driver = DB::table('drivers')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $rideRow->driver_id)
+            ->first();
+
+        // ---- VEHÍCULO (turno / asignación fallback) ----
+        $vehicleId = $rideRow->vehicle_id;
+
+        if (!$vehicleId) {
+            $shift = DB::table('driver_shifts')
+                ->where('tenant_id', $tenantId)
+                ->where('driver_id', $rideRow->driver_id)
+                ->whereNull('ended_at')
+                ->orderByDesc('started_at')
+                ->first();
+
+            if ($shift && $shift->vehicle_id) {
+                $vehicleId = $shift->vehicle_id;
+            } else {
+                $assignment = DB::table('driver_vehicle_assignments')
+                    ->where('tenant_id', $tenantId)
+                    ->where('driver_id', $rideRow->driver_id)
+                    ->whereNull('end_at')
+                    ->orderByDesc('start_at')
+                    ->first();
+
+                if ($assignment && $assignment->vehicle_id) {
+                    $vehicleId = $assignment->vehicle_id;
+                }
+            }
+        }
+
+        $vehicle = null;
+        if ($vehicleId) {
+            $vehicle = DB::table('vehicles')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $vehicleId)
+                ->first();
+
+            if ($vehicle && !$rideRow->vehicle_id) {
+                DB::table('rides')
+                    ->where('tenant_id', $tenantId)
+                    ->where('id', $rideRow->id)
+                    ->update([
+                        'vehicle_id' => $vehicleId,
+                        'updated_at' => now(),
+                    ]);
+            }
+        }
+
+        // ---- AVATAR URL ABSOLUTO ----
+        $avatarUrl = null;
+        if ($driver && !empty($driver->foto_path)) {
+            $base = $r->getSchemeAndHttpHost();
+            $avatarUrl = $base . '/storage/' . ltrim($driver->foto_path, '/');
+        }
+
+        // ---- RATING / TRIPS ----
+        $rating     = null;
+        $totalTrips = null;
+
+        if ($driver) {
+            if (isset($driver->rating_avg)) {
+                $rating = (float)$driver->rating_avg;
+            } elseif (isset($driver->rating)) {
+                $rating = (float)$driver->rating;
+            }
+
+            if (isset($driver->rating_count)) {
+                $totalTrips = (int)$driver->rating_count;
+            } elseif (isset($driver->trips_count)) {
+                $totalTrips = (int)$driver->trips_count;
+            }
+
+            if ($rating === null) {
+                $ratingRow = DB::table('ratings')
+                    ->where('tenant_id', $tenantId)
+                    // ->where('driver_id', $rideRow->driver_id) // si quieres filtrar por driver
+                    ->selectRaw('AVG(rating) as avg_rating, COUNT(*) as total_trips')
+                    ->first();
+
+                if ($ratingRow && $ratingRow->avg_rating !== null) {
+                    $rating     = round((float)$ratingRow->avg_rating, 2);
+                    $totalTrips = (int)$ratingRow->total_trips;
+                }
+            }
+        }
+
+        // ---- ETA pickup & destino ----
+        $etaPickupMinutes      = null;
+        $etaDestinationMinutes = null;
+
+        // 1) ETA pickup: driver -> origen
+        if (!empty($rideRow->origin_lat) && !empty($rideRow->origin_lng) && $rideRow->driver_id) {
+            $loc = DB::table('driver_locations')
+                ->where('tenant_id', $tenantId)
+                ->where('driver_id', $rideRow->driver_id)
+                ->orderByDesc('id')            // o updated_at
+                ->first();
+
+            if ($loc && $loc->lat && $loc->lng) {
+                $distanceKm = $this->haversineKm(
+                    (float)$loc->lat,
+                    (float)$loc->lng,
+                    (float)$rideRow->origin_lat,
+                    (float)$rideRow->origin_lng
+                );
+
+                $avgSpeedKmh = 22; // 👈 a futuro: tenant_settings
+
+                if ($distanceKm !== null && $distanceKm > 0) {
+                    $etaPickupMinutes = max(1, (int)ceil(($distanceKm / $avgSpeedKmh) * 60));
+                }
+            }
+        }
+
+        // Fallback pickup: usamos duration_s pero capeado (no queremos 45 min si es full trip)
+        if ($etaPickupMinutes === null && !empty($rideRow->duration_s)) {
+            $etaPickupMinutes = max(1, min(10, (int)ceil($rideRow->duration_s / 60)));
+        }
+
+        // 2) ETA destino: preferimos driver -> destino si hay coords
+        // Ajusta dest_lat/dest_lng si tus columnas se llaman distinto (p. ej. dropoff_lat, dropoff_lng)
+        if (!empty($rideRow->dest_lat) && !empty($rideRow->dest_lng) && $rideRow->driver_id) {
+            $loc = DB::table('driver_locations')
+                ->where('tenant_id', $tenantId)
+                ->where('driver_id', $rideRow->driver_id)
+                ->orderByDesc('id')
+                ->first();
+
+            if ($loc && $loc->lat && $loc->lng) {
+                $distanceKmDest = $this->haversineKm(
+                    (float)$loc->lat,
+                    (float)$loc->lng,
+                    (float)$rideRow->dest_lat,
+                    (float)$rideRow->dest_lng
+                );
+
+                $avgSpeedKmh = 22;
+
+                if ($distanceKmDest !== null && $distanceKmDest > 0) {
+                    $etaDestinationMinutes = max(1, (int)ceil(($distanceKmDest / $avgSpeedKmh) * 60));
+                }
+            }
+        }
+
+        // Fallback destino: usamos duración total del viaje
+        if ($etaDestinationMinutes === null && !empty($rideRow->duration_s)) {
+            $etaDestinationMinutes = max(1, (int)ceil($rideRow->duration_s / 60));
+        }
+
+        return response()->json([
+            'ok'                      => true,
+            'driver_id'               =>$driver->id,  
+            'driver_name'             => $driver->name ?? null,
+            'avatar_url'              => $avatarUrl,
+            'rating'                  => $rating,
+            'total_trips'             => $totalTrips,
+            'car_brand'               => $vehicle->brand ?? null,
+            'car_model'               => $vehicle->model ?? null,
+            'car_year'                => $vehicle->year ?? null,
+            'car_color'               => $vehicle->color ?? null,
+            'plate'                   => $vehicle->plate ?? null,
+            'economico'               => $vehicle->economico ?? null,
+
+            // 👇 compat + nuevos campos
+            'eta_minutes'             => $etaPickupMinutes,      // compatibilidad
+            'eta_pickup_minutes'      => $etaPickupMinutes,      // driver → pickup
+            'eta_destination_minutes' => $etaDestinationMinutes, // driver → destino
+        ]);
+    }
+
+    /**
+     * Distancia Haversine en km entre dos puntos (lat/lng)
+     */
+    private function haversineKm(float $lat1, float $lon1, float $lat2, float $lon2): ?float
+    {
+        // Si son iguales, cero
+        if ($lat1 == $lat2 && $lon1 == $lon2) return 0.0;
+
+        $earthRadiusKm = 6371.0;
+
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLon = deg2rad($lon2 - $lon1);
+
+        $a = sin($dLat / 2) * sin($dLat / 2) +
+             cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
+             sin($dLon / 2) * sin($dLon / 2);
+
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        return $earthRadiusKm * $c;
+    }
+
+
+
+    /** GET /api/rides/{ride}/ratings - Obtener calificaciones del ride */
+    public function getRatings(Request $req, int $ride)
+    {
+        $tenantId = $this->tenantIdFrom($req);
+
+        $ratings = DB::table('ratings')
+            ->where('tenant_id', $tenantId)
+            ->where('ride_id', $ride)
+            ->get();
+
+        return response()->json([
+            'ok' => true,
+            'ratings' => $ratings
+        ]);
+    }
+    }

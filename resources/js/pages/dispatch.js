@@ -16,7 +16,7 @@ const TENANT_ICONS = (window.ccTenant && window.ccTenant.map_icons) || {
   origin:  '/images/origen.png',
   dest:    '/images/destino.png',
   stand:   '/images/marker-parqueo5.png',
-   stop:    '/images/stopride.png',
+   stop:   '/images/stopride.png',
 };
 
 /* =========================
@@ -494,21 +494,27 @@ async function refreshDispatch(){
       fetch('/api/dispatch/drivers',{headers:{Accept:'application/json'}}),
     ]);
 
-    const data    = a.ok ? await a.json() : (console.error('[active]', await a.text()), {});
+      const data    = a.ok ? await a.json() : (console.error('[active]', await a.text()), {});
     const drivers = b.ok ? await b.json() : (console.error('[drivers]', await b.text()), []);
 
-    const rides = Array.isArray(data.rides) ? data.rides : [];
-    window._lastActiveRides = rides;       
-    window._ridesIndex = new Map(rides.map(r=>[r.id, r])); 
-   
+    const rides  = Array.isArray(data.rides)  ? data.rides  : [];
+    const queues = Array.isArray(data.queues) ? data.queues : [];
+    const driverList = Array.isArray(drivers) ? drivers     : [];
+
+    // caches globales
+    window._lastActiveRides = rides;
+    window._ridesIndex      = new Map(rides.map(r => [r.id, r]));
+    window._lastDrivers     = driverList;
+    window._lastQueues      = queues;
 
     // Paneles
-    renderQueues(Array.isArray(data.queues) ? data.queues : []);
+    renderQueues(queues);
     renderRightNowCards(rides);         // solo requested/offered
     renderRightScheduledCards(rides);   // solo scheduled
     renderDockActive(rides);            // solo activos
-    renderDrivers(Array.isArray(drivers) ? drivers : []);
+    renderDrivers(driverList);
     await updateSuggestedRoutes(rides);
+
   }catch(e){
     console.warn('refreshDispatch error', e);
   }
@@ -532,14 +538,7 @@ function startPolling(){
 }
 
 
-
-
-
-
 /* ---------- Panel derecho: drivers/colas/rides ---------- */
-
-
-
 
 
 function rideColorByStatus(status){
@@ -798,35 +797,36 @@ function renderQueues(queues){
 async function highlightRideOnMap(ride) {
   try {
     // 0) Asegura capas/estado
-    if (!window.layerRoute) window.layerRoute = L.layerGroup().addTo(map);
+    if (!window.layerRoute && map) {
+      layerRoute = L.layerGroup().addTo(map);
+      window.layerRoute = layerRoute;
+    }
 
     // 1) Limpieza visual previa
     if (layerRoute?.clearLayers) layerRoute.clearLayers();
-    if (window.fromMarker) { fromMarker.remove(); fromMarker = null; }
-    if (window.toMarker)   { toMarker.remove();   toMarker   = null; }
+    if (fromMarker) { try { fromMarker.remove(); } catch {} fromMarker = null; }
+    if (toMarker)   { try { toMarker.remove();   } catch {} toMarker   = null; }
+
     if (Array.isArray(window._stopMarkers)) {
       window._stopMarkers.forEach(m => { try { m.remove(); } catch {} });
     }
     window._stopMarkers = [];
 
-    // 2) Datos base - AÑADIR: asegurar stops
+    // 2) Datos base
     const from = (Number.isFinite(+ride.origin_lat) && Number.isFinite(+ride.origin_lng))
       ? { lat: +ride.origin_lat, lng: +ride.origin_lng } : null;
     const to   = (Number.isFinite(+ride.dest_lat)   && Number.isFinite(+ride.dest_lng))
       ? { lat: +ride.dest_lat,   lng: +ride.dest_lng   } : null;
 
-    // stops robusto - USAR LA FUNCIÓN normalizeStops QUE YA TIENES
-    let stops = normalizeStops(ride);
+    let stops = normalizeStops(ride); // ya tenías este helper
 
-    // 3) Marcadores - AÑADIR: dibujar stops
+    // 3) Marcadores O / STOPS / D
     if (from) {
       fromMarker = L.marker([from.lat, from.lng], { 
         icon: (typeof IconOrigin !== 'undefined' ? IconOrigin : undefined) 
-      });
-      fromMarker.addTo(layerRoute);
+      }).addTo(layerRoute);
     }
-    
-    // DIBUJAR STOPS
+
     stops.forEach((s, i) => {
       const lt = +s.lat, lg = +s.lng;
       if (!Number.isFinite(lt) || !Number.isFinite(lg)) return;
@@ -837,18 +837,17 @@ async function highlightRideOnMap(ride) {
       mk.addTo(layerRoute);
       window._stopMarkers.push(mk);
     });
-    
+
     if (to) {
       toMarker = L.marker([to.lat, to.lng], { 
         icon: (typeof IconDest !== 'undefined' ? IconDest : undefined) 
-      });
-      toMarker.addTo(layerRoute);
+      }).addTo(layerRoute);
     }
 
-    // 4) Ruta - MANTENER el código existente pero asegurar que incluye stops
+    // 4) Ruta principal (igual que antes, pero ordenado)
     let latlngs = null;
 
-    // 4.1) Usa polyline de BD si existe
+    // 4.1) Usa polyline guardada si existe
     if (ride.route_polyline) {
       try {
         const arr = decodePolyline(ride.route_polyline) || [];
@@ -881,7 +880,7 @@ async function highlightRideOnMap(ride) {
       }
     }
 
-    // 4.3) Fallback final: línea O -> stops -> D - CORREGIR para usar stops
+    // 4.3) Fallback final: O -> stops -> D
     if ((!latlngs || !latlngs.length) && from && to) {
       const seq = [from, ...stops, to];
       latlngs = seq
@@ -889,7 +888,6 @@ async function highlightRideOnMap(ride) {
         .map(p => [ +p.lat, +p.lng ]);
     }
 
-    // 4.4) Dibuja polyline si hay al menos 2 puntos
     if (latlngs && latlngs.length >= 2) {
       const pl = L.polyline(latlngs, { 
         className: 'cc-route', 
@@ -901,22 +899,77 @@ async function highlightRideOnMap(ride) {
       window.__routeLine = pl;
     }
 
-    // 5) Fit bounds - INCLUIR STOPS en los bounds
-    const bounds = [];
-    if (from) bounds.push([from.lat, from.lng]);
-    stops.forEach(s => { 
-      if (Number.isFinite(+s.lat) && Number.isFinite(+s.lng)) 
-        bounds.push([+s.lat, +s.lng]); 
-    });
-    if (to) bounds.push([to.lat, to.lng]);
+    // 5) Incluir al DRIVER si el ride está activo
+    let driverLL = null;
+    let driverMarker = null;
 
-    if (bounds.length >= 1) {
+    if (ride.driver_id && typeof driverPins !== 'undefined') {
+      const pin = driverPins.get(Number(ride.driver_id));
+      if (pin?.marker && typeof pin.marker.getLatLng === 'function') {
+        driverMarker = pin.marker;
+        driverLL = driverMarker.getLatLng();
+
+        // resaltamos un poco el pin del driver
+        try {
+          // reset anterior
+          if (window.__lastHighlightedDriver && window.__lastHighlightedDriver !== driverMarker) {
+            setMarkerScale(window.__lastHighlightedDriver, scaleForZoom(map.getZoom()));
+          }
+          setMarkerScale(driverMarker, 1.35);
+          driverMarker.setZIndexOffset(1200);
+          window.__lastHighlightedDriver = driverMarker;
+        } catch {}
+      }
+    }
+
+    // 6) Fit bounds según estado (driver vs origen/destino)
+    const bounds = [];
+    const push = ll => {
+      if (!ll) return;
+      if (Array.isArray(ll)) {
+        bounds.push(ll);
+      } else if (typeof ll.lat === 'number' && typeof ll.lng === 'number') {
+        bounds.push([ll.lat, ll.lng]);
+      }
+    };
+
+    const st = (typeof _canonStatus === 'function')
+      ? _canonStatus(ride.status)
+      : String(ride.status || '').toLowerCase();
+
+    if (driverLL && (st === 'accepted' || st === 'assigned' || st === 'en_route' || st === 'arrived')) {
+      // Driver + pickup
+      push(driverLL);
+      if (from) push([from.lat, from.lng]);
+    } else if (driverLL && st === 'on_board') {
+      // Driver + destino
+      push(driverLL);
+      if (to) push([to.lat, to.lng]);
+    } else {
+      // Modo viejo: O + STOPS + D
+      if (from) push([from.lat, from.lng]);
+      stops.forEach(s => {
+        const lt = +s.lat, lg = +s.lng;
+        if (Number.isFinite(lt) && Number.isFinite(lg)) push([lt, lg]);
+      });
+      if (to) push([to.lat, to.lng]);
+    }
+
+    // Si por alguna razón no se armaron bounds pero tenemos driver
+    if (!bounds.length && driverLL) {
+      push(driverLL);
+    }
+
+    if (bounds.length === 1) {
+      map.setView(bounds[0], Math.max(map.getZoom(), 16));
+    } else if (bounds.length > 1) {
       map.fitBounds(bounds, { padding: [40, 40] });
     }
   } catch (e) {
     console.warn('[map] highlightRideOnMap error', e);
   }
 }
+
 
 
 
@@ -1532,6 +1585,46 @@ function shouldHideRideCard(ride) {
 }
 
 // Intenta tomar resumen de ofertas (si tu API lo trae en el ride)
+function deriveRideChannel(ride) {
+  const raw = String(
+    ride.requested_channel ||
+    ride.channel ||
+    ride.request_source ||
+    ''
+  ).toLowerCase().trim();
+
+  if (!raw) {
+    return { code: 'panel', label: 'Panel' };
+  }
+
+  if (['passenger_app', 'passenger', 'app', 'app_pasajero'].includes(raw)) {
+    return { code: 'passenger', label: 'App pasajero' };
+  }
+
+  if (['driver_app', 'driver', 'app_conductor'].includes(raw)) {
+    return { code: 'driver', label: 'App conductor' };
+  }
+
+  if (['central', 'dispatcher', 'panel', 'web'].includes(raw)) {
+    return { code: 'panel', label: 'Central' };
+  }
+
+  if (['phone', 'telefono', 'callcenter', 'call_center'].includes(raw)) {
+    return { code: 'phone', label: 'Teléfono' };
+  }
+
+  if (['corp', 'corporate', 'empresa', 'business'].includes(raw)) {
+    return { code: 'corp', label: 'Corporativo' };
+  }
+
+  // fallback genérico
+  return {
+    code: raw,
+    label: raw.charAt(0).toUpperCase() + raw.slice(1)
+  };
+}
+
+
 function summarizeOffers(ride) {
   const offers = Array.isArray(ride.offers) ? ride.offers : [];
   const anyAccepted = offers.some(o => o.status === 'accepted');
@@ -1542,42 +1635,115 @@ function summarizeOffers(ride) {
 }
 
 function deriveRideUi(ride) {
-  const st = String(ride.status || '').toLowerCase();
-  const { anyAccepted, anyOffered, rejectedBy } = summarizeOffers(ride);
+  const rawStatus = String(ride.status || '').toLowerCase().trim();
 
-  let badge = '';
-  let showAssign   = false;
-  let showReoffer  = false;
-  let showRelease  = false;
-  let showCancel   = true;
+  // Canonizamos el estado para que onboard/enroute → on_board/en_route
+  const status = (typeof _canonStatus === 'function')
+    ? _canonStatus(rawStatus)
+    : (rawStatus || 'unknown');
 
-  if (st === 'requested') {
-    badge = 'Pendiente';
-    showAssign = true; showReoffer = true;
-  } else if (st === 'offered' || (anyOffered && !anyAccepted)) {
-    badge = 'Oferta enviada';
-    showAssign = true; showReoffer = true;
-  } else if (st === 'scheduled') {
-    // 🔹 Operable: el operador puede asignar o re-ofertar cuando quiera
-    badge = 'Programado';
-    showAssign = true; showReoffer = true;
-  } else if (st === 'accepted' || st === 'assigned') {
-    badge = 'Aceptada'; showRelease = true;
-  } else if (st === 'en_route') {
-    badge = 'En ruta';  showRelease = true;
-  } else if (st === 'arrived') {
-    badge = 'Llegó al punto'; showRelease = true;
-  } else if (st === 'on_board' || st === 'onboard') {
-    badge = 'En viaje'; showRelease = false;
-  } else if (st === 'completed') {
-    badge = 'Completada'; showCancel = false;
-  } else if (st === 'canceled') {
-    badge = 'Cancelada';  showCancel = false;
-  } else {
-    badge = st;
+  const ch = deriveRideChannel(ride);
+  const isPassengerApp = ch.code === 'passenger';
+
+  let label = status;
+  let colorClass = 'secondary';
+  let showAssign = false;
+  let showReoffer = false;
+  let showRelease = false;
+  let showCancel = false;
+
+  switch (status) {
+    case 'requested':
+    case 'pending':
+    case 'queued':
+    case 'new':
+      label = 'Pendiente';
+      colorClass = 'warning';
+      showAssign = true;
+      showReoffer = true;
+      showCancel = true;
+      break;
+
+    case 'offered':
+    case 'offering':
+      label = 'Ofertado';
+      colorClass = 'info';
+      showAssign = true;
+      showReoffer = true;
+      showCancel = true;
+      break;
+
+    case 'accepted':
+    case 'assigned':
+      label = 'Asignado';
+      colorClass = 'primary';
+      showRelease = true;
+      showCancel = true;
+      break;
+
+    case 'en_route':
+      label = 'En camino';
+      colorClass = 'primary';
+      showRelease = true;
+      showCancel = true;
+      break;
+
+    case 'arrived':
+      label = 'Esperando';
+      colorClass = 'warning';
+      showRelease = true;
+      showCancel = true;
+      break;
+
+    case 'on_board':
+      label = 'En viaje';
+      colorClass = 'success';
+      showRelease = false;
+      showCancel = true;
+      break;
+
+    case 'finished':
+      label = 'Finalizado';
+      colorClass = 'success';
+      break;
+
+    case 'canceled':
+      label = 'Cancelado';
+      colorClass = 'secondary';
+      break;
+
+    case 'no_driver':
+      label = 'Sin conductor';
+      colorClass = 'danger';
+      showAssign = true;
+      showReoffer = true;
+      break;
+
+    default:
+      label = status || 'desconocido';
+      colorClass = 'secondary';
   }
 
-  return { badge, showAssign, showReoffer, showRelease, showCancel, rejectedBy };
+  // 🚫 Para rides que vienen de Passenger:
+  //   - NO mostramos Asignar ni Re-ofertar (lo maneja el flujo de bidding/autodespacho)
+  if (isPassengerApp) {
+    showAssign = false;
+    showReoffer = false;
+  }
+
+  const badge = `<span class="badge bg-${colorClass} badge-pill">${label}</span>`;
+
+  return {
+    status,
+    label,
+    badge,
+    showAssign,
+    showReoffer,
+    showRelease,
+    showCancel,
+    isPassengerApp,
+    channel: ch
+  };
 }
 
 
@@ -1730,6 +1896,7 @@ function renderRideCard(ride) {
   if (shouldHideRideCard(ride)) return '';
 
   const ui = deriveRideUi(ride);
+  const ch = ui.channel || deriveRideChannel(ride);
 
   // --- helpers ---
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => (
@@ -1763,8 +1930,10 @@ function renderRideCard(ride) {
                  || (Number.isFinite(ride.origin_lat) ? `${fmtC(ride.origin_lat)}, ${fmtC(ride.origin_lng)}` : '—');
   const destLbl   = ride.dest_label
                  || (Number.isFinite(ride.dest_lat)   ? `${fmtC(ride.dest_lat)}, ${fmtC(ride.dest_lng)}`     : '—');
+const channelBadge = ch
+  ? `<span class="badge bg-light text-secondary border ms-2">${esc(ch.label)}</span>`
+  : '';  // 👈 parte “false” del ternario + termina la expresión
 
-  // --- tiempo/estado ---
   const scheduled    = isScheduledStatus(ride);
   const schedRaw     = scheduled ? (ride.scheduled_for || ride.scheduled_for_fmt) : null;
   const requestedRaw = (ride.requested_at || ride.created_at) || null;
@@ -1772,11 +1941,12 @@ function renderRideCard(ride) {
   const requestedTxt = requestedRaw ? fmtWhen_db(requestedRaw) : '—';
 
   const stateBadge = scheduled
-    ? `<span class="badge bg-danger-subtle text-danger">PROGRAMADO</span>`
-    : `<span class="badge bg-info">${ui.badge}</span>`;
+    ? `<span class="badge bg-danger-subtle text-danger border border-danger">PROGRAMADO</span>`
+    : ui.badge;
+
 
   // --- itinerary (O -> stops -> D) ---
-  const stopsTitle = stopsCount ? `<div class="cc-stops-title">Paradas (${stopsCount})</div>` : '';
+  const stopsTitle = stopsCount ? `<div class="cc-stops-title small text-muted fw-semibold mt-2 mb-1">Paradas (${stopsCount})</div>` : '';
   const stopItems = stops.map((s,i) => {
     const txt = (s && typeof s.label === 'string' && s.label.trim()!=='')
       ? esc(s.label.trim())
@@ -1784,7 +1954,7 @@ function renderRideCard(ride) {
     const title = `S${i+1}: ${fmtC(s.lat)}, ${fmtC(s.lng)}`;
     return `<li class="cc-leg" title="${esc(title)}">
               <span class="cc-pin cc-pin--s"></span>
-              <div><div class="cc-label">S${i+1}: ${txt}</div></div>
+              <div class="small">${txt}</div>
             </li>`;
   }).join('');
 
@@ -1806,28 +1976,35 @@ function renderRideCard(ride) {
 
   // --- render ---
   return `
-  <div class="card cc-ride-card ${scheduled ? 'is-scheduled' : ''} mb-2" data-ride-id="${ride.id}">
-    <div class="card-body">
-      <div class="cc-ride-header">
-        <div>
-          <div class="cc-ride-title">Ride #${ride.id}</div>
-          <div class="cc-ride-badge mt-1">${stateBadge}</div>
+  <div class="card cc-ride-card ${scheduled ? 'is-scheduled' : ''} mb-2 border-0 shadow-sm" data-ride-id="${ride.id}">
+    <div class="card-body p-3">
+      <div class="cc-ride-header d-flex justify-content-between align-items-start mb-2">
+        <div class="d-flex align-items-center gap-2">
+          <div class="cc-ride-title fw-bold text-primary">#${ride.id}</div>
+          <div class="cc-ride-badge">${stateBadge}</div>
         </div>
-        <div class="cc-stats">
-          <div class="cc-amount">${amtTxt}</div>
-          <div class="cc-meta">${km} km · ${min} min${stopsCount ? ` · ${stopsCount} parada${stopsCount>1?'s':''}` : ''}</div>
+        <div class="cc-stats text-end">
+          <div class="cc-amount fw-bold fs-5 text-success">${amtTxt}</div>
+          <div class="cc-meta small text-muted">${km} km · ${min} min</div>
         </div>
       </div>
 
-      <div class="cc-divider"></div>
+         <!-- Información del pasajero + canal de origen -->
+      <div class="cc-passenger-info mb-2 p-2 bg-light rounded small d-flex justify-content-between align-items-center">
+        <div>
+          <i class="bi bi-person me-1"></i> 
+          <span class="fw-semibold">${esc(passName)}</span>
+          ${passPhone ? `<span class="text-muted ms-2"><i class="bi bi-telephone me-1"></i>${esc(passPhone)}</span>` : ''}
+        </div>
+        ${channelBadge}
+      </div>
 
-      <ul class="cc-legs">
-        <li class="cc-leg">
-          <span class="cc-pin cc-pin--o"></span>
-          <div>
-            <div class="cc-label">Origen</div>
-            <div class="cc-sub">${esc(originLbl)}</div>
-            <div class="cc-sub mt-1"><i class="bi bi-person"></i> ${esc(passName)} ${passPhone ? `· <span class="text-muted">${esc(passPhone)}</span>` : ''}</div>
+      <ul class="cc-legs list-unstyled mb-2">
+        <li class="cc-leg d-flex align-items-start mb-1">
+          <span class="cc-pin cc-pin--o me-2 mt-1"></span>
+          <div class="flex-grow-1">
+            <div class="small text-muted">Origen</div>
+            <div class="fw-semibold small">${esc(originLbl)}</div>
           </div>
         </li>
 
@@ -1835,38 +2012,39 @@ function renderRideCard(ride) {
         ${stopItems}
 
         ${destLbl !== '—' ? `
-        <li class="cc-leg">
-          <span class="cc-pin cc-pin--d"></span>
-          <div>
-            <div class="cc-label">Destino</div>
-            <div class="cc-sub">${esc(destLbl)}</div>
+        <li class="cc-leg d-flex align-items-start mb-1">
+          <span class="cc-pin cc-pin--d me-2 mt-1"></span>
+          <div class="flex-grow-1">
+            <div class="small text-muted">Destino</div>
+            <div class="fw-semibold small">${esc(destLbl)}</div>
           </div>
         </li>` : '' }
       </ul>
 
-      <div class="mt-2 cc-meta">
-        ${scheduled
-          ? `<span class="me-3"><i class="bi bi-clock"></i> Prog.: <span class="fw-semibold">${esc(schedTxt)}</span></span>
-             <span><i class="bi bi-clock-history"></i> Creado: <span class="fw-semibold">${esc(requestedTxt)}</span></span>`
-          : `<span><i class="bi bi-clock"></i> Solicitado: <span class="fw-semibold">${esc(requestedTxt)}</span></span>`
-        }
+      <div class="cc-footer mt-2 pt-2 border-top">
+        <div class="d-flex justify-content-between align-items-center">
+          <div class="cc-meta small text-muted">
+            <i class="bi bi-clock me-1"></i>
+            ${scheduled ? `Prog: ${esc(schedTxt)}` : `Creado: ${esc(requestedTxt)}`}
+          </div>
+          ${stopsCount ? `<div class="cc-stops-badge small badge bg-secondary">${stopsCount} parada${stopsCount>1?'s':''}</div>` : ''}
+        </div>
       </div>
 
       ${debugBlock}
 
       <div class="d-flex justify-content-end cc-actions mt-3">
-        <div class="btn-group">
-          ${ui.showAssign  ? `<button class="btn btn-sm btn-primary" data-act="assign">Asignar</button>` : ''}
-          ${ui.showReoffer ? `<button class="btn btn-sm btn-outline-primary" data-act="reoffer">Re-ofertar</button>` : ''}
-          ${ui.showRelease ? `<button class="btn btn-sm btn-warning" data-act="release">Liberar</button>` : ''}
-          ${ui.showCancel  ? `<button class="btn btn-outline-danger btn-sm btn-cancel" data-ride-id="${ride.id}">Cancelar</button>` : ''}
-          <button class="btn btn-sm btn-outline-secondary" data-act="view">Ver</button>
+        <div class="btn-group btn-group-sm">
+          ${ui.showAssign  ? `<button class="btn btn-primary" data-act="assign">Asignar</button>` : ''}
+          ${ui.showReoffer ? `<button class="btn btn-outline-primary" data-act="reoffer">Re-ofertar</button>` : ''}
+          ${ui.showRelease ? `<button class="btn btn-warning" data-act="release">Liberar</button>` : ''}
+          ${ui.showCancel  ? `<button class="btn btn-outline-danger btn-cancel" data-ride-id="${ride.id}">Cancelar</button>` : ''}
+          <button class="btn btn-outline-secondary" data-act="view">Ver</button>
         </div>
       </div>
     </div>
   </div>`;
 }
-
 
 
 

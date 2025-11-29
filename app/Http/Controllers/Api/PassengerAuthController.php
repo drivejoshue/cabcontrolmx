@@ -77,4 +77,39 @@ class PassengerAuthController extends Controller
             ],
         ]);
     }
+
+    public function ping(Request $request)
+{
+    $data = $request->validate([
+        'firebase_uid' => 'required|string|max:128',
+        'platform'     => 'nullable|string|max:20',
+        'app_version'  => 'nullable|string|max:20',
+    ]);
+
+    $firebaseUid = $data['firebase_uid'];
+
+    // Buscar pasajero solo por firebase_uid (sin tenant en el payload)
+    $passenger = Passenger::where('firebase_uid', $firebaseUid)->first();
+
+    if (! $passenger) {
+        return response()->json([
+            'ok'  => false,
+            'msg' => 'Pasajero no encontrado, sincroniza primero /passenger/auth-sync.',
+        ], 422);
+    }
+
+    // (Opcional) si luego agregas last_seen_at:
+    // $passenger->forceFill(['last_seen_at' => now()])->save();
+
+    return response()->json([
+        'ok'  => true,
+        'msg' => 'pong',
+        // opcional si quieres regresar algo útil:
+        // 'data' => [
+        //     'id'        => $passenger->id,
+        //     'tenant_id' => $passenger->tenant_id,
+        // ]
+    ]);
+}
+
 }

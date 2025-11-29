@@ -10,26 +10,38 @@ use Illuminate\Support\Str;
 
 class TaxiStandController extends Controller
 {
-     public function index(Request $request)
+    protected function currentTenantId(): int
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = Auth::user()->tenant_id ?? null;
+
+        if (!$tenantId) {
+            abort(403, 'Usuario sin tenant asignado');
+        }
+
+        return (int) $tenantId;
+    }
+
+    public function index(Request $request)
+    {
+        $tenantId = $this->currentTenantId();
 
         $stands = DB::table('taxi_stands as t')
             ->leftJoin('sectores as s', function ($q) use ($tenantId) {
-                $q->on('s.id', '=', 't.sector_id')->where('s.tenant_id', '=', $tenantId);
+                $q->on('s.id', '=', 't.sector_id')
+                  ->where('s.tenant_id', '=', $tenantId);
             })
             ->where('t.tenant_id', $tenantId)
             ->select('t.*', 's.nombre as sector_nombre')
             ->orderBy('t.id', 'desc')
             ->paginate(15);
 
-        // 👇 Enviamos con el nombre que tu vista espera
         return view('admin.taxistands.index', ['taxistands' => $stands]);
     }
 
     public function create()
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->currentTenantId();
+
         $sectores = DB::table('sectores')
             ->where('tenant_id', $tenantId)
             ->where('activo', 1)
@@ -41,7 +53,7 @@ class TaxiStandController extends Controller
 
     public function store(Request $request)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->currentTenantId();
 
         $data = $request->validate([
             'nombre'    => 'required|string|max:120',
@@ -74,7 +86,7 @@ class TaxiStandController extends Controller
 
     public function edit(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->currentTenantId();
 
         $stand = DB::table('taxi_stands')
             ->where('tenant_id', $tenantId)
@@ -93,7 +105,7 @@ class TaxiStandController extends Controller
 
     public function update(Request $request, int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->currentTenantId();
 
         $data = $request->validate([
             'nombre'    => 'required|string|max:120',
@@ -121,17 +133,16 @@ class TaxiStandController extends Controller
         return redirect()->route('taxistands.edit', $id)->with('ok', 'Paradero actualizado.');
     }
 
-    /** Desactivar (no borrar físico) */
     public function destroy(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->currentTenantId();
 
         DB::table('taxi_stands')
             ->where('tenant_id', $tenantId)
             ->where('id', $id)
             ->update([
-                'active' => 0,
-                'activo' => 0,
+                'active'     => 0,
+                'activo'     => 0,
                 'updated_at' => now(),
             ]);
 

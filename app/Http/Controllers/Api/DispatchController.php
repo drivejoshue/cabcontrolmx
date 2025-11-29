@@ -235,7 +235,9 @@ public function quote(Request $r, FareQuoteService $fareQuote)
             })
             ->select(
                 'dl.driver_id',
-                'dl.lat','dl.lng','dl.reported_at','dl.heading_deg',
+                'dl.lat','dl.lng','dl.reported_at','dl.bearing',
+                DB::raw('COALESCE(dl.heading_deg, dl.bearing) as heading_deg'),
+
                 DB::raw('CASE WHEN dl.reported_at >= (NOW() - INTERVAL 120 SECOND) THEN 1 ELSE 0 END AS is_fresh')
             );
 
@@ -375,30 +377,96 @@ public function quote(Request $r, FareQuoteService $fareQuote)
      *  Operaciones: asignar / cancelar
      * ======================= */
  
- public function assign(Request $req)
-    {
-        $v = $req->validate([
-            'ride_id'   => 'required|integer',
-            'driver_id' => 'required|integer',
+public function assign(Request $req)
+{
+    $v = $req->validate([
+        'ride_id'   => 'required|integer',
+        'driver_id' => 'required|integer',
+    ]);
+
+    $tenantId   = (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
+    $rideId     = (int)$v['ride_id'];
+    $driverId   = (int)$v['driver_id'];
+    $assignedBy = optional($req->user())->id ?? 0;
+
+    try {
+        // 1) SP que crea oferta (popup)
+        $row = \DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [
+            $tenantId, $rideId, $driverId, null
         ]);
 
-        $tenantId   = (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
-        $rideId     = (int)$v['ride_id'];
-        $driverId   = (int)$v['driver_id'];
-        $assignedBy = optional($req->user())->id ?? 0;
+        // Determinar offer_id
+        $offerId = null;
+        if ($row && isset($row->id)) {
+            $offerId = (int)$row->id;
+        } else {
+            $offerId = \DB::table('ride_offers')
+                ->where('tenant_id', $tenantId)
+                ->where('ride_id',   $rideId)
+                ->where('driver_id', $driverId)
+                ->where('status',    'offered')
+                ->orderByDesc('id')
+                ->value('id');
+        }
 
-        try {
-            // 1) Intento principal: crear oferta (expira en 45s) -> POPUP en la app
-            //    Nota: sp_create_offer_v2 a veces devuelve fila con id; si no, buscamos la oferta creada.
-            $row = \DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [
-                $tenantId, $rideId, $driverId, 45
+        if ($offerId) {
+            // Leer canal del ride para decidir si es directa o wave/bidding
+            $rideRow = \DB::table('rides')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $rideId)
+                ->select('requested_channel')
+                ->first();
+
+            $requestedChannel = $rideRow->requested_channel ?? null;
+            $requestedChannel = $requestedChannel ? strtolower($requestedChannel) : null;
+
+            $isDirect = null;
+
+            if ($requestedChannel === 'passenger_app') {
+                // 👇 NO forzamos is_direct, respetamos lo que dejó el SP (modo wave/bidding)
+                $isDirect = (int)\DB::table('ride_offers')
+                    ->where('id', $offerId)
+                    ->value('is_direct');
+            } else {
+                // Para rides de panel/dispatch sí queremos directa
+                \DB::table('ride_offers')
+                    ->where('id', $offerId)
+                    ->update(['is_direct' => 1]);
+
+                $isDirect = 1;
+            }
+
+            \Log::info('Dispatch.assign emitNew', [
+                'tenant_id'          => $tenantId,
+                'ride_id'            => $rideId,
+                'driver_id'          => $driverId,
+                'offer_id'           => $offerId,
+                'requested_channel'  => $requestedChannel,
+                'is_direct'          => $isDirect,
+                'via'                => 'sp_create_offer_v2',
             ]);
 
-            // Determinar el offer_id (si el SP lo devuelve, úsalo; si no, busca la última "offered")
-            $offerId = null;
-            if ($row && isset($row->id)) {
-                $offerId = (int)$row->id;
-            } else {
+            OfferBroadcaster::emitNew((int)$offerId); // 🔔
+        }
+
+        return response()->json([
+            'ok'       => true,
+            'via'      => 'sp_create_offer_v2',
+            'offer_id' => $offerId,
+        ]);
+
+    } catch (\Throwable $e) {
+        $msg = $e->getMessage();
+        $isMissing = str_contains($msg, '1305') || str_contains($msg, 'does not exist');
+
+        if ($isMissing) {
+            // 2) Fallback #1: asignación directa por SP (sin oferta) o con oferta residual
+            try {
+                \DB::selectOne('CALL sp_assign_direct_v1(?,?,?)', [
+                    $tenantId, $rideId, $driverId
+                ]);
+
+                // Si por alguna razón ese SP dejó una offered viva, respetamos canal
                 $offerId = \DB::table('ride_offers')
                     ->where('tenant_id', $tenantId)
                     ->where('ride_id',   $rideId)
@@ -406,166 +474,294 @@ public function quote(Request $r, FareQuoteService $fareQuote)
                     ->where('status',    'offered')
                     ->orderByDesc('id')
                     ->value('id');
-            }
 
-            if ($offerId) {
-                // Marca la oferta como directa (popup)
-                \DB::table('ride_offers')
-                    ->where('tenant_id', $tenantId)
-                    ->where('id', $offerId)
-                    ->update(['is_direct' => 1]);
-            } else {
-                // Sin id explícito: marca la última offered por seguridad
-                \DB::table('ride_offers')
-                    ->where('tenant_id', $tenantId)
-                    ->where('ride_id',   $rideId)
-                    ->where('driver_id', $driverId)
-                    ->where('status',    'offered')
-                    ->orderByDesc('id')
-                    ->limit(1)
-                    ->update(['is_direct' => 1]);
-            }
-
-            return response()->json([
-                'ok'  => true,
-                'via' => 'sp_create_offer_v2',
-                'offer_id' => $offerId,
-            ]);
-
-        } catch (\Throwable $e) {
-            $msg = $e->getMessage();
-            $isMissing = str_contains($msg, '1305') || str_contains($msg, 'does not exist');
-
-            if ($isMissing) {
-                // 2) Fallback #1: SP que asigna directamente el ride (sin crear oferta).
-                //    En este camino NO habrá popup en la app — el driver va directo al Ride.
-                try {
-                    \DB::selectOne('CALL sp_assign_direct_v1(?,?,?)', [
-                        $tenantId, $rideId, $driverId
-                    ]);
-
-                    // Si por alguna razón ese SP sí creó oferta "offered", la marcamos como directa.
-                    \DB::table('ride_offers')
+                if ($offerId) {
+                    $rideRow = \DB::table('rides')
                         ->where('tenant_id', $tenantId)
-                        ->where('ride_id',   $rideId)
-                        ->where('driver_id', $driverId)
-                        ->where('status',    'offered')
-                        ->orderByDesc('id')
-                        ->limit(1)
-                        ->update(['is_direct' => 1]);
+                        ->where('id', $rideId)
+                        ->select('requested_channel')
+                        ->first();
 
-                    return response()->json([
-                        'ok'  => true,
-                        'via' => 'sp_assign_direct_v1'
+                    $requestedChannel = $rideRow->requested_channel ?? null;
+                    $requestedChannel = $requestedChannel ? strtolower($requestedChannel) : null;
+
+                    $isDirect = null;
+
+                    if ($requestedChannel === 'passenger_app') {
+                        // No tocar is_direct para que conserve wave/bidding
+                        $isDirect = (int)\DB::table('ride_offers')
+                            ->where('id', $offerId)
+                            ->value('is_direct');
+                    } else {
+                        \DB::table('ride_offers')
+                            ->where('id', $offerId)
+                            ->update(['is_direct' => 1]);
+                        $isDirect = 1;
+                    }
+
+                    \Log::info('Dispatch.assign fallback emitNew', [
+                        'tenant_id'          => $tenantId,
+                        'ride_id'            => $rideId,
+                        'driver_id'          => $driverId,
+                        'offer_id'           => $offerId,
+                        'requested_channel'  => $requestedChannel,
+                        'is_direct'          => $isDirect,
+                        'via'                => 'sp_assign_direct_v1',
                     ]);
 
-                } catch (\Throwable $e2) {
-                    // 3) Fallback #2 (DEV): asignación directa manual del ride (sin oferta).
-                    try {
-                        \DB::beginTransaction();
+                    OfferBroadcaster::emitNew((int)$offerId); // 🔔
+                } else {
+                    // Sin oferta → notifica ride activo (abre viaje directo en app)
+                    \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.active', [
+                        'ride_id' => (int)$rideId,
+                    ]);
+                }
 
-                        $ride = \DB::table('rides')
-                            ->where('tenant_id',$tenantId)->where('id',$rideId)
-                            ->lockForUpdate()->first();
+                return response()->json(['ok' => true, 'via' => 'sp_assign_direct_v1']);
 
-                        if (!$ride) throw new \Exception('Ride no encontrado');
-                        if (in_array(strtolower($ride->status), ['canceled','finished'])) {
-                            throw new \Exception('Ride no asignable en estado '.$ride->status);
-                        }
+            } catch (\Throwable $e2) {
+                // 3) Fallback #2: asignación manual (sin oferta)
+                try {
+                    \DB::beginTransaction();
 
-                        \DB::table('rides')->where('tenant_id',$tenantId)->where('id',$rideId)->update([
+                    $ride = \DB::table('rides')
+                        ->where('tenant_id', $tenantId)
+                        ->where('id', $rideId)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if (!$ride) throw new \Exception('Ride no encontrado');
+                    if (in_array(strtolower($ride->status), ['canceled', 'finished'])) {
+                        throw new \Exception('Ride no asignable en estado '.$ride->status);
+                    }
+
+                    \DB::table('rides')
+                        ->where('tenant_id', $tenantId)
+                        ->where('id', $rideId)
+                        ->update([
                             'driver_id'   => $driverId,
                             'status'      => 'accepted',
                             'accepted_at' => now(),
                             'updated_at'  => now(),
                         ]);
 
-                        \DB::table('ride_status_history')->insert([
-                            'tenant_id'  => $tenantId,
-                            'ride_id'    => $rideId,
-                            'prev_status'=> $ride->status,
-                            'new_status' => 'accepted',
-                            'meta'       => json_encode(['driver_id'=>$driverId,'assigned_by'=>$assignedBy]),
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ]);
+                    \DB::table('ride_status_history')->insert([
+                        'tenant_id'   => $tenantId,
+                        'ride_id'     => $rideId,
+                        'prev_status' => $ride->status,
+                        'new_status'  => 'accepted',
+                        'meta'        => json_encode([
+                            'driver_id'   => $driverId,
+                            'assigned_by' => $assignedBy
+                        ]),
+                        'created_at'  => now(),
+                        'updated_at'  => now(),
+                    ]);
 
-                        \DB::commit();
-                        return response()->json([
-                            'ok'  => true,
-                            'via' => 'direct'
-                        ]);
+                    \DB::commit();
 
-                    } catch (\Throwable $e3) {
-                        \DB::rollBack();
-                        return response()->json(['ok'=>false,'msg'=>$e3->getMessage()], 500);
-                    }
+                    // 🔔 Avísale al driver que el ride ya está activo/aceptado
+                    \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.active', [
+                        'ride_id' => (int)$rideId,
+                    ]);
+
+                    return response()->json(['ok' => true, 'via' => 'direct']);
+
+                } catch (\Throwable $e3) {
+                    \DB::rollBack();
+                    return response()->json(['ok' => false, 'msg' => $e3->getMessage()], 500);
                 }
             }
+        }
 
-            return response()->json(['ok'=>false,'msg'=>$msg], 500);
+        return response()->json(['ok' => false, 'msg' => $msg], 500);
+    }
+}
+
+
+
+
+// Usado por el panel de despacho
+
+
+    public function cancel(Request $r, int $ride)
+    {
+        $r->validate(['reason' => 'nullable|string|max:160']);
+        $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
+
+        \Log::info('dispatch.cancel IN', [
+            'tenantId' => $tenantId,
+            'ride'     => $ride,
+            'reason'   => $r->input('reason'),
+            'user_id'  => optional($r->user())->id,
+        ]);
+
+        try {
+            return DB::transaction(function () use ($tenantId, $ride, $r) {
+                $row = DB::table('rides')
+                    ->where('tenant_id', $tenantId)
+                    ->where('id', $ride)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (!$row) {
+                    \Log::warning('dispatch.cancel ride not found', compact('tenantId','ride'));
+                    return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
+                }
+
+                $prev = strtolower($row->status ?? '');
+                if (in_array($prev, ['finished','canceled'])) {
+                    \Log::info('dispatch.cancel idempotent', compact('ride','prev'));
+                    return response()->json(['ok' => true]);
+                }
+
+                // 1) ride -> canceled
+                DB::table('rides')
+                    ->where('tenant_id', $tenantId)
+                    ->where('id', $ride)
+                    ->update([
+                        'status'        => 'canceled',
+                        'canceled_at'   => now(),
+                        'cancel_reason' => $r->input('reason'),
+                        'canceled_by'   => 'dispatch',
+                        'updated_at'    => now(),
+                    ]);
+
+                // 2) historial (OJO: agregamos 'status' requerido por tu tabla)
+                DB::table('ride_status_history')->insert([
+                    'tenant_id'   => $tenantId,
+                    'ride_id'     => $ride,
+                    'status'      => 'canceled',  // <-- clave para tu schema
+                    'prev_status' => $prev,
+                    'new_status'  => 'canceled',
+                    'meta'        => json_encode([
+                        'reason' => $r->input('reason'),
+                        'by'     => 'dispatch'
+                    ]),
+                    'created_at'  => now(),
+                    'updated_at'  => now(),
+                ]);
+
+                // 3) ofertas: offered -> released, accepted -> canceled
+                DB::table('ride_offers')
+                    ->where('tenant_id', $tenantId)
+                    ->where('ride_id',   $ride)
+                    ->where('status',    'offered')
+                    ->update([
+                        'status'       => 'released',
+                        'responded_at' => now(),
+                        'updated_at'   => now(),
+                    ]);
+
+                DB::table('ride_offers')
+                    ->where('tenant_id', $tenantId)
+                    ->where('ride_id',   $ride)
+                    ->where('status',    'accepted')
+                    ->update([
+                        'status'       => 'canceled',
+                        'responded_at' => now(),
+                        'updated_at'   => now(),
+                    ]);
+
+                // 4) si tenía driver, regresarlo a idle
+                if (!empty($row->driver_id)) {
+                    DB::table('drivers')
+                        ->where('tenant_id', $tenantId)
+                        ->where('id',        $row->driver_id)
+                        ->update([
+                            'status'     => 'idle',
+                            'updated_at' => now(),
+                        ]);
+                }
+
+                \Log::info('dispatch.cancel OK', ['ride' => $ride]);
+                return response()->json(['ok' => true]);
+            });
+        } catch (\Throwable $e) {
+            \Log::error('dispatch.cancel FAIL', [
+                'ride' => $ride,
+                'ex'   => $e->getMessage(),
+                'trace'=> $e->getTraceAsString(),
+            ]);
+            return response()->json(['ok' => false, 'msg' => $e->getMessage()], 500);
         }
     }
 
 
 
 
-
-public function cancelRide(Request $r, int $ride)
-{
-    $data = $r->validate(['reason' => 'nullable|string|max:160']);
-    $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
-
-    return DB::transaction(function () use ($tenantId, $ride, $data) {
-        $row = DB::table('rides')->where('tenant_id',$tenantId)->where('id',$ride)->lockForUpdate()->first();
-        if (!$row) return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'], 404);
-
-        $status = strtolower($row->status ?? '');
-        if (in_array($status, ['finished','canceled'])) return response()->json(['ok'=>true]);
-
-        DB::table('rides')->where('tenant_id',$tenantId)->where('id',$ride)->update([
-            'status'=>'canceled','canceled_at'=>now(),
-            'cancel_reason'=>$data['reason'] ?? null,'canceled_by'=>'ops','updated_at'=>now(),
+    public function cancelRide(Request $r, int $ride)
+    {
+        $data = $r->validate([
+            'reason' => 'nullable|string|max:160',
         ]);
 
-        DB::table('ride_status_history')->insert([
-            'tenant_id'=>$tenantId,'ride_id'=>$ride,
-            'prev_status'=>$status,'new_status'=>'canceled',
-            'meta'=>json_encode(['reason'=>$data['reason'] ?? null,'by'=>'ops']),
-            'created_at'=>now(),'updated_at'=>now(),
-        ]);
+        $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
 
-        // leer ofertas afectadas
-        $offered = DB::table('ride_offers')->where('tenant_id',$tenantId)->where('ride_id',$ride)->where('status','offered')
-                   ->get(['id','tenant_id','driver_id','ride_id']);
-        $accepted = DB::table('ride_offers')->where('tenant_id',$tenantId)->where('ride_id',$ride)->where('status','accepted')
-                   ->get(['id','tenant_id','driver_id','ride_id']);
+        return DB::transaction(function () use ($tenantId, $ride, $data) {
 
-        // cerrar ofertas
-        DB::table('ride_offers')->where('tenant_id',$tenantId)->where('ride_id',$ride)->where('status','offered')
-          ->update(['status'=>'released','responded_at'=>now(),'updated_at'=>now()]);
-        // opcional accepted->canceled:
-        DB::table('ride_offers')->where('tenant_id',$tenantId)->where('ride_id',$ride)->where('status','accepted')
-          ->update(['status'=>'canceled','responded_at'=>now(),'updated_at'=>now()]);
+            // Lock del ride de este tenant
+            $row = DB::table('rides')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $ride)
+                ->lockForUpdate()
+                ->first();
 
-        // EMITIR
-        foreach ($offered as $o) {
-            OfferBroadcaster::emitStatus((int)$o->tenant_id,(int)$o->driver_id,(int)$o->ride_id,(int)$o->id,'released');
-        }
-        foreach ($accepted as $o) {
-            OfferBroadcaster::emitStatus((int)$o->tenant_id,(int)$o->driver_id,(int)$o->ride_id,(int)$o->id,'canceled');
-        }
+            if (!$row) return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'], 404);
 
-        if (!empty($row->driver_id)) {
-            \App\Services\Realtime::toDriver($tenantId, (int)$row->driver_id)->emit('ride.canceled', [
-                'ride_id'=>(int)$ride, 'reason'=>$data['reason'] ?? null
+            $status = strtolower($row->status ?? '');
+            if (in_array($status, ['finished','canceled'])) {
+                // idempotente
+                return response()->json(['ok'=>true]);
+            }
+
+            // 1) Ride -> canceled
+            DB::table('rides')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $ride)
+                ->update([
+                    'status'        => 'canceled',
+                    'canceled_at'   => now(),
+                    'cancel_reason' => $data['reason'] ?? null,
+                    'canceled_by'   => 'ops',
+                    'updated_at'    => now(),
+                ]);
+
+            // 2) Historial
+            DB::table('ride_status_history')->insert([
+                'tenant_id'   => $tenantId,
+                'ride_id'     => $ride,
+                'prev_status' => $status,
+                'new_status'  => 'canceled',
+                'meta'        => json_encode(['reason'=>$data['reason'] ?? null, 'by'=>'ops']),
+                'created_at'  => now(),
+                'updated_at'  => now(),
             ]);
-        }
 
-        return response()->json(['ok'=>true]);
-    });
-}
+            // 3) Si tenía driver, regresarlo a idle
+            if (!empty($row->driver_id)) {
+                DB::table('drivers')
+                  ->where('tenant_id', $tenantId)
+                  ->where('id', $row->driver_id)
+                  ->update(['status'=>'idle','updated_at'=>now()]);
+            }
 
+            // 4) Cerrar ofertas vivas de este ride
+            DB::table('ride_offers')
+              ->where('tenant_id', $tenantId)
+              ->where('ride_id', $ride)
+              ->where('status','offered')
+              ->update(['status'=>'released','responded_at'=>now(),'updated_at'=>now()]);
+
+            // (Opcional) marcar aceptadas como 'canceled' para rastro
+            // DB::table('ride_offers')
+            //   ->where('tenant_id',$tenantId)->where('ride_id',$ride)
+            //   ->where('status','accepted')
+            //   ->update(['status'=>'canceled','responded_at'=>now(),'updated_at'=>now()]);
+
+            return response()->json(['ok'=>true]);
+        });
+    }
 
 
 

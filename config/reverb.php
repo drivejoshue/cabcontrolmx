@@ -38,7 +38,7 @@ return [
                 'key' => env('REVERB_APP_KEY', 'localkey'),
                 'secret' => env('REVERB_APP_SECRET', 'localsecret'),
                 'app_id' => env('REVERB_APP_ID', 'cabcontrol'),
-                'allowed_origins' => ['*'], // ← SOLO UNA VEZ
+                 'allowed_origins' => ['*', 'localhost', '127.0.0.1'],
                 'ping_interval' => env('REVERB_APP_PING_INTERVAL', 60),
                 'activity_timeout' => env('REVERB_APP_ACTIVITY_TIMEOUT', 30),
                 'max_connections' => env('REVERB_APP_MAX_CONNECTIONS'),

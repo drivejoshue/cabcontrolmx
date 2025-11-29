@@ -3,32 +3,33 @@
 namespace App\Events;
 
 use Illuminate\Broadcasting\Channel;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
 
-class PublicTestEvent implements ShouldBroadcast
+class PublicTestEvent implements ShouldBroadcastNow
 {
-    public $message;
+    use Dispatchable, InteractsWithSockets, SerializesModels;
 
-    public function __construct($message)
+    public string $message;
+    public array $meta;
+
+    public function __construct(string $message, array $meta = [])
     {
         $this->message = $message;
+        $this->meta    = $meta;
     }
 
     public function broadcastOn()
     {
+        // 👈 canal público para debug, sin "private-"
         return new Channel('public-test');
     }
 
     public function broadcastAs()
     {
-        return 'PublicTest';
-    }
-
-    public function broadcastWith()
-    {
-        return [
-            'message' => $this->message,
-            'timestamp' => now()->toDateTimeString()
-        ];
+        // nombre del evento que vamos a escuchar del lado JS
+        return 'debug.test';
     }
 }

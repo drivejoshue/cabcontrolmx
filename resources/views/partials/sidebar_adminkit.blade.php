@@ -9,7 +9,8 @@ $is = function ($pattern) {
 };
 
 // Helper: tenant id seguro
-$tenantId = auth()->check() ? (auth()->user()->tenant_id ?? 1) : 1;
+$tenantId = auth()->check() ? auth()->user()->tenant_id : null;
+
 ?>
 <nav id="sidebar" class="sidebar js-sidebar">
   <div class="sidebar-content js-simplebar">
@@ -76,15 +77,19 @@ $tenantId = auth()->check() ? (auth()->user()->tenant_id ?? 1) : 1;
         </a>
       </li>
 
-      {{-- ===== Ajustes del Tenant (solo admin) ===== --}}
-      <li class="sidebar-header">Ajustes del Tenant</li>
+     {{-- ===== Ajustes del Tenant (solo admin) ===== --}}
+@if($tenantId && auth()->user()->can('admin'))
+  <li class="sidebar-header">Ajustes del Tenant</li>
 
-      <li class="sidebar-item {{ $is('admin.tenants.*') }}">
-        <a class="sidebar-link" href="{{ route('admin.tenants.edit', $tenantId) }}">
-          <i class="align-middle" data-feather="settings"></i>
-          <span class="align-middle">Tenant Settings</span>
-        </a>
-      </li>
+  <li class="sidebar-item {{ $is('admin.tenants.*') }}">
+    <a class="sidebar-link" href="{{ route('admin.tenants.edit', $tenantId) }}">
+      <i class="align-middle" data-feather="settings"></i>
+      <span class="align-middle">Tenant Settings</span>
+    </a>
+  </li>
+  ...
+@endif
+
 
       <li class="sidebar-item {{ $is('admin.dispatch_settings.*') }}">
         <a class="sidebar-link" href="{{ route('admin.dispatch_settings.edit') }}">
@@ -140,6 +145,18 @@ $tenantId = auth()->check() ? (auth()->user()->tenant_id ?? 1) : 1;
           <span class="align-middle">Ingresos</span>
         </a>
       </li>
+
+      @if(auth()->check() && (auth()->user()->is_sysadmin ?? false))
+  <li class="sidebar-header">SysAdmin</li>
+
+  <li class="sidebar-item {{ $is('sysadmin.*') }}">
+    <a class="sidebar-link" href="{{ route('sysadmin.dashboard') }}">
+      <i class="align-middle" data-feather="shield"></i>
+      <span class="align-middle">Panel SysAdmin</span>
+    </a>
+  </li>
+@endif
+
       @endcan
     </ul>
   </div>

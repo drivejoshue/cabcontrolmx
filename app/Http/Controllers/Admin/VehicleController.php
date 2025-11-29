@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use App\Http\Controllers\AssignmentController;
+use App\Services\TenantBillingService;
 
 class VehicleController extends Controller
 {
@@ -82,6 +83,17 @@ class VehicleController extends Controller
             'created_at'=> now(),
             'updated_at'=> now(),
         ]);
+
+        $tenant = $this->resolveTenantFromUser($request->user()); // como ya lo haces ahora
+
+        [$allowed, $reason] = app(TenantBillingService::class)->canRegisterNewVehicle($tenant);
+
+        if (!$allowed) {
+            return redirect()
+                ->back()
+                ->withErrors(['billing' => $reason])
+                ->withInput();
+        }
 
         return redirect()->route('vehicles.show',$id)->with('ok','Vehículo creado.');
     }

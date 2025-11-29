@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Ride RT</title>
+</head>
+<body>
+  <h1>Test Realtime Ride</h1>
+  <p>Abre la consola del navegador (F12) para ver los eventos.</p>
+  <pre id="log"></pre>
+
+  <!-- SDK de Pusher desde CDN -->
+  <script src="https://js.pusher.com/8.2/pusher.min.js"></script>
+  <script>
+    // Muestra los logs de Pusher también en la consola
+    Pusher.logToConsole = true;
+
+    // ⚙️ Configurar Pusher/Reverb
+    const pusher = new Pusher('localkey', {
+      wsHost: 'orbana.sysapp.com.mx', // tu host Reverb
+      wsPort: 443,
+      wssPort: 443,
+      forceTLS: true,
+      enabledTransports: ['ws', 'wss'],
+    });
+
+    const channelName = 'tenant.1.ride.523';
+    const channel = pusher.subscribe(channelName);
+
+    const logElement = document.getElementById('log');
+
+    // 👀 Escuchar TODOS los eventos del canal
+    channel.bind_global(function(eventName, data) {
+      const line = '🚦 EVENT on ' + channelName + ' → ' + eventName + ' ' + JSON.stringify(data) + '\n';
+      console.log(line);
+      logElement.textContent += line;
+    });
+  </script>
+</body>
+</html>

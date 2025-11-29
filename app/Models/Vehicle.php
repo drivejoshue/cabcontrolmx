@@ -116,4 +116,10 @@ class Vehicle extends Model
         }
         return $this->photo_url ?: null;
     }
+
+    public function documents()
+{
+    return $this->hasMany(VehicleDocument::class);
+}
+
 }

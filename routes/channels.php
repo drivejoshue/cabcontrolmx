@@ -23,7 +23,6 @@ Broadcast::channel('tenant.{tenantId}.driver.{driverId}', function ($user, $tena
 });
 
 
-// Canal privado del RIDE (para dispatch/pasajero). Lo usamos en “RIDES” (siguiente paso).
 Broadcast::channel('tenant.{tenantId}.ride.{rideId}', function ($user = null, int $tenantId, int $rideId) {
     return $user ? (int)($user->tenant_id ?? 0) === (int)$tenantId : false;
 });
