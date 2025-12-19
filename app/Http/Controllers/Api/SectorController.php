@@ -8,58 +8,55 @@ use Illuminate\Http\Request;
 
 class SectorController extends Controller
 {
-    public function index(Request $request)
-    {
-        $tenantId = auth()->user()->tenant_id ?? null;
+   // App\Http\Controllers\Api\SectorController.php
+public function index(Request $request)
+{
+    $tenantId = optional($request->user())->tenant_id
+        ?: (int) $request->header('X-Tenant-ID');
 
-        $rows = Sector::query()
-            ->when($tenantId, fn($q) => $q->where('tenant_id', $tenantId))
-            ->where('activo', 1)
-            ->get(['id','nombre','area']);
+    if (!$tenantId) {
+        return response()->json(['message' => 'Tenant required'], 401);
+    }
 
-        $features = [];
+    $rows = Sector::query()
+        ->where('tenant_id', $tenantId)
+        ->where('activo', 1)
+        ->get(['id','nombre','area']);
 
-        foreach ($rows as $s) {
-            $geo = $s->area;
+    $features = [];
 
-            // Acepta string JSON o array/objeto
-            if (is_string($geo)) {
-                $geo = json_decode($geo, true);
-            } elseif (is_object($geo)) {
-                $geo = json_decode(json_encode($geo), true);
-            }
+    foreach ($rows as $s) {
+        $geo = $s->area;
 
-            if (!$geo || !is_array($geo)) {
-                continue; // inválido
-            }
-
-            // Acepta Feature, Polygon o MultiPolygon
-            $type = $geo['type'] ?? null;
-
-            if (in_array($type, ['Polygon','MultiPolygon'], true)) {
-                $features[] = [
-                    'type'       => 'Feature',
-                    'geometry'   => $geo,
-                    'properties' => [
-                        'id'     => $s->id,
-                        'nombre' => $s->nombre,
-                    ],
-                ];
-            } elseif ($type === 'Feature' && !empty($geo['geometry'])) {
-                $features[] = [
-                    'type'       => 'Feature',
-                    'geometry'   => $geo['geometry'],
-                    'properties' => array_merge([
-                        'id'     => $s->id,
-                        'nombre' => $s->nombre,
-                    ], $geo['properties'] ?? []),
-                ];
-            }
+        if (is_string($geo)) {
+            $geo = json_decode($geo, true);
+        } elseif (is_object($geo)) {
+            $geo = json_decode(json_encode($geo), true);
         }
 
-        return response()->json([
-            'type'     => 'FeatureCollection',
-            'features' => $features,
-        ]);
+        if (!$geo || !is_array($geo)) continue;
+
+        $type = $geo['type'] ?? null;
+
+        if (in_array($type, ['Polygon','MultiPolygon'], true)) {
+            $features[] = [
+                'type' => 'Feature',
+                'geometry' => $geo,
+                'properties' => ['id'=>$s->id, 'nombre'=>$s->nombre],
+            ];
+        } elseif ($type === 'Feature' && !empty($geo['geometry'])) {
+            $features[] = [
+                'type' => 'Feature',
+                'geometry' => $geo['geometry'],
+                'properties' => array_merge(
+                    ['id'=>$s->id, 'nombre'=>$s->nombre],
+                    $geo['properties'] ?? []
+                ),
+            ];
+        }
     }
+
+    return response()->json(['type'=>'FeatureCollection','features'=>$features]);
+}
+
 }

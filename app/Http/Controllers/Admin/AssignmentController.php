@@ -9,19 +9,29 @@ use Illuminate\Support\Facades\DB;
 
 class AssignmentController extends Controller
 {
-    // Asigna VEHÍCULO a un DRIVER (crea una nueva asignación vigente)
+    private function currentTenantId(): int
+    {
+        $tenantId = Auth::user()->tenant_id ?? null;
+
+        if (!$tenantId) {
+            abort(403, 'Usuario sin tenant asignado');
+        }
+
+        return (int) $tenantId;
+    }
+
+    // Asigna VEHÍCULO a un DRIVER
     public function assignVehicleToDriver(Request $r, int $driverId)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->currentTenantId();
 
         $data = $r->validate([
-            'vehicle_id' => 'required|integer|exists:vehicles,id',
-            'start_at'   => 'nullable|date',
-            'note'       => 'nullable|string|max:255',
+            'vehicle_id'      => 'required|integer|exists:vehicles,id',
+            'start_at'        => 'nullable|date',
+            'note'            => 'nullable|string|max:255',
             'close_conflicts' => 'nullable|boolean',
         ]);
 
-        // Validar pertenencia al tenant (driver y vehicle)
         $driver = DB::table('drivers')->where('tenant_id',$tenantId)->where('id',$driverId)->first();
         $vehicle= DB::table('vehicles')->where('tenant_id',$tenantId)->where('id',$data['vehicle_id'])->first();
         abort_if(!$driver || !$vehicle, 404);
@@ -31,14 +41,12 @@ class AssignmentController extends Controller
         DB::beginTransaction();
         try {
             if ($data['close_conflicts'] ?? true) {
-                // Cerrar asignaciones vigentes del driver
                 DB::table('driver_vehicle_assignments')
                     ->where('tenant_id',$tenantId)
                     ->where('driver_id',$driverId)
                     ->whereNull('end_at')
                     ->update(['end_at'=>now(), 'updated_at'=>now()]);
 
-                // Cerrar asignaciones vigentes del vehicle
                 DB::table('driver_vehicle_assignments')
                     ->where('tenant_id',$tenantId)
                     ->where('vehicle_id',$data['vehicle_id'])
@@ -65,19 +73,18 @@ class AssignmentController extends Controller
         }
     }
 
-    // Asigna DRIVER a un VEHÍCULO (atajo simétrico)
+    // Asigna DRIVER a un VEHÍCULO
     public function assignDriverToVehicle(Request $r, int $vehicleId)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->currentTenantId();
 
         $data = $r->validate([
-            'driver_id'    => 'required|integer|exists:drivers,id',
-            'start_at'     => 'nullable|date',
-            'note'         => 'nullable|string|max:255',
+            'driver_id'       => 'required|integer|exists:drivers,id',
+            'start_at'        => 'nullable|date',
+            'note'            => 'nullable|string|max:255',
             'close_conflicts' => 'nullable|boolean',
         ]);
 
-        // Validar pertenencia al tenant
         $vehicle= DB::table('vehicles')->where('tenant_id',$tenantId)->where('id',$vehicleId)->first();
         $driver = DB::table('drivers')->where('tenant_id',$tenantId)->where('id',$data['driver_id'])->first();
         abort_if(!$vehicle || !$driver, 404);
@@ -118,10 +125,10 @@ class AssignmentController extends Controller
         }
     }
 
-    // Cierra una asignación (end_at = now)
+    // Cierra una asignación
     public function close(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->currentTenantId();
 
         $aff = DB::table('driver_vehicle_assignments')
             ->where('tenant_id',$tenantId)

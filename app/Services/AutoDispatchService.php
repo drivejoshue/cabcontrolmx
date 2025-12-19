@@ -108,9 +108,9 @@ class AutoDispatchService
         return $ids;
     };
 
-    // 1) Try: SP OLA v1
+    // 1) Try: SP OLA v3
     try {
-        DB::statement('CALL sp_offer_wave_v1(?, ?, ?, ?, ?)', [
+        DB::statement('CALL sp_offer_wave_prio_v3(?, ?, ?, ?, ?)', [
             $tenantId, $rideId, $km, $limitN, $expires
         ]);
 
@@ -127,7 +127,7 @@ class AutoDispatchService
 
         return [
             'ok' => true,
-            'via' => 'sp_offer_wave_v1',
+            'via' => 'sp_offer_wave_prio_v3',
             'created_offer_ids' => $createdIds,
         ];
 
@@ -135,7 +135,7 @@ class AutoDispatchService
         $msg = $e->getMessage();
         $isMissing = str_contains($msg, '1305') || str_contains($msg, 'does not exist');
         if (!$isMissing) {
-            return ['ok'=>false,'via'=>'sp_offer_wave_v1','error'=>$msg];
+            return ['ok'=>false,'via'=>'sp_offer_wave_prio_v3','error'=>$msg];
         }
     }
 
@@ -162,7 +162,7 @@ class AutoDispatchService
                 $j->on('loc.driver_id','=','d.id');
             })
             ->where('d.tenant_id', $tenantId)
-            ->where('d.status', 'idle')
+            ->whereIn('d.status', ['idle','busy','on_ride'])
             ->whereNotNull('loc.lat')
             ->select([
                 'd.id as driver_id',
@@ -209,7 +209,7 @@ class AutoDispatchService
                 ->orderByDesc('id')->value('id');
 
             if ($offerId) {
-                try { DB::statement('CALL sp_accept_offer_v3(?)', [$offerId]); } catch (\Throwable $ee) {}
+                try { DB::statement('CALL sp_accept_offer_v7(?)', [$offerId]); } catch (\Throwable $ee) {}
 
                 // Opcional: emitir accepted/ride.active (por si quieres real-time inmediato)
                 try {

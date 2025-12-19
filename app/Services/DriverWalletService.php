@@ -29,7 +29,7 @@ class DriverWalletService
         $tenant = $ride->tenant;  // asumiendo relación tenant() en Ride
 
         // Solo procesar si es el tenant global
-        $globalTenantId = (int) config('cabcontrol.global_tenant_id', 100);
+        $globalTenantId = (int) config('orbana-global.global_tenant_id', 100);
         if ((int) $ride->tenant_id !== $globalTenantId) {
             // Los tenants normales podrán tener reportes, pero no wallet.
             return;

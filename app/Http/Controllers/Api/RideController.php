@@ -9,6 +9,7 @@ use App\Services\Realtime;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use App\Services\DriverWalletService;
 use App\Models\Ride;
@@ -23,11 +24,29 @@ class RideController extends Controller
         $this->walletService = $walletService;
     }
 
-    /** Helper tenant */
-    private function tenantIdFrom(Request $req): int
+   private function tenantIdFrom(Request $req): int
     {
-        return (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
+        $user       = $req->user();
+        $userTenant = $user->tenant_id ?? null;
+        $header     = $req->header('X-Tenant-ID');
+
+        if ($header !== null && $header !== '') {
+            $tid = (int) $header;
+
+            if ($userTenant && $userTenant != $tid && empty($user->is_sysadmin)) {
+                abort(403, 'Tenant inválido para este usuario');
+            }
+
+            return $tid;
+        }
+
+        if ($userTenant) {
+            return (int) $userTenant;
+        }
+
+        abort(403, 'Tenant no determinado');
     }
+
 
     /** GET /api/driver/rides/active - RIDE ACTIVO PARA DRIVER */
     public function activeForDriver(Request $req)
@@ -72,6 +91,8 @@ class RideController extends Controller
                     'r.fare_mode', 'r.payment_method', 'r.notes', 'r.pax',
                     'r.distance_m', 'r.duration_s', 'r.route_polyline',
                     'r.quoted_amount', 'r.total_amount',
+                    'r.passenger_offer', 'r.driver_offer', 'r.agreed_amount',
+
                     'r.driver_id', 'r.vehicle_id', 'r.sector_id', 'r.stand_id', 'r.shift_id',
                     'r.scheduled_for', 'r.requested_at', 'r.accepted_at', 'r.arrived_at', 'r.onboard_at',
                     'r.finished_at', 'r.canceled_at', 'r.cancel_reason', 'r.canceled_by',
@@ -114,12 +135,58 @@ class RideController extends Controller
 
             $ride->quoted_amount = isset($ride->quoted_amount) ? (float)$ride->quoted_amount : null;
             $ride->total_amount  = isset($ride->total_amount)  ? (float)$ride->total_amount  : null;
+             $ride->passenger_offer = isset($ride->passenger_offer) ? (float)$ride->passenger_offer : null;
+            $ride->agreed_amount   = isset($ride->agreed_amount)   ? (float)$ride->agreed_amount   : null;
 
             $ride->stops_count = isset($ride->stops_count) ? (int)$ride->stops_count : 0;
             $ride->stop_index  = isset($ride->stop_index)  ? (int)$ride->stop_index  : 0;
 
             // Limpiar campo stops_json
             unset($ride->stops_json);
+
+
+              // ---- AVATAR DEL PASAJERO (desde tabla passengers) ----
+            $ride->passenger_avatar_url = null;
+            $ride->avatar_url           = null; // alias genérico por si el cliente usa este nombre
+
+            if (!empty($ride->passenger_id)) {
+                $passenger = DB::table('passengers')
+                    ->where('id', $ride->passenger_id)
+                    ->first(['avatar_url']);
+
+                if ($passenger && !empty($passenger->avatar_url)) {
+                    $ride->passenger_avatar_url = $passenger->avatar_url;
+                    $ride->avatar_url           = $passenger->avatar_url;
+                }
+            }
+
+            // ---- RATING DEL PASAJERO ----
+            $ride->passenger_rating       = null;
+            $ride->passenger_rating_count = null;
+
+            if (!empty($ride->passenger_id)) {
+                $ratingRow = $this->passengerRatingSummary($tenantId, (int)$ride->passenger_id);
+
+                if ($ratingRow && $ratingRow->total_ratings > 0) {
+                    $ride->passenger_rating       = (float) $ratingRow->avg_rating;
+                    $ride->passenger_rating_count = (int) $ratingRow->total_ratings;
+                }
+            }
+             $ride->amount = $this->resolveFinalAmount($ride);
+
+                         // Si total_amount viene NULL pero ya sabemos el monto final, lo fijamos
+            if ($ride->total_amount === null && $ride->amount !== null) {
+                DB::table('rides')
+                    ->where('tenant_id', $tenantId)
+                    ->where('id', $ride->id)
+                    ->update([
+                        'total_amount' => $ride->amount,
+                        'updated_at'   => now(),
+                    ]);
+
+                $ride->total_amount = $ride->amount;
+            }
+
 
             return response()->json([
                 'ok' => true,
@@ -178,12 +245,13 @@ class RideController extends Controller
     }
 
     /** GET /api/rides/{ride} */
-    public function show(Request $req, int $ride)
+     public function show(Request $req, int $ride)
     {
         $tenantId = $this->tenantIdFrom($req);
 
         $row = DB::table('rides as r')
-            ->where('r.tenant_id', $tenantId)->where('r.id', $ride)
+            ->where('r.tenant_id', $tenantId)
+            ->where('r.id', $ride)
             ->select([
                 'r.id','r.tenant_id','r.status','r.requested_channel',
                 'r.passenger_id','r.passenger_name','r.passenger_phone',
@@ -192,14 +260,30 @@ class RideController extends Controller
                 'r.fare_mode','r.payment_method','r.notes','r.pax',
                 'r.distance_m','r.duration_s','r.route_polyline',
                 'r.quoted_amount','r.total_amount',
+                'passenger_offer','driver_offer','agreed_amount',
+
                 'r.driver_id','r.vehicle_id','r.sector_id','r.stand_id','r.shift_id',
                 'r.scheduled_for','r.requested_at','r.accepted_at','r.arrived_at','r.onboard_at',
                 'r.finished_at','r.canceled_at','r.cancel_reason','r.canceled_by',
                 'r.created_by','r.created_at','r.updated_at',
                 'r.stops_json','r.stops_count','r.stop_index',
-            ])->first();
+            ])
+            ->first();
 
-        if (!$row) return response()->json(['ok' => false, 'message' => 'Ride no encontrado'], 404);
+        if (!$row) {
+            return response()->json(['ok' => false, 'message' => 'Ride no encontrado'], 404);
+        }
+
+        // cast básicos
+        $row->id        = (int)$row->id;
+        $row->tenant_id = (int)$row->tenant_id;
+
+        $row->passenger_id = isset($row->passenger_id) ? (int)$row->passenger_id : null;
+        $row->driver_id    = isset($row->driver_id)    ? (int)$row->driver_id    : null;
+        $row->vehicle_id   = isset($row->vehicle_id)   ? (int)$row->vehicle_id   : null;
+        $row->sector_id    = isset($row->sector_id)    ? (int)$row->sector_id    : null;
+        $row->stand_id     = isset($row->stand_id)     ? (int)$row->stand_id     : null;
+        $row->shift_id     = isset($row->shift_id)     ? (int)$row->shift_id     : null;
 
         $row->stops = $row->stops_json ? (json_decode($row->stops_json, true) ?: []) : [];
 
@@ -214,11 +298,17 @@ class RideController extends Controller
         $row->quoted_amount = isset($row->quoted_amount) ? (float)$row->quoted_amount : null;
         $row->total_amount  = isset($row->total_amount)  ? (float)$row->total_amount  : null;
 
+        $row->passenger_offer = isset($row->passenger_offer) ? (float)$row->passenger_offer : null;
+        $row->driver_offer    = isset($row->driver_offer)    ? (float)$row->driver_offer    : null;
+        $row->agreed_amount   = isset($row->agreed_amount)   ? (float)$row->agreed_amount   : null;
+        $row->amount          = $this->resolveFinalAmount($row);
+
         $row->stops_count = isset($row->stops_count) ? (int)$row->stops_count : 0;
         $row->stop_index  = isset($row->stop_index)  ? (int)$row->stop_index  : 0;
 
         return response()->json($row);
     }
+
 
     // ... (el resto de tus métodos existentes se mantienen igual)
     // POST /api/rides
@@ -229,8 +319,20 @@ class RideController extends Controller
     // POST /api/driver/rides/{ride}/cancel
     // POST /api/rides/{ride}/stops/complete
     // private function commitStatusChange
+    private function passengerRatingSummary(int $tenantId, int $passengerId): ?object
+    {
+        return DB::table('ratings as r')
+            ->where('r.tenant_id', $tenantId)
+            ->where('r.rated_type', 'passenger')
+            ->where('r.rated_id', $passengerId)
+            ->selectRaw('
+                ROUND(AVG(r.rating), 1) as avg_rating,
+                COUNT(*) as total_ratings
+            ')
+            ->first();
+    }
 
-    /** POST /api/rides */
+  /** POST /api/rides */
     public function store(Request $req)
     {
         $data = $req->validate([
@@ -265,10 +367,68 @@ class RideController extends Controller
 
         $tenantId = $this->tenantIdFrom($req);
 
+        // Default de canal si viene vacío → dispatch
+        $channel = $data['requested_channel'] ?? 'dispatch';
+        $data['requested_channel'] = $channel;
+
+        // Si hay quoted_amount, forzamos fare_mode = fixed
         if (array_key_exists('quoted_amount', $data) && $data['quoted_amount'] !== null) {
             $data['fare_mode'] = 'fixed';
         }
 
+        /**
+         * 🔒 Anti doble click / doble submit (sólo para dispatch)
+         *
+         * Si en los últimos N segundos ya existe un ride con:
+         * - mismo tenant
+         * - canal = dispatch
+         * - misma lat/lng de origen
+         * - mismo teléfono (o ambos null)
+         * - mismo destino (cuando exista)
+         * - misma quoted_amount
+         *
+         * devolvemos ese ride en lugar de crear otro.
+         */
+        if ($channel === 'dispatch') {
+            $windowSeconds = 8; // puedes subir/bajar este valor según lo que veas en producción
+
+            $recent = DB::table('rides')
+                ->where('tenant_id', $tenantId)
+                ->where('requested_channel', 'dispatch')
+                ->where('origin_lat', $data['origin_lat'])
+                ->where('origin_lng', $data['origin_lng'])
+                ->when(!empty($data['dest_lat']) && !empty($data['dest_lng']), function ($q) use ($data) {
+                    $q->where('dest_lat', $data['dest_lat'])
+                      ->where('dest_lng', $data['dest_lng']);
+                })
+                ->where(function ($q) use ($data) {
+                    // Si mandas teléfono, lo usamos; si no, buscamos también null
+                    if (array_key_exists('passenger_phone', $data)) {
+                        $q->where('passenger_phone', $data['passenger_phone'] ?? null);
+                    } else {
+                        $q->whereNull('passenger_phone');
+                    }
+                })
+                ->when(array_key_exists('quoted_amount', $data), function ($q) use ($data) {
+                    $q->where('quoted_amount', $data['quoted_amount']);
+                })
+                ->where('created_at', '>=', now()->subSeconds($windowSeconds))
+                ->orderByDesc('id')
+                ->first();
+
+            if ($recent) {
+                // Opcional: log para depurar
+                \Log::info('⛔ Ride dispatch duplicado bloqueado por ventana corta', [
+                    'tenant_id' => $tenantId,
+                    'ride_id'   => $recent->id,
+                ]);
+
+                // Devolvemos el ride encontrado (estilo "idempotente")
+                return response()->json($recent, 200);
+            }
+        }
+
+        // --- Crear ride normalmente ---
         $ride = app(\App\Services\CreateRideService::class)->create($data, $tenantId);
 
         // Stops (conserva label)
@@ -306,6 +466,8 @@ class RideController extends Controller
 
         return response()->json($ride, 201);
     }
+
+
 
     /** PATCH /api/rides/{ride}/stops  (panel) */
     public function updateStops(Request $req, int $ride)
@@ -389,7 +551,7 @@ class RideController extends Controller
     }
 
     /** POST /api/driver/rides/{ride}/board */
-    public function board(Request $req, int $ride)
+   public function board(Request $req, int $ride)
     {
         $tenantId = $this->tenantIdFrom($req);
 
@@ -400,13 +562,39 @@ class RideController extends Controller
             $this->commitStatusChange($tenantId, $ride, 'on_board', ['source' => 'api.fallback']);
         }
 
+        // 🔹 Asegurar timestamps del pasajero cuando el driver marca ON_BOARD
+        DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $ride)
+            ->update([
+                // por si el SP/commitStatusChange no lo llenó
+                'onboard_at'           => DB::raw('COALESCE(onboard_at, NOW())'),
+                'passenger_onway_at'   => DB::raw('COALESCE(passenger_onway_at, NOW())'),
+                'passenger_onboard_at' => DB::raw('COALESCE(passenger_onboard_at, NOW())'),
+            ]);
+
         RideBroadcaster::onboard($tenantId, $ride);
 
-        $driverId = DB::table('drivers')->where('tenant_id',$tenantId)->where('user_id',$req->user()->id)->value('id');
-        if ($driverId) Realtime::toDriver($tenantId,(int)$driverId)->emit('ride.on_board', ['ride_id'=>$ride]);
+        $driverId = DB::table('drivers')
+            ->where('tenant_id', $tenantId)
+            ->where('user_id', $req->user()->id)
+            ->value('id');
 
-        return response()->json(['ok' => true, 'ride_id' => $ride, 'status' => 'on_board']);
+        if ($driverId) {
+            Realtime::toDriver($tenantId, (int)$driverId)
+                ->emit('ride.on_board', ['ride_id' => $ride]);
+        }
+
+        return response()->json([
+            'ok'     => true,
+            'ride_id'=> $ride,
+            'status' => 'on_board',
+        ]);
     }
+
+
+
+
 
     /** POST /api/driver/rides/{ride}/finish */
     public function finish(Request $req, int $ride)
@@ -414,24 +602,81 @@ class RideController extends Controller
         $tenantId = $this->tenantIdFrom($req);
 
         // 1) Ejecuta SP de cierre + promoción (usa ride_id SIEMPRE)
-        $row  = \DB::selectOne('CALL sp_ride_finish_v1(?,?)', [$tenantId, $ride]);
+        $row  = DB::selectOne('CALL sp_ride_finish_v2(?,?)', [$tenantId, $ride]);
         $mode = $row->mode ?? 'finished';
         $next = $row->next_ride_id ?? null;
 
-        // 2) Snapshot para DISPATCH si total_amount es NULL
-        $snap = DB::table('rides')->where('id',$ride)->select('requested_channel','total_amount','quoted_amount','driver_id')->first();
-        if (($snap->requested_channel ?? null) === 'dispatch' && $snap->total_amount === null) {
-            DB::table('rides')->where('id',$ride)->update([
-                'total_amount' => $snap->quoted_amount,
-                'updated_at'   => now(),
+        // 1.b) Marcar quién cerró el viaje
+        DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $ride)
+            ->update([
+                'finished_by' => 'driver',
+                'updated_at'  => now(),
             ]);
+
+
+        // 2) Snapshot del ride tras el SP (para finished + wallet)
+        $snap = DB::table('rides')
+            ->where('id', $ride)
+            ->select(
+                'requested_channel',
+                'total_amount',
+                'quoted_amount',
+                'passenger_offer',
+                'agreed_amount',
+                'driver_id'
+            )
+            ->first();
+
+        // 2.b) Si total_amount sigue NULL, lo canonicalizamos
+        if ($snap && $snap->total_amount === null) {
+            $final = $this->resolveFinalAmount($snap);
+            if ($final !== null) {
+                DB::table('rides')
+                    ->where('id', $ride)
+                    ->update([
+                        'total_amount' => $final,
+                        'updated_at'   => now(),
+                    ]);
+                $snap->total_amount = $final;
+            }
         }
 
-        // 3) Emitir
-        RideBroadcaster::finished($tenantId, $ride, $snap->total_amount ?? $snap->quoted_amount ?? null);
-         // 👇 Aquí invocamos el cobro de comisión para tenant global
-        $this->walletService->handleRideFinished($ride);
+        // 3) Emitir evento canónico (ya con total_amount fijo)
+        RideBroadcaster::finished(
+            $tenantId,
+            $ride,
+            $snap->total_amount ?? $snap->quoted_amount ?? null
+        );
 
+        // 4) Wallet SOLO para tenant global (commission mode)
+        $globalTenantId = (int) config('cabcontrol.global_tenant_id', 100);
+
+        if ((int) $tenantId === $globalTenantId) {
+            // Cargamos el modelo con tenant y billingProfile
+            $rideModel = Ride::with(['tenant.billingProfile'])->find($ride);
+
+            if ($rideModel) {
+                try {
+                    $this->walletService->handleRideFinished($rideModel);
+                } catch (\Throwable $e) {
+                    Log::error('Error en DriverWalletService::handleRideFinished', [
+                        'ride_id'   => $ride,
+                        'tenant_id' => $tenantId,
+                        'error'     => $e->getMessage(),
+                    ]);
+                    // Importante: NO rompemos el flujo; el viaje ya está cerrado.
+                }
+            } else {
+                Log::warning('Ride no encontrado para handleRideFinished', [
+                    'ride_id'   => $ride,
+                    'tenant_id' => $tenantId,
+                ]);
+            }
+        }
+
+        // 5) Realtime adicional (promoted / finished)
         try {
             if ($mode === 'promoted' && $next) {
                 Realtime::toDriver($tenantId, (int)$snap->driver_id)->emit('ride.promoted', ['ride_id' => (int)$next]);
@@ -439,12 +684,25 @@ class RideController extends Controller
                 Realtime::toDriver($tenantId, (int)$snap->driver_id)->emit('offers.update', [
                     'ride_id' => (int)$next, 'status' => 'accepted'
                 ]);
-            } else {
+                if ($mode === 'queued') {  // Si el SP devuelve mode = 'queued'
+                Realtime::toDriver($tenantId, (int)$snap->driver_id)->emit('ride.queued', [
+                    'ride_id' => (int)$next,
+                    'position' => 1 // O obtener posición real de la cola
+                        ]);
+                    }
+                    } else {
                 Realtime::toDriver($tenantId, (int)$snap->driver_id)->emit('ride.finished', ['ride_id' => (int)$ride]);
             }
-        } catch (\Throwable $e) { /* polling fallback */ }
+        } catch (\Throwable $e) {
+            // Polling fallback
+        }
 
-        return response()->json(['ok'=>true, 'ride_id'=>$ride, 'status'=>'finished', 'promoted'=>$next]);
+        return response()->json([
+            'ok'       => true,
+            'ride_id'  => $ride,
+            'status'   => 'finished',
+            'promoted' => $next,
+        ]);
     }
 
     /** POST /api/driver/rides/{ride}/cancel */
@@ -577,92 +835,95 @@ class RideController extends Controller
 
 
    public function confirmAcceptance(Request $req, int $rideId)
-{
-    $v = $req->validate([
-        'tenant_id' => 'required|integer',
-        'driver_id' => 'required|integer',
-        'offer_id'  => 'required|integer',
-    ]);
+    {
+        $v = $req->validate([
+            'tenant_id' => 'required|integer',
+            'driver_id' => 'required|integer',
+            'offer_id'  => 'required|integer',
+        ]);
 
-    $tenantId = (int)$v['tenant_id'];
-    $driverId = (int)$v['driver_id'];
+        $tenantId = (int)$v['tenant_id'];
+        $driverId = (int)$v['driver_id'];
 
-    // Verificar que el driver es el ganador
-    $rideRow = DB::table('rides')
-        ->where('id', $rideId)
-        ->where('tenant_id', $tenantId)
-        ->where('driver_id', $driverId)
-        ->first();
+        // Verificar que el driver es el ganador
+        $rideRow = DB::table('rides')
+            ->where('id', $rideId)
+            ->where('tenant_id', $tenantId)
+            ->where('driver_id', $driverId)
+            ->first();
 
-    if (!$rideRow) {
-        return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
+        if (!$rideRow) {
+            return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
+        }
+
+        // Enviar primera ubicación del driver
+        $driverLocation = DB::table('driver_locations')
+            ->where('driver_id', $driverId)
+            ->where('tenant_id', $tenantId)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($driverLocation) {
+            RideBroadcaster::location(
+                $tenantId,
+                (int)$rideRow->id,
+                (float)$driverLocation->lat,
+                (float)$driverLocation->lng,
+                $driverLocation->bearing ? (float)$driverLocation->bearing : null
+            );
+        }
+
+            self::update($tenantId, $rideId, 'accepted', $extra);
+
+      // Reutilizamos el mismo flujo
+        RideBroadcaster::bootstrapLocationAndRoute($tenantId, $rideId, $driverId);
+
+       
+
+        return response()->json(['ok' => true]);
     }
 
-    // Enviar primera ubicación del driver
-    $driverLocation = DB::table('driver_locations')
-        ->where('driver_id', $driverId)
-        ->where('tenant_id', $tenantId)
-        ->orderByDesc('id')
-        ->first();
+    protected function broadcastDriverToPickupRoute(int $tenantId, int $rideId, int $driverId): void
+    {
+        $ride = DB::table('rides')->where('id', $rideId)
+            ->where('tenant_id', $tenantId)
+            ->first();
 
-    if ($driverLocation) {
-        RideBroadcaster::location(
+        if (!$ride || !$ride->origin_lat || !$ride->origin_lng) {
+            return;
+        }
+
+        $driverLocation = DB::table('driver_locations')
+            ->where('driver_id', $driverId)
+            ->where('tenant_id', $tenantId)
+            ->orderByDesc('id')
+            ->first();
+
+        if (!$driverLocation) {
+            return;
+        }
+
+        // Llamas a tu servicio de rutas (Google/OSRM)
+        $route = app(\App\Services\RouteEstimator::class)
+            ->estimate(
+                originLat:  (float)$driverLocation->lat,
+                originLng:  (float)$driverLocation->lng,
+                destLat:    (float)$ride->origin_lat,
+                destLng:    (float)$ride->origin_lng,
+            );
+
+        if (!$route || empty($route->polyline)) {
+            return;
+        }
+
+        RideBroadcaster::driverToPickupRoute(
             $tenantId,
-            (int)$rideRow->id,
-            (float)$driverLocation->lat,
-            (float)$driverLocation->lng,
-            $driverLocation->bearing ? (float)$driverLocation->bearing : null
+            $rideId,
+            $route->polyline,
+            $route->distance_m,
+            $route->duration_s,
         );
     }
-  // Reutilizamos el mismo flujo
-    RideBroadcaster::bootstrapLocationAndRoute($tenantId, $rideId, $driverId);
-
-   
-
-    return response()->json(['ok' => true]);
-}
-
-protected function broadcastDriverToPickupRoute(int $tenantId, int $rideId, int $driverId): void
-{
-    $ride = DB::table('rides')->where('id', $rideId)
-        ->where('tenant_id', $tenantId)
-        ->first();
-
-    if (!$ride || !$ride->origin_lat || !$ride->origin_lng) {
-        return;
-    }
-
-    $driverLocation = DB::table('driver_locations')
-        ->where('driver_id', $driverId)
-        ->where('tenant_id', $tenantId)
-        ->orderByDesc('id')
-        ->first();
-
-    if (!$driverLocation) {
-        return;
-    }
-
-    // Llamas a tu servicio de rutas (Google/OSRM)
-    $route = app(\App\Services\RouteEstimator::class)
-        ->estimate(
-            originLat:  (float)$driverLocation->lat,
-            originLng:  (float)$driverLocation->lng,
-            destLat:    (float)$ride->origin_lat,
-            destLng:    (float)$ride->origin_lng,
-        );
-
-    if (!$route || empty($route->polyline)) {
-        return;
-    }
-
-    RideBroadcaster::driverToPickupRoute(
-        $tenantId,
-        $rideId,
-        $route->polyline,
-        $route->distance_m,
-        $route->duration_s,
-    );
-}
 
 
     public function driverCardForPassenger(Request $r, int $ride)
@@ -694,6 +955,7 @@ protected function broadcastDriverToPickupRoute(int $tenantId, int $rideId, int 
                 'ok'                      => true,
                 'driver_id'                =>null, 
                 'driver_name'             => null,
+                'driver_phone'             => null,
                 'avatar_url'              => null,
                 'rating'                  => null,
                 'total_trips'             => null,
@@ -865,6 +1127,7 @@ protected function broadcastDriverToPickupRoute(int $tenantId, int $rideId, int 
             'ok'                      => true,
             'driver_id'               =>$driver->id,  
             'driver_name'             => $driver->name ?? null,
+             'driver_phone'            => $driver->phone ?? null,
             'avatar_url'              => $avatarUrl,
             'rating'                  => $rating,
             'total_trips'             => $totalTrips,
@@ -879,6 +1142,13 @@ protected function broadcastDriverToPickupRoute(int $tenantId, int $rideId, int 
             'eta_minutes'             => $etaPickupMinutes,      // compatibilidad
             'eta_pickup_minutes'      => $etaPickupMinutes,      // driver → pickup
             'eta_destination_minutes' => $etaDestinationMinutes, // driver → destino
+
+             // 🔹 Datos para transferencia
+            'transfer_bank'           => $driver->payout_bank ?? null,
+            'transfer_account'        => $driver->payout_account_number ?? null,
+            'transfer_clabe'          => $driver->payout_clabe ?? null,
+            'transfer_name'           => $driver->payout_account_name ?? null,
+            'transfer_notes'          => $driver->payout_notes ?? null,
         ]);
     }
 
@@ -921,4 +1191,239 @@ protected function broadcastDriverToPickupRoute(int $tenantId, int $rideId, int 
             'ratings' => $ratings
         ]);
     }
+
+    /** GET /api/driver/history */
+    /** GET /api/driver/history */
+    public function historyForDriver(Request $req)
+    {
+        $user = $req->user();
+        if (!$user) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'Unauthenticated',
+            ], 401);
+        }
+
+        $tenantId = $this->tenantIdFrom($req);
+
+        // Driver asociado al usuario
+        $driverId = DB::table('drivers')
+            ->where('tenant_id', $tenantId)
+            ->where('user_id', $user->id)
+            ->value('id');
+
+        if (!$driverId) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'Driver no encontrado',
+            ], 404);
+        }
+
+        // range / payment / channel
+        $range   = $req->query('range', $req->query('filter', 'today')); // compat
+        $payment = $req->query('payment'); // cash|transfer|card|corp|null
+        $channel = $req->query('channel'); // dispatch|passenger_app|driver_app|api|null
+
+        $page    = (int) $req->query('page', 1);
+        $perPage = (int) $req->query('per_page', 20);
+
+        $tz  = config('app.timezone');
+        $now = now($tz);
+
+        // Rango de fechas
+        $from = null;
+        $to   = null;
+
+        switch ($range) {
+            case 'week':
+                $from = $now->copy()->startOfWeek();
+                $to   = $now->copy()->endOfDay();
+                break;
+
+            case 'month':
+                $from = $now->copy()->startOfMonth();
+                $to   = $now->copy()->endOfDay();
+                break;
+
+            case 'all':
+                $range = 'all';
+                break;
+
+            case 'today':
+            default:
+                $from  = $now->copy()->startOfDay();
+                $to    = $now->copy()->endOfDay();
+                $range = 'today';
+                break;
+        }
+
+        /**
+         * BASE para el resumen (sin joins para que no truene los COUNT/SUM)
+         */
+        $base = DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('driver_id', $driverId)
+            ->whereIn('status', ['finished', 'canceled']);
+
+        if ($from && $to) {
+            $base->whereBetween('created_at', [$from, $to]);
+        }
+
+        if ($payment) {
+            $base->where('payment_method', $payment);
+        }
+
+        if ($channel) {
+            $base->where('requested_channel', $channel);
+        }
+
+        // --- Resumen (sólo viajes terminados) ---
+           $summaryRow = (clone $base)
+            ->where('status', 'finished')
+            ->selectRaw("
+                COUNT(*) as finished_trips,
+                SUM(
+                    CASE
+                        WHEN requested_channel = 'passenger_app'
+                            THEN COALESCE(agreed_amount, passenger_offer, total_amount, quoted_amount, 0)
+                        ELSE
+                            COALESCE(total_amount, agreed_amount, passenger_offer, quoted_amount, 0)
+                    END
+                ) as gross_amount
+            ")
+            ->first();
+
+
+        $canceledCount = (clone $base)
+            ->where('status', 'canceled')
+            ->count();
+
+        $summary = [
+            'finishedTrips' => (int)($summaryRow->finished_trips ?? 0),
+            'canceledTrips' => (int)$canceledCount,
+            'grossAmount'   => (float)($summaryRow->gross_amount ?? 0),
+        ];
+
+        /**
+         * BASE para la lista, aquí sí hacemos LEFT JOIN con ratings
+         * rating = calificación que el PASAJERO le puso al DRIVER en ese ride.
+         */
+        $listBase = DB::table('rides as r')
+            ->leftJoin('ratings as rt', function ($q) use ($tenantId, $driverId) {
+                $q->on('rt.ride_id', '=', 'r.id')
+                  ->where('rt.tenant_id', '=', $tenantId)
+                  ->where('rt.rated_type', '=', 'driver')
+                  ->where('rt.rater_type', '=', 'passenger')
+                  ->where('rt.rated_id', '=', $driverId);
+            })
+            ->where('r.tenant_id', $tenantId)
+            ->where('r.driver_id', $driverId)
+            ->whereIn('r.status', ['finished', 'canceled']);
+
+        if ($from && $to) {
+            $listBase->whereBetween('r.created_at', [$from, $to]);
+        }
+
+        if ($payment) {
+            $listBase->where('r.payment_method', $payment);
+        }
+
+        if ($channel) {
+            $listBase->where('r.requested_channel', $channel);
+        }
+
+        // --- Paginación ---
+        $paginator = $listBase
+            ->orderByDesc('r.created_at')
+            ->select([
+                'r.*',
+                'rt.rating as driver_rating',
+            ])
+            ->paginate($perPage, ['*'], 'page', $page);
+
+        $todayDate = $now->toDateString();
+
+        $trips = collect($paginator->items())->map(function ($r) use ($tz, $todayDate) {
+            $createdAt = $r->requested_at ?? $r->created_at;
+            $created   = $createdAt ? \Carbon\Carbon::parse($createdAt, $tz) : null;
+
+            if ($created && $created->toDateString() === $todayDate) {
+                $dateLabel = 'Hoy, ' . $created->format('d M');
+            } else {
+                $dateLabel = $created ? $created->format('d M Y') : '';
+            }
+
+            $timeLabel = $created ? $created->format('H:i') : '';
+
+            $status = strtolower($r->status ?? '');
+            $amount = $this->resolveFinalAmount($r);
+            return [
+                'id'            => (int)$r->id,
+                'startedAt'     => $createdAt,
+                'finishedAt'    => $r->finished_at,
+                'dateLabel'     => $dateLabel,
+                'timeLabel'     => $timeLabel,
+                'passengerName' => $r->passenger_name ?? 'Pasajero',
+                'originLabel'   => $r->origin_label ?? 'Origen sin nombre',
+                'destLabel'     => $r->dest_label ?? null,
+                'amount'        => $amount !== null ? $amount : 0.0,
+                'rating'        => $r->driver_rating !== null ? (float)$r->driver_rating : null,
+                'paymentMethod' => $r->payment_method ?? null,
+                'status'        => $status,   // finished | canceled
+            ];
+        });
+
+        return response()->json([
+            'ok' => true,
+            'pagination' => [
+                'page'      => $paginator->currentPage(),
+                'per_page'  => $paginator->perPage(),
+                'total'     => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
+            'summary' => $summary,
+            'trips'   => $trips,
+        ]);
     }
+
+   /**
+ * Resuelve el monto final canónico de un viaje.
+ *
+ * Reglas:
+ * - passenger_app:
+ *      agreed_amount -> passenger_offer -> total_amount -> quoted_amount
+ * - otros canales (dispatch, driver_app, api):
+ *      total_amount -> agreed_amount -> passenger_offer -> quoted_amount
+ *
+ * Siempre retorna un float entero (round) o null.
+ */
+private function resolveFinalAmount(?object $rideRow): ?float
+{
+    if (!$rideRow) {
+        return null;
+    }
+
+    $channel = $rideRow->requested_channel ?? null;
+
+    $agreed  = $rideRow->agreed_amount     ?? null;
+    $paxOff  = $rideRow->passenger_offer   ?? null;
+    $total   = $rideRow->total_amount      ?? null;
+    $quoted  = $rideRow->quoted_amount     ?? null;
+
+    if ($channel === 'passenger_app') {
+        $base = $agreed ?? $paxOff ?? $total ?? $quoted;
+    } else {
+        $base = $total ?? $agreed ?? $paxOff ?? $quoted;
+    }
+
+    if ($base === null) {
+        return null;
+    }
+
+    return (float) round((float) $base);
+}
+
+
+
+
+}

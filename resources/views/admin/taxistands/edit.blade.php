@@ -93,12 +93,15 @@
         </div>
       </div>
 
-      <div class="mt-3">
-        <label class="form-label">QR</label>
-        <div id="qr" class="border rounded p-3 d-inline-block"></div>
-        <small class="text-muted d-block">Apunta a: <code>{{ url('/stand/'.$stand->codigo) }}</code> (puedes cambiar la URL objetivo cuando definamos la ruta).</small>
-      </div>
-    </div>
+     <div class="mt-3">
+    <label class="form-label">QR</label>
+    <div id="qr" class="border rounded p-3 d-inline-block"></div>
+    <small class="text-muted d-block">
+        Apunta a: <code>{{ $stand->qr_secret }}</code>
+        (este es el valor que leerá la app del chofer).
+    </small>
+</div>
+
 
     <div class="card-footer d-flex justify-content-end gap-2">
       <a href="{{ route('taxistands.index') }}" class="btn btn-outline-secondary">Cancelar</a>
@@ -143,7 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // QR
-  const target = "{{ url('/stand/'.$stand->codigo) }}";
+  const target = @json($stand->qr_secret);
   const el = document.getElementById('qr');
   if (el) new QRCode(el, { text: target, width: 160, height: 160 });
 });

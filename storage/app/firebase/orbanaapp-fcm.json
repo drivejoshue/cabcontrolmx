@@ -1,0 +1,14 @@
+{
+  "type": "service_account",
+  "project_id": "orbanaapp",
+  "private_key_id": "235b91a924b897b8b81b404054c8ba70f20dc741",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCWxLvJ8PtP1rhT\n2yykIlspA0XdnudG8pT6rE/LO26CkFmqc5WkB3V9/4taPRz9GT2z+ATGM5FAFAAE\nrRRXHDVMN0c4BGqlUHcSXanDuTllC8RMHiSmMLItLjixpDScrzQ1GHaFlcM5zPYt\nwy26NgEcBLvQaLSSX/8hZPX4WYcDibq832sYedF+wGhgaQRTUIZPhhJdtgNpSkuQ\nLtXbtxu4kGev4yhitzFX/9TxxpK5oC4kCBroxqFFHOc+8PERe+ateZpQ/y94m36X\nkA95cWIm9QdpcilGDcBldBeBlw3Fj/JAwJRnU8me7F62/tzQmWgMPRK8FIhQgdpg\nhC8tXm2ZAgMBAAECggEAA059RTM2encdw85ixEFx+QxL/qL634t3yPz5IwlCpd+/\nQlsWmmpaIVFMH8aHWZBcJ2j2cde1BSVrJVnGaxgAneijHzoO52FEZfANRnBML0h6\nyFCWQoQpjuQcn4jCaU1OZSZhiGcoc5690h3IZZ/EQSEOyBtZGny7KQ2rIgSUpCHb\nNDZSj1voBjecE8x0Z2pNZIaNQnVQ0pOgNgQ3y+a7v6D3ru49hVZRqB/dSxARocMj\niC6bvBKAjpIoajIefvdrW/UPNNGkML2lfbebYYB8G8zXoN7bSbiweNkS5cuEiZCo\ny71S1myNzXhnCXRNAf+/sgJpG5S50tMTA8wORcRMAQKBgQDMKesNMRMYs6jF4L26\nahIRZD1ueom8a6GJh9/ip0qiFWq4zsRK6DUp/t1DbTEyYq0uUNwZAijbMtWbQnGk\nlwmk8Ei5fYKesKnEhMnnG/1F00qsq7cI34MeuRLYJgC7pGAwjrYl/GHwti9dQSmq\nne66IuWBijeOS/MIRPhvCCun8QKBgQC9DEVT3izjKTLF/PZLmLt2jX2EXE1qKBZz\nX2LQCXb8io8+zveZ33bPGx7A94RkScAvrb6Lool54z/g0kABt5yWoRgXlhEL2D2P\nNBAOC4xIrymBnqdjRByGzVnuV5hHuavGIvCP8mo1KiBrC1LblY9OIfYfFrOkmzId\nWe4sHDEIKQKBgQDEpleeJDfFoj8dIgT9im+OyuOVB3ilwXIdu399nC96AXEDQz20\n/QdARRmweXtakctHgmENwZPC1qsC2jQGGekTMtKJwAfRfE55WIH1FnOVDxitStSJ\nOmjcbd1lzu0D0CdKfhuaaQeZSJJEm6Bbk7W/Gh+/73blm+giffRhVhhesQKBgB/F\nXilYH2cV12iauLG/u1GTOdLyyDfdANjm4O5hiNOsXaKKmeYMPiVUQ3jeoCtSka/x\nnSJOcJhBbszTyNoBB5nw/OGJ4NeCweW9NC2IF01n0qvsA+mU2s502HZL1lXHiGzG\nFnO6o8rHh6c1wfkRS4IwBvL2l75ELsnsATD8k+jxAoGAGGzZqHVdqN3B8OruRiaO\n8TC4lh0EvKjctJkZBG0KyXzOJn+WaUnrWJN5XJSqDWrXXoswklw++2NM34zXgM56\nKHdGqQafXylnOtkCoEN+0HFma069NEefMP9xpnwMF+/8spDqa0xM0M+8G2KsQk6M\njVV52YMhd90zBGvq9ofNfhs=\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-fbsvc@orbanaapp.iam.gserviceaccount.com",
+  "client_id": "113118248296171960593",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40orbanaapp.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
+

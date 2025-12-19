@@ -8,11 +8,25 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class TenantFarePolicyController extends Controller
-{
+{   
+
+    private function tenantIdFrom(Request $request): int
+    {
+        $tid = $request->header('X-Tenant-ID')
+            ?? optional(Auth::user())->tenant_id;
+
+        if (!$tid) {
+            abort(403, 'Usuario sin tenant asignado');
+        }
+
+        return (int) $tid;
+    }
+
+
     // Lista (muestra SOLO la del tenant actual, si existe)
     public function index(Request $request)
     {
-        $tenantId = (int)($request->header('X-Tenant-ID') ?? Auth::user()->tenant_id ?? 1);
+        $tenantId = $this->tenantIdFrom($request);
         $policy   = TenantFarePolicy::where('tenant_id', $tenantId)->orderByDesc('id')->first();
 
         return view('admin.fare_policies.index', [
@@ -24,7 +38,7 @@ class TenantFarePolicyController extends Controller
     // Edita (si no existe, la crea con defaults seguros para evitar múltiples)
     public function edit(Request $request)
     {
-        $tenantId = (int)($request->header('X-Tenant-ID') ?? Auth::user()->tenant_id ?? 1);
+        $tenantId = $this->tenantIdFrom($request);
 
         // Garantiza ÚNICA por tenant (o la última vigente). Si no hay, crea una base.
         $policy = TenantFarePolicy::firstOrCreate(
@@ -55,7 +69,7 @@ class TenantFarePolicyController extends Controller
     // Actualiza (sin crear adicionales)
     public function update(Request $request)
     {
-        $tenantId = (int)($request->header('X-Tenant-ID') ?? Auth::user()->tenant_id ?? 1);
+        $tenantId = $this->tenantIdFrom($request);
         $policy   = TenantFarePolicy::where('tenant_id', $tenantId)->orderByDesc('id')->firstOrFail();
 
         $data = $request->validate([

@@ -1,4 +1,4 @@
-@extends('layouts.admin')
+@extends('layouts.sysadmin')
 
 @section('title', 'SysAdmin – Tenants')
 
@@ -11,7 +11,7 @@
         </a>
     </div>
 
-    <table class="table table-striped">
+    <table class="table table-striped align-middle">
         <thead>
         <tr>
             <th>ID</th>
@@ -20,7 +20,7 @@
             <th>Timezone</th>
             <th>Marketplace</th>
             <th>Creado</th>
-            <th></th>
+            <th class="text-end">Acciones</th>
         </tr>
         </thead>
         <tbody>
@@ -38,10 +38,15 @@
                     @endif
                 </td>
                 <td>{{ $tenant->created_at }}</td>
-                <td>
-                    <a href="{{ route('sysadmin.tenants.edit', $tenant) }}" class="btn btn-sm btn-outline-secondary">
-                        Editar
-                    </a>
+                <td class="text-end">
+                    <div class="btn-group btn-group-sm" role="group">
+                        <a href="{{ route('sysadmin.tenants.edit', $tenant) }}" class="btn btn-outline-secondary">
+                            Editar
+                        </a>
+                        <a href="{{ route('sysadmin.tenants.billing.show', $tenant) }}" class="btn btn-outline-primary">
+                            Billing
+                        </a>
+                    </div>
                 </td>
             </tr>
         @endforeach

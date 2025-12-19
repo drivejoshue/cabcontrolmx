@@ -1,13 +1,34 @@
 /* resources/js/pages/dispatch.js */
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import '../dispatch/chat_inbox';
+
 
 /* =========================
  *  CONFIG
  * ========================= */
 
-const CENTER_DEFAULT = [19.1738, -96.1342];
-const DEFAULT_ZOOM   = 14;
+const CENTER_DEFAULT = [19.4326, -99.1332];
+const DEFAULT_ZOOM   = 13;
+
+
+// Nuevo: toma centro desde window.ccTenant.map
+const TENANT_MAP = (window.ccTenant && window.ccTenant.map) || null;
+
+const CENTER = (TENANT_MAP && Number.isFinite(+TENANT_MAP.lat) && Number.isFinite(+TENANT_MAP.lng))
+  ? [Number(TENANT_MAP.lat), Number(TENANT_MAP.lng)]
+  : CENTER_DEFAULT;
+
+const MAP_ZOOM = (TENANT_MAP && Number.isFinite(+TENANT_MAP.zoom))
+  ? Number(TENANT_MAP.zoom)
+  : DEFAULT_ZOOM;
+
+const COVERAGE_RADIUS_KM = (TENANT_MAP && Number.isFinite(+TENANT_MAP.radius_km))
+  ? Number(TENANT_MAP.radius_km)
+  : 8;
+
+console.log('TENANT_ID meta=', document.querySelector('meta[name="tenant-id"]')?.content);
+
 const OSM = {
   url:  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   attr: '&copy; OpenStreetMap contributors'
@@ -18,11 +39,63 @@ const TENANT_ICONS = (window.ccTenant && window.ccTenant.map_icons) || {
   stand:   '/images/marker-parqueo5.png',
    stop:   '/images/stopride.png',
 };
+let isCreatingRide = false;
 
-/* =========================
- *  HELPERs
- * ========================= */
 
+// === TENANT HELPERS (Blade/meta → window) =======================
+
+function getTenantId() {
+  // 1) Si ya lo tienes en una variable global
+  if (window.currentTenantId != null && window.currentTenantId !== '') {
+    return String(window.currentTenantId);
+  }
+
+  // 2) Meta en el <head> que viene desde Blade
+  const meta = document.querySelector('meta[name="tenant-id"]')?.content;
+  if (meta) return String(meta).trim();
+
+  // 3) Fallback a __TENANT_ID__ si lo setea Blade
+  if (window.__TENANT_ID__ != null && window.__TENANT_ID__ !== '') {
+    return String(window.__TENANT_ID__);
+  }
+
+  return '';
+}
+
+// Sincroniza globals para que otros scripts puedan usarlo
+const TENANT_ID = Number(getTenantId() || 0);
+if (!TENANT_ID) {
+  console.error('❌ Usuario sin tenant_id en layout.dispatch, no se puede iniciar Dispatch');
+}
+
+window.currentTenantId = TENANT_ID;
+window.__TENANT_ID__   = TENANT_ID;
+if (typeof window.getTenantId !== 'function') {
+  window.getTenantId = getTenantId;
+}
+
+// Headers JSON con tenant siempre presente
+function jsonHeaders(extra = {}) {
+  const headers = {
+    'Accept': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+    ...extra,
+  };
+
+  // CSRF (para POST/PUT desde panel)
+  const tokenMeta = document.querySelector('meta[name="csrf-token"]');
+  if (tokenMeta && tokenMeta.content) {
+    headers['X-CSRF-TOKEN'] = tokenMeta.content;
+  }
+
+  // Tenant desde helper central
+  const tid = getTenantId();
+  if (tid) {
+    headers['X-Tenant-ID'] = String(tid);
+  }
+
+  return headers;
+}
 
 
 // ===== DEBUG RIDE LIST/CARDS =====
@@ -227,22 +300,27 @@ function reverseGeocode(latlng, inputSel){
     if(status==='OK' && res?.[0]) qs(inputSel).value = res[0].formatted_address;
   });
 }
-async function drawRoute({ quiet=false } = {}){
-  try{
+async function drawRoute({ quiet=false } = {}) {
+  try {
     layerRoute.clearLayers();
     const { a,b,hasA,hasB } = getAB();
     const rs = document.getElementById('routeSummary');
 
-   if (!hasA || !hasB) {
-  clearQuoteUi(); // ← limpia tarifa y resumen
-  if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ' + (qs('#when-later')?.checked?'después':'ahora');
-  return;
-}
- // Si hay Directions, úsalo con tráfico actual
-    if (gDirService && window.google?.maps){
-      try{
+    if (!hasA || !hasB) {
+      clearQuoteUi();
+      if (rs) {
+        rs.innerText = 'Ruta: — · Zona: — · Cuando: ' +
+          (qs('#when-later')?.checked ? 'después' : 'ahora');
+      }
+      return;
+    }
 
-        const stops = getStops(); // NUEVO
+    // 👇 MOVEMOS ESTO AQUÍ (scope global dentro de drawRoute)
+    const stops = getStops();
+
+    // Si hay Directions, úsalo con tráfico actual
+    if (gDirService && window.google?.maps) {
+      try {
         const waypts = stops.map(s => ({ location:{lat:s[0], lng:s[1]} }));
 
         const res = await new Promise((resolve,reject)=>{
@@ -252,10 +330,11 @@ async function drawRoute({ quiet=false } = {}){
             travelMode: google.maps.TravelMode.DRIVING,
             region: 'MX',
             provideRouteAlternatives: false,
-            drivingOptions: {                       // ← tráfico actual
+            drivingOptions: {
               departureTime: new Date(),
               trafficModel: 'bestguess'
-            }, waypoints: waypts.length ? waypts : undefined 
+            },
+            waypoints: waypts.length ? waypts : undefined,
           }, (r,s)=> s==='OK' ? resolve(r) : reject({status:s, r}));
         });
 
@@ -264,11 +343,14 @@ async function drawRoute({ quiet=false } = {}){
         const pts   = pointsFromGoogleRoute(route);
 
         if (pts.length){
-          const poly = L.polyline(pts, { pane:'routePane', className:'cc-route', ...routeStyle() });
+          const poly = L.polyline(
+            pts,
+            { pane:'routePane', className:'cc-route', ...routeStyle() }
+          );
           poly.addTo(layerRoute);
-          map.fitBounds(poly.getBounds().pad(0.15), {padding:[40,40]});
+          map.fitBounds(poly.getBounds().pad(0.15), { padding:[40,40] });
         } else {
-          if(!quiet) console.debug('[ROUTE] Directions OK sin polyline → OSRM');
+          if (!quiet) console.debug('[ROUTE] Directions OK sin polyline → OSRM');
           autoQuoteIfReady();
           await drawRouteWithOSRM(a,b,stops,{quiet:true});
         }
@@ -276,22 +358,24 @@ async function drawRoute({ quiet=false } = {}){
         if (rs){
           const dist = leg?.distance?.text || '—';
           const dura = (leg?.duration_in_traffic || leg?.duration)?.text || '—';
-          rs.innerText = `Ruta: ${dist} · ${dura} · Cuando: ${qs('#when-later')?.checked?'después':'ahora'}`;
+          rs.innerText = `Ruta: ${dist} · ${dura} · Cuando: `
+            + (qs('#when-later')?.checked?'después':'ahora');
         }
         autoQuoteIfReady();
         return; // listo
-      }catch(err){
-        if(!quiet) console.warn('[Directions] fallo, fallback OSRM:', err?.status||err);
+      } catch(err) {
+        if (!quiet) console.warn('[Directions] fallo, fallback OSRM:', err?.status||err);
       }
     }
 
     // Fallback OSRM si no hay Google o falló
     await drawRouteWithOSRM(a,b,stops,{quiet:true});
 
-  }catch(err){
+  } catch(err) {
     console.error('drawRoute error', err);
   }
 }
+
 function setFrom(latlng, label){
   if (fromMarker) fromMarker.remove();
   fromMarker = L.marker(latlng, { draggable:true, icon:IconOrigin, zIndexOffset:1000 })
@@ -406,22 +490,19 @@ async function _doAutoQuote() {
   const bLat = parseFloat(qs('#toLat').value);
   const bLng = parseFloat(qs('#toLng').value);
 
-  try {
+ try {
     const stops = getStops();
     const r = await fetch('/api/dispatch/quote', {
       method: 'POST',
-      headers: {
-        'Content-Type':'application/json',
-        'Accept':'application/json',
-        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
-      },
+      headers: jsonHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
-        origin: {lat:aLat, lng:aLng},
-        destination: {lat:bLat, lng:bLng},
-        stops: stops.map(s => ({lat:s[0], lng:s[1]})), 
+        origin:      { lat: aLat, lng: aLng },
+        destination: { lat: bLat, lng: bLng },
+        stops:       stops.map(s => ({ lat: s[0], lng: s[1] })),
         round_to_step: 1.00  // pesos enteros
       })
     });
+
     const j = await r.json();
     if (!r.ok || j.ok===false) throw new Error(j?.msg || ('HTTP '+r.status));
 
@@ -487,19 +568,29 @@ async function drawRouteWithOSRM(a, b, stops = [], { quiet = false } = {}) {
 }
 
 
+
+
+
+
 async function refreshDispatch(){
-  try{
+  try {
+     const commonHeaders = jsonHeaders();  
     const [a,b] = await Promise.all([
-      fetch('/api/dispatch/active',{headers:{Accept:'application/json'}}),
-      fetch('/api/dispatch/drivers',{headers:{Accept:'application/json'}}),
+      fetch('/api/dispatch/active',  { headers: jsonHeaders() }),
+      fetch('/api/dispatch/drivers', { headers: jsonHeaders() }),
     ]);
 
-      const data    = a.ok ? await a.json() : (console.error('[active]', await a.text()), {});
-    const drivers = b.ok ? await b.json() : (console.error('[drivers]', await b.text()), []);
+    const data = a.ok
+      ? await a.json()
+      : (console.error('[active]', await a.text().catch(() => '')), {});
 
-    const rides  = Array.isArray(data.rides)  ? data.rides  : [];
-    const queues = Array.isArray(data.queues) ? data.queues : [];
-    const driverList = Array.isArray(drivers) ? drivers     : [];
+    const drivers = b.ok
+      ? await b.json()
+      : (console.error('[drivers]', await b.text().catch(() => '')), []);
+
+    const rides      = Array.isArray(data.rides)  ? data.rides  : [];
+    const queues     = Array.isArray(data.queues) ? data.queues : [];
+    const driverList = Array.isArray(drivers)     ? drivers     : [];
 
     // caches globales
     window._lastActiveRides = rides;
@@ -509,16 +600,17 @@ async function refreshDispatch(){
 
     // Paneles
     renderQueues(queues);
-    renderRightNowCards(rides);         // solo requested/offered
-    renderRightScheduledCards(rides);   // solo scheduled
-    renderDockActive(rides);            // solo activos
+    renderRightNowCards(rides);
+    renderRightScheduledCards(rides);
+    renderDockActive(rides);
     renderDrivers(driverList);
     await updateSuggestedRoutes(rides);
 
-  }catch(e){
+  } catch(e) {
     console.warn('refreshDispatch error', e);
   }
 }
+
 function normalizeStops(ride){
   if (Array.isArray(ride.stops)) return ride.stops;
   if (ride.stops_json) {
@@ -764,6 +856,7 @@ function setCarSprite(marker, nextSrc){
 
 //---------------- termina driver  inicia ruta  ----------------------------
 
+
 function highlightAssignment({driver_id, origin_lat, origin_lng}) {
   const e = driverPins.get(driver_id); if (!e) return;
   const from = e.marker.getLatLng();
@@ -772,24 +865,6 @@ function highlightAssignment({driver_id, origin_lat, origin_lng}) {
   e.assignmentLine = L.polyline([from, to], {color:'#0dcaf0', weight:4, opacity:.9})
     .addTo(layerRoute);
   e.marker.setZIndexOffset(900);
-}
-function renderQueues(queues){
-  const el = document.getElementById('panel-queue'); if(!el) return;
-  el.innerHTML = '';
-  queues.forEach(q=>{
-    const row = document.createElement('div');
-    row.className = 'd-flex justify-content-between align-items-center py-1 border-bottom';
-    row.innerHTML = `
-      <div class="me-2">
-        <div><b>${q.nombre}</b></div>
-        <div class="text-muted small">${Number(q.latitud).toFixed(5)}, ${Number(q.longitud).toFixed(5)}</div>
-      </div>
-      <span class="badge bg-secondary">${q.queue_count||0}</span>
-    `;
-    row.addEventListener('click',()=> map.panTo([q.latitud,q.longitud]));
-    el.appendChild(row);
-  });
-  const b = document.getElementById('badgeColas'); if (b) b.innerText = queues.length;
 }
 
 
@@ -819,6 +894,8 @@ async function highlightRideOnMap(ride) {
       ? { lat: +ride.dest_lat,   lng: +ride.dest_lng   } : null;
 
     let stops = normalizeStops(ride); // ya tenías este helper
+    const hasStops = Array.isArray(stops) && stops.length > 0;
+
 
     // 3) Marcadores O / STOPS / D
     if (from) {
@@ -847,57 +924,30 @@ async function highlightRideOnMap(ride) {
     // 4) Ruta principal (igual que antes, pero ordenado)
     let latlngs = null;
 
-    // 4.1) Usa polyline guardada si existe
-    if (ride.route_polyline) {
+    /// 4.1) Usa polyline guardada SOLO si no hay stops
+    //     (con stops preferimos recalcular una ruta limpia)
+    if (!hasStops && ride.route_polyline) {
       try {
         const arr = decodePolyline(ride.route_polyline) || [];
-        if (Array.isArray(arr) && arr.length >= 2) latlngs = arr;
+        if (Array.isArray(arr) && arr.length >= 2) {
+          // Heurística extra: si tiene DEMASIADOS puntos, probablemente es un track real,
+          // no una ruta simple → forzamos recálculo
+          const MAX_POINTS_AS_ROUTE = 800; // ajústalo si quieres
+          latlngs = arr.length > MAX_POINTS_AS_ROUTE ? null : arr;
+        }
       } catch {}
     }
 
-    // 4.2) Si no hay polyline, pide al backend INCLUYENDO STOPS
+       // 4.2) Si no hay polyline, pide al backend INCLUYENDO STOPS
     if ((!latlngs || !latlngs.length) && from && to) {
       try {
         const body = { from, to, mode: 'driving' };
-        if (Array.isArray(stops) && stops.length > 0) body.stops = stops;
-
-        const r = await fetch('/api/geo/route', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify(body)
-        });
-
-        if (r.ok) {
-          const j = await r.json();
-          if (j?.polyline) {
-            latlngs = decodePolyline(j.polyline);
-          } else if (Array.isArray(j?.points)) {
-            latlngs = j.points.map(p => [ +p[0], +p[1] ]);
-          }
-        }
-      } catch {
-        // sigue al fallback
-      }
+        if (hasStops) body.stops = stops;
+        // fetch /api/geo/route...
+      } catch { /* fallback */ }
     }
 
-    // 4.3) Fallback final: O -> stops -> D
-    if ((!latlngs || !latlngs.length) && from && to) {
-      const seq = [from, ...stops, to];
-      latlngs = seq
-        .filter(p => Number.isFinite(+p.lat) && Number.isFinite(+p.lng))
-        .map(p => [ +p.lat, +p.lng ]);
-    }
-
-    if (latlngs && latlngs.length >= 2) {
-      const pl = L.polyline(latlngs, { 
-        className: 'cc-route', 
-        weight: 5, 
-        opacity: 0.9,
-        color: isDarkMode() ? '#943DD4' : '#0717F0'
-      });
-      pl.addTo(layerRoute);
-      window.__routeLine = pl;
-    }
+    // 4.3) Fallback: [from, ...stops, to] en línea
 
     // 5) Incluir al DRIVER si el ride está activo
     let driverLL = null;
@@ -1163,15 +1213,10 @@ if (!window.__cancelHandlerBound) {
     try {
       // Llamada AJAX sin refrescar la página
       const res = await fetch(`/api/dispatch/rides/${rideId}/cancel`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
-          'X-Tenant-ID': (window.currentTenantId || document.querySelector('meta[name="tenant-id"]')?.content || '1')
-        },
-        body: JSON.stringify({ reason: chosenReason })
-      });
+      method: 'POST',
+      headers: jsonHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ reason: chosenReason })
+    });
 
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json.ok === false) {
@@ -1451,7 +1496,7 @@ function startCountdown(totalSec, onTick, onDone){
 async function previewCandidatesFor(ride, limit = 8, radiusKm = 5){
   try {
     const url = `/api/dispatch/nearby-drivers?lat=${ride.origin_lat}&lng=${ride.origin_lng}&km=${radiusKm}`;
-    const r = await fetch(url, { headers:{ Accept:'application/json' } });
+   const r = await fetch(url, { headers: jsonHeaders() });
     const list = r.ok ? await r.json() : [];
 
     const ordered = (Array.isArray(list) ? list : [])
@@ -1498,7 +1543,9 @@ async function focusRideOnMap(rideId){
   }
 
   // ruta correcta del show:
-  const r = await fetch(`/api/rides/${rideId}`, { headers:{ Accept:'application/json' } });
+ const r = await fetch(`/api/rides/${rideId}`, { 
+  headers: jsonHeaders()
+});
   if (!r.ok) {
     console.error('GET /api/rides/{id} →', r.status, await r.text().catch(()=>'')); 
     alert('No se pudo cargar el viaje.');
@@ -2052,12 +2099,10 @@ async function postJSON(url, body) {
   dbg('POST', url, body);
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type':'application/json',
-      'Accept':'application/json',
-      'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+    headers: jsonHeaders({
+      'Content-Type': 'application/json',
       'Authorization': localStorage.getItem('auth_token') || ''
-    },
+    }),
     body: JSON.stringify(body || {})
   });
   if (!res.ok) {
@@ -2069,6 +2114,7 @@ async function postJSON(url, body) {
   dbg('POST OK', url, json);
   return json;
 }
+
 
 
 function dbg(...args){ try{ console.debug('[rides]', ...args); }catch{} }
@@ -2228,14 +2274,7 @@ function renderAssignPanel(ride, candidates){
     })();
   }
 
-  // botón Asignar
-// Helper para tenant (pon <meta name="tenant-id" content="1"> en tu layout)
-function getTenantId(){
-  return document.querySelector('meta[name="tenant-id"]')?.content
-      || window.__TENANT_ID__
-      || 1;
-}
-
+ 
 // Limpia todas las previsualizaciones
 function clearSuggestedLines() {
   try {
@@ -2302,14 +2341,9 @@ document.getElementById('btnDoAssign').onclick = async ()=>{
   const btn = document.getElementById('btnDoAssign');
   btn.disabled = true;
   try{
-    const r = await fetch('/api/dispatch/assign', {
+   const r = await fetch('/api/dispatch/assign', {
       method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'Accept':'application/json',
-        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
-        'X-Tenant-ID': document.querySelector('meta[name="tenant-id"]')?.content || '1'
-      },
+      headers: jsonHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ ride_id:_assignRide.id, driver_id:_assignSelected })
     });
     const j = await r.json().catch(()=>({}));
@@ -2344,7 +2378,7 @@ function openAssignFlow(ride){
     return;
   }
   fetch(`/api/dispatch/nearby-drivers?lat=${ride.origin_lat}&lng=${ride.origin_lng}&km=3`,
-        { headers:{Accept:'application/json'} })
+        { headers: jsonHeaders() })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(list => {
       let candidates = Array.isArray(list) ? list : [];
@@ -2368,12 +2402,8 @@ function openAssignFlow(ride){
 async function confirmAssign(ride, driver){
   try{
     await fetch('/api/dispatch/assign', {
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'Accept':'application/json',
-        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
-      },
+      method: 'POST',
+      headers: jsonHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ ride_id: ride.id, driver_id: driver.id })
     });
 
@@ -2396,20 +2426,16 @@ async function confirmAssign(ride, driver){
 
 // ==== Cargar settings desde Laravel (model/service) ====
 async function loadDispatchSettings() {
-  const tenantId = (typeof getTenantId === 'function' ? getTenantId() : (window.currentTenantId || ''));
+  const tenantId = getTenantId();
 
   try {
-    // mandamos tenant_id también en query para que el backend tenga fallback
+    // mandamos tenant_id también en query como fallback
     const r = await fetch(`/api/dispatch/settings?tenant_id=${encodeURIComponent(tenantId)}`, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'X-Tenant-ID': tenantId || ''   // fallback si tu middleware usa header
-      },
+      headers: jsonHeaders(),
       credentials: 'same-origin'
     });
 
-    // si no es 2xx, intenta leer texto para log
     if (!r.ok) {
       const txt = await r.text().catch(() => '');
       console.warn('[settings] HTTP ' + r.status, txt);
@@ -2424,7 +2450,7 @@ async function loadDispatchSettings() {
       auto_dispatch_preview_radius_km: Number(json.auto_dispatch_preview_radius_km ?? 5),
       offer_expires_sec:               Number(json.offer_expires_sec ?? 180),
       auto_assign_if_single:           !!json.auto_assign_if_single,
-      allow_fare_bidding:              !!json.allow_fare_bidding,   // <- importante
+      allow_fare_bidding:              !!json.allow_fare_bidding,
     };
     console.debug('[settings] OK', window.ccDispatchSettings);
   } catch (e) {
@@ -2441,6 +2467,7 @@ async function loadDispatchSettings() {
   }
 }
 window.loadDispatchSettings = loadDispatchSettings;
+
 
 // ==== Cancelar timers ====
 // --- Auto-dispatch helpers ---
@@ -2483,16 +2510,12 @@ function startCompoundAutoDispatch(ride) {
     try { hideBubble?.(); } catch {}
     try {
       const tenantId = (typeof getTenantId === 'function' ? getTenantId() : (window.currentTenantId || ''));
-      const resp = await fetch('/api/dispatch/tick', {
+           const resp = await fetch('/api/dispatch/tick', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
-          'X-Tenant-ID': tenantId
-        },
+        headers: jsonHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ ride_id: ride.id })
       });
+
       if (!resp.ok) {
         const txt = await resp.text().catch(()=> '');
         console.warn('[auto] tick 500:', txt);
@@ -2619,7 +2642,9 @@ async function hydrateRideStops(ride) {
 
   // cargar detalle del ride (incluye stops) y mezclar
   try {
-    const r = await fetch(`/api/rides/${ride.id}`, { headers: { Accept: 'application/json' } });
+   const r = await fetch(`/api/rides/${ride.id}`, { 
+  headers: jsonHeaders()
+});
     if (r.ok) {
       const d = await r.json();
       ride.stops        = Array.isArray(d.stops) ? d.stops : [];
@@ -2642,17 +2667,14 @@ async function hydrateRideStops(ride) {
 async function loadActiveRides() {
   const panel = document.getElementById('panel-active');
   try {
-    const r = await fetch('/api/rides?status=active', { headers: { Accept: 'application/json' } });
+    const r = await fetch('/api/rides?status=active', { headers: jsonHeaders() });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     let list = await r.json();
 
-    // 💧 hidratar con paradas cuando falten
     list = await Promise.all(list.map(hydrateRideStops));
 
-    // render
     panel.innerHTML = list.map(renderRideCard).join('') || '<div class="text-muted small">Sin viajes</div>';
 
-    // opcional: badge
     const b = document.getElementById('badgeActivos');
     if (b) b.textContent = list.length;
 
@@ -2661,6 +2683,7 @@ async function loadActiveRides() {
     panel.innerHTML = `<div class="text-danger small">Error cargando activos</div>`;
   }
 }
+
 
 
 /* =========================
@@ -2876,6 +2899,525 @@ class SmartNotifications {
     this.show('info', `Conductor llegó al punto de recogida`);
   }
 }
+
+
+// ============================================================================
+// Chat Dispatch ↔ Drivers (UI + polling ligero)
+// Requiere:
+//  - Botón en topbar con id="btnChatInbox" (o data-cc-chat-open)
+//  - Badge opcional con id="chatUnreadBadge"
+// Endpoints (puedes sobreescribirlos desde Blade):
+//  - window.__CHAT_THREADS_URL__  (default: /api/dispatch/chats/threads)
+//  - window.__CHAT_MESSAGES_URL__ (default: /api/dispatch/chats/{driverId}/messages)
+//  - window.__CHAT_SEND_URL__     (default: /api/dispatch/chats/{driverId}/messages)
+//  - window.__CHAT_READ_URL__     (default: /api/dispatch/chats/{driverId}/read)
+// Todos deben aceptar tenant_id en querystring, como el resto del Dispatch.
+// ============================================================================
+  const ChatInbox = (() => {
+  const THREADS_URL = window.__CHAT_THREADS_URL__ || '/api/dispatch/chats/threads';
+  const MESSAGES_URL = window.__CHAT_MESSAGES_URL__ || '/api/dispatch/chats/{driverId}/messages';
+  const SEND_URL     = window.__CHAT_SEND_URL__     || '/api/dispatch/chats/{driverId}/messages';
+  const READ_URL     = window.__CHAT_READ_URL__     || '/api/dispatch/chats/{driverId}/read';
+
+  const state = {
+    inited: false,
+    open: false,
+    activeDriverId: null,
+    threads: [],
+    messages: [],
+    lastMessageId: null,
+    timers: { threads: null, messages: null },
+    pollThreadsMs: 6500,
+    pollMessagesMs: 2500,
+    search: '',
+  };
+
+  const els = {
+    openers: [],
+    badge: null,
+    drawer: null,
+    backdrop: null,
+    panel: null,
+    threadsList: null,
+    searchInput: null,
+    convoHeader: null,
+    messages: null,
+    form: null,
+    input: null,
+    sendBtn: null,
+    closeBtns: [],
+  };
+
+  function withTenant(url) {
+    const tid = getTenantId();
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}tenant_id=${encodeURIComponent(tid)}`;
+  }
+
+  function urlFor(template, driverId) {
+    return template.replace('{driverId}', String(driverId));
+  }
+
+  async function apiJson(url, opts = {}) {
+    const r = await fetch(url, {
+      ...opts,
+      headers: { ...(opts.headers || {}), ...jsonHeaders() },
+    });
+    if (!r.ok) {
+      const t = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status} ${r.statusText} :: ${t.slice(0, 280)}`);
+    }
+    return r.json();
+  }
+
+  
+  function notifyWarn(message) {
+    try {
+      if (typeof SmartNotifications !== 'undefined' && SmartNotifications?.show) {
+        SmartNotifications.show('warning', String(message || ''));
+        return;
+      }
+    } catch (_) {}
+    console.warn('[chat]', message);
+  }
+
+function ensureStyles() {
+    if (document.getElementById('cc-chat-styles')) return;
+
+    const css = document.createElement('style');
+    css.id = 'cc-chat-styles';
+    css.textContent = `
+      .cc-chat-drawer{position:fixed;inset:0;z-index:9999;display:none}
+      .cc-chat-drawer.is-open{display:block}
+      .cc-chat-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
+      .cc-chat-panel{position:absolute;top:12px;right:12px;bottom:12px;width:min(980px,calc(100% - 24px));
+        background:var(--cc-card-bg,#0f1420);color:var(--cc-text,#e7ecf6);
+        border:1px solid var(--cc-border,rgba(255,255,255,.08));
+        border-radius:14px;box-shadow:0 12px 30px rgba(0,0,0,.35);
+        display:flex;flex-direction:column;overflow:hidden}
+      .cc-chat-header{display:flex;align-items:center;justify-content:space-between;
+        padding:10px 12px;border-bottom:1px solid var(--cc-border,rgba(255,255,255,.08))}
+      .cc-chat-title{font-weight:700;font-size:14px;letter-spacing:.2px}
+      .cc-chat-close{border:0;background:transparent;color:inherit;width:34px;height:34px;border-radius:10px}
+      .cc-chat-close:hover{background:rgba(255,255,255,.06)}
+      .cc-chat-body{display:grid;grid-template-columns:320px 1fr;min-height:0;flex:1}
+      .cc-chat-threads{border-right:1px solid var(--cc-border,rgba(255,255,255,.08));min-height:0;display:flex;flex-direction:column}
+      .cc-chat-threads-head{padding:10px 10px;border-bottom:1px solid var(--cc-border,rgba(255,255,255,.08))}
+      .cc-chat-search{width:100%;padding:9px 10px;border-radius:10px;border:1px solid var(--cc-border,rgba(255,255,255,.10));
+        outline:none;background:var(--cc-soft-bg,rgba(255,255,255,.06));color:inherit}
+      .cc-chat-threads-list{overflow:auto;min-height:0}
+      .cc-chat-thread{padding:10px 10px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.06)}
+      .cc-chat-thread:hover{background:rgba(255,255,255,.04)}
+      .cc-chat-thread.is-active{background:rgba(0,184,216,.10)}
+      .cc-chat-thread-top{display:flex;justify-content:space-between;gap:10px}
+      .cc-chat-thread-name{font-weight:700;font-size:13px}
+      .cc-chat-thread-time{font-size:12px;color:var(--cc-muted,#9aa4b5);white-space:nowrap}
+      .cc-chat-thread-last{margin-top:3px;font-size:12px;color:var(--cc-muted,#9aa4b5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .cc-chat-unread{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 6px;
+        font-size:11px;border-radius:99px;background:#e11d48;color:white;margin-left:8px}
+      .cc-chat-convo{min-height:0;display:flex;flex-direction:column}
+      .cc-chat-convo-header{padding:10px 12px;border-bottom:1px solid var(--cc-border,rgba(255,255,255,.08));font-weight:700;font-size:13px}
+      .cc-chat-messages{padding:12px;overflow:auto;min-height:0;display:flex;flex-direction:column;gap:8px}
+      .cc-msg{max-width:78%;padding:10px 10px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.05)}
+      .cc-msg.me{margin-left:auto;background:rgba(0,184,216,.14);border-color:rgba(0,184,216,.22)}
+      .cc-msg .cc-msg-text{white-space:pre-wrap;word-break:break-word;font-size:13px}
+      .cc-msg .cc-msg-meta{margin-top:6px;font-size:11px;color:var(--cc-muted,#9aa4b5);text-align:right}
+      .cc-chat-send{display:flex;gap:10px;padding:10px 12px;border-top:1px solid var(--cc-border,rgba(255,255,255,.08))}
+      .cc-chat-input{flex:1;padding:10px 10px;border-radius:12px;border:1px solid var(--cc-border,rgba(255,255,255,.10));
+        outline:none;background:var(--cc-soft-bg,rgba(255,255,255,.06));color:inherit}
+      .cc-chat-sendbtn{padding:10px 14px;border-radius:12px;border:0;background:var(--cc-primary,#00B8D8);color:#061018;font-weight:800}
+      .cc-chat-sendbtn:disabled{opacity:.55}
+      @media (max-width: 860px){
+        .cc-chat-body{grid-template-columns:1fr}
+        .cc-chat-threads{display:none}
+        .cc-chat-panel{left:12px;right:12px;width:auto}
+      }
+    `;
+    document.head.appendChild(css);
+  }
+
+  function ensureDom() {
+    if (document.getElementById('ccChatDrawer')) return;
+
+    const wrap = document.createElement('div');
+    wrap.id = 'ccChatDrawer';
+    wrap.className = 'cc-chat-drawer';
+    wrap.innerHTML = `
+      <div class="cc-chat-backdrop" data-cc-chat-close="1"></div>
+      <div class="cc-chat-panel" role="dialog" aria-label="Mensajes">
+        <div class="cc-chat-header">
+          <div class="cc-chat-title">Mensajes</div>
+          <button class="cc-chat-close" type="button" title="Cerrar" data-cc-chat-close="1">✕</button>
+        </div>
+
+        <div class="cc-chat-body">
+          <div class="cc-chat-threads">
+            <div class="cc-chat-threads-head">
+              <input class="cc-chat-search" id="ccChatSearch" type="text" placeholder="Buscar conductor…" />
+            </div>
+            <div id="ccChatThreadsList" class="cc-chat-threads-list"></div>
+          </div>
+
+          <div class="cc-chat-convo">
+            <div id="ccChatConvoHeader" class="cc-chat-convo-header">Selecciona un chat</div>
+            <div id="ccChatMessages" class="cc-chat-messages"></div>
+            <form id="ccChatSendForm" class="cc-chat-send" autocomplete="off">
+              <input id="ccChatInput" class="cc-chat-input" type="text" placeholder="Escribe un mensaje…" />
+              <button id="ccChatSendBtn" class="cc-chat-sendbtn" type="submit" disabled>Enviar</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+  }
+
+  function cacheEls() {
+    els.openers = [
+      ...document.querySelectorAll('#btnChatInbox, [data-cc-chat-open="1"]')
+    ];
+    els.badge = document.getElementById('chatUnreadBadge');
+    els.drawer = document.getElementById('ccChatDrawer');
+    els.backdrop = els.drawer?.querySelector('.cc-chat-backdrop') || null;
+    els.panel = els.drawer?.querySelector('.cc-chat-panel') || null;
+    els.threadsList = document.getElementById('ccChatThreadsList');
+    els.searchInput = document.getElementById('ccChatSearch');
+    els.convoHeader = document.getElementById('ccChatConvoHeader');
+    els.messages = document.getElementById('ccChatMessages');
+    els.form = document.getElementById('ccChatSendForm');
+    els.input = document.getElementById('ccChatInput');
+    els.sendBtn = document.getElementById('ccChatSendBtn');
+    els.closeBtns = [...document.querySelectorAll('[data-cc-chat-close="1"]')];
+  }
+
+  function setBadge(n) {
+    if (!els.badge) return;
+    if (!n) {
+      els.badge.style.display = 'none';
+      els.badge.textContent = '';
+      return;
+    }
+    els.badge.style.display = '';
+    els.badge.textContent = n > 99 ? '99+' : String(n);
+  }
+
+  function computeUnreadTotal(threads) {
+    return (threads || []).reduce((sum, t) => sum + (Number(t.unread_count || 0) || 0), 0);
+  }
+
+  function fmtMsgTime(ts) {
+    try {
+      if (!ts) return '';
+      // ISO
+      if (String(ts).includes('T')) {
+        const d = new Date(ts);
+        return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      }
+      // DB 'YYYY-MM-DD HH:mm:ss'
+      return fmtHM12_fromDb(String(ts));
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function normalizeThread(t) {
+    const driverId = t.driver_id ?? t.driverId ?? t.driver?.id;
+    return {
+      driver_id: driverId,
+      driver_name: t.driver_name ?? t.driverName ?? t.driver?.name ?? `Conductor #${driverId}`,
+      last_text: t.last_text ?? t.last_message ?? t.lastMessage ?? '',
+      last_at: t.last_at ?? t.updated_at ?? t.lastAt ?? null,
+      unread_count: Number(t.unread_count ?? t.unread ?? 0) || 0,
+      vehicle_label: t.vehicle_label ?? t.vehicleLabel ?? t.driver?.vehicle_label ?? null,
+      plate: t.plate ?? t.vehicle_plate ?? t.driver?.plate ?? null,
+    };
+  }
+
+  function normalizeMsg(m) {
+    return {
+      id: m.id ?? m.message_id ?? m.messageId ?? null,
+      body: m.body ?? m.text ?? m.message ?? '',
+      created_at: m.created_at ?? m.sent_at ?? m.at ?? null,
+      sender: m.sender ?? m.from ?? (m.is_dispatch ? 'dispatch' : null),
+    };
+  }
+
+  function renderThreads() {
+    if (!els.threadsList) return;
+    const q = (state.search || '').trim().toLowerCase();
+
+    const filtered = state.threads.filter(t => {
+      if (!q) return true;
+      const hay = `${t.driver_name} ${t.vehicle_label || ''} ${t.plate || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+
+    if (!filtered.length) {
+      els.threadsList.innerHTML = `<div style="padding:12px;color:var(--cc-muted,#9aa4b5);font-size:13px">Sin chats.</div>`;
+      return;
+    }
+
+    els.threadsList.innerHTML = filtered.map(t => {
+      const active = String(t.driver_id) === String(state.activeDriverId);
+      const unread = t.unread_count > 0 ? `<span class="cc-chat-unread">${t.unread_count > 99 ? '99+' : t.unread_count}</span>` : '';
+      const time = t.last_at ? fmtMsgTime(t.last_at) : '';
+      const last = (t.last_text || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const label = (t.vehicle_label || t.plate) ? ` · ${(t.vehicle_label || t.plate)}` : '';
+      return `
+        <div class="cc-chat-thread ${active ? 'is-active' : ''}" data-driver-id="${t.driver_id}">
+          <div class="cc-chat-thread-top">
+            <div class="cc-chat-thread-name">${escapeHtml(t.driver_name)}${escapeHtml(label)}${unread}</div>
+            <div class="cc-chat-thread-time">${escapeHtml(time)}</div>
+          </div>
+          <div class="cc-chat-thread-last">${last || '<span style="opacity:.7">—</span>'}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderMessages({ sticky = true } = {}) {
+    if (!els.messages) return;
+
+    const stick = sticky && isNearBottom(els.messages);
+    els.messages.innerHTML = state.messages.map(m => {
+      const me = (m.sender === 'dispatch' || m.sender === 'admin' || m.sender === 'panel');
+      const t = fmtMsgTime(m.created_at);
+      return `
+        <div class="cc-msg ${me ? 'me' : ''}">
+          <div class="cc-msg-text">${escapeHtml(m.body)}</div>
+          <div class="cc-msg-meta">${escapeHtml(t)}</div>
+        </div>
+      `;
+    }).join('');
+
+    if (stick) scrollToBottom(els.messages);
+  }
+
+  function isNearBottom(el) {
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    return gap < 80;
+  }
+
+  function scrollToBottom(el) {
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? '')
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#039;');
+  }
+
+  async function refreshThreads({ silent = true } = {}) {
+    try {
+      const url = withTenant(THREADS_URL);
+      const data = await apiJson(url);
+      const raw = Array.isArray(data) ? data : (data.threads || data.items || []);
+      state.threads = raw.map(normalizeThread).filter(t => t.driver_id != null);
+
+      renderThreads();
+      setBadge(computeUnreadTotal(state.threads));
+    } catch (e) {
+      if (!silent) notifyWarn(`No se pudo cargar mensajes: ${e.message || e}`);
+    }
+  }
+
+  async function openThread(driverId) {
+    state.activeDriverId = driverId;
+    state.lastMessageId = null;
+    state.messages = [];
+    renderThreads();
+    if (els.convoHeader) els.convoHeader.textContent = `Chat · Conductor #${driverId}`;
+
+    await refreshMessages({ force: true, silent: true });
+
+    // mark read (best effort)
+    apiJson(withTenant(urlFor(READ_URL, driverId)), { method: 'POST' })
+      .then(() => refreshThreads({ silent: true }))
+      .catch(() => {});
+  }
+
+  async function refreshMessages({ force = false, silent = true } = {}) {
+    const driverId = state.activeDriverId;
+    if (!driverId) return;
+
+    try {
+      let url = withTenant(urlFor(MESSAGES_URL, driverId));
+      if (state.lastMessageId && !force) url += `&after_id=${encodeURIComponent(state.lastMessageId)}`;
+
+      const data = await apiJson(url);
+      const raw = Array.isArray(data) ? data : (data.messages || data.items || []);
+
+      const msgs = raw.map(normalizeMsg);
+      if (force || !state.lastMessageId) {
+        state.messages = msgs;
+      } else if (msgs.length) {
+        state.messages = [...state.messages, ...msgs];
+      }
+
+      // actualizar lastMessageId
+      const last = state.messages[state.messages.length - 1];
+      if (last?.id != null) state.lastMessageId = last.id;
+
+      // header con nombre real si lo tenemos
+      const th = state.threads.find(t => String(t.driver_id) === String(driverId));
+      if (els.convoHeader && th) {
+        const label = (th.vehicle_label || th.plate) ? ` · ${(th.vehicle_label || th.plate)}` : '';
+        els.convoHeader.textContent = `Chat · ${th.driver_name}${label}`;
+      }
+
+      renderMessages();
+    } catch (e) {
+      if (!silent) notifyWarn(`No se pudo cargar chat: ${e.message || e}`);
+    }
+  }
+
+  async function sendMessage(text) {
+    const driverId = state.activeDriverId;
+    if (!driverId) return;
+
+    const body = String(text || '').trim();
+    if (!body) return;
+
+    try {
+      // optimistic UI
+      const temp = {
+        id: `tmp_${Date.now()}`,
+        body,
+        created_at: new Date().toISOString(),
+        sender: 'dispatch',
+      };
+      state.messages = [...state.messages, temp];
+      renderMessages();
+
+      els.input.value = '';
+      els.sendBtn.disabled = true;
+
+      const payload = { body };
+      const url = withTenant(urlFor(SEND_URL, driverId));
+      const resp = await apiJson(url, { method: 'POST', body: JSON.stringify(payload) });
+
+      // si el backend regresa el mensaje creado, sustituimos el temp
+      const created = resp?.message ? normalizeMsg(resp.message) : null;
+      if (created && created.id != null) {
+        state.messages = state.messages.map(m => (m.id === temp.id ? created : m));
+        state.lastMessageId = created.id;
+        renderMessages();
+      } else {
+        // al menos forzamos refresh para alinear
+        await refreshMessages({ force: true, silent: true });
+      }
+
+      // threads (last message / unread)
+      refreshThreads({ silent: true });
+    } catch (e) {
+      notifyWarn(`No se pudo enviar: ${e.message || e}`);
+    } finally {
+      updateSendBtnState();
+    }
+  }
+
+  function updateSendBtnState() {
+    if (!els.sendBtn || !els.input) return;
+    els.sendBtn.disabled = !state.activeDriverId || !String(els.input.value || '').trim();
+  }
+
+  function open() {
+    if (!els.drawer) return;
+    state.open = true;
+    els.drawer.classList.add('is-open');
+    refreshThreads({ silent: true });
+    startTimers();
+  }
+
+  function close() {
+    if (!els.drawer) return;
+    state.open = false;
+    els.drawer.classList.remove('is-open');
+    stopTimers();
+  }
+
+  function toggle() {
+    state.open ? close() : open();
+  }
+
+  function startTimers() {
+    stopTimers();
+    state.timers.threads = setInterval(() => refreshThreads({ silent: true }), state.pollThreadsMs);
+    state.timers.messages = setInterval(() => {
+      if (!state.open || !state.activeDriverId) return;
+      refreshMessages({ force: false, silent: true });
+    }, state.pollMessagesMs);
+  }
+
+  function stopTimers() {
+    if (state.timers.threads) clearInterval(state.timers.threads);
+    if (state.timers.messages) clearInterval(state.timers.messages);
+    state.timers.threads = null;
+    state.timers.messages = null;
+  }
+
+  function bindEvents() {
+    els.openers.forEach(el => {
+      el.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        toggle();
+      });
+    });
+
+    // close (backdrop + buttons)
+    els.drawer?.addEventListener('click', (ev) => {
+      const t = ev.target;
+      if (t?.getAttribute?.('data-cc-chat-close') === '1') close();
+    });
+
+    // Esc
+    document.addEventListener('keydown', (ev) => {
+      if (!state.open) return;
+      if (ev.key === 'Escape') close();
+    });
+
+    // search
+    els.searchInput?.addEventListener('input', () => {
+      state.search = els.searchInput.value || '';
+      renderThreads();
+    });
+
+    // open thread click
+    els.threadsList?.addEventListener('click', (ev) => {
+      const item = ev.target.closest?.('.cc-chat-thread');
+      if (!item) return;
+      const did = item.getAttribute('data-driver-id');
+      if (!did) return;
+      openThread(did);
+    });
+
+    // send
+    els.input?.addEventListener('input', updateSendBtnState);
+    els.form?.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      sendMessage(els.input.value);
+    });
+  }
+
+  function init() {
+    if (state.inited) return;
+    state.inited = true;
+
+    ensureStyles();
+    ensureDom();
+    cacheEls();
+    bindEvents();
+
+    // primer fetch para badge aunque no abras el drawer
+    refreshThreads({ silent: true }).catch(() => {});
+  }
+
+  return { init, open, close, toggle, refreshThreads };
+})();
 
 
 // Pinta tarjetas programadas en #panel-active-scheduled
@@ -3124,48 +3666,111 @@ function applyRidePreset(preset){
 
 // MANTIENE la firma original
 function renderQueues(queues){
-  const acc = document.getElementById('panel-queue'); if (!acc) return;
-  acc.innerHTML = '';
+  const acc        = document.getElementById('panel-queue');
+  const compact    = document.getElementById('panel-queue-compact');
+  const badge      = document.getElementById('badgeColas');
+  const badgeFull  = document.getElementById('badgeColasFull');
 
-  const total = (queues || []).length;
-  const badge = document.getElementById('badgeColas'); if (badge) badge.textContent = total;
+  const list = Array.isArray(queues) ? queues : [];
 
-  (queues || []).forEach((s, idx) => {
-    const drivers = Array.isArray(s.drivers) ? s.drivers : [];
-    const toEco = d => (d.eco || d.callsign || d.number || d.id || '?');
+  // Badges
+  if (badge)     badge.textContent     = list.length;
+  if (badgeFull) badgeFull.textContent = list.length;
 
-    const item   = document.createElement('div'); item.className = 'accordion-item';
-    const headId = `qhead-${s.id||idx}`, colId = `qcol-${s.id||idx}`;
+  // === Overlay grande: acordeón completo ===
+  if (acc) {
+    acc.innerHTML = '';
 
-    item.innerHTML = `
-      <h2 class="accordion-header" id="${headId}">
-        <button class="accordion-button collapsed" type="button"
-                data-bs-toggle="collapse" data-bs-target="#${colId}"
-                aria-expanded="false" aria-controls="${colId}">
-          <div class="d-flex w-100 justify-content-between align-items-center">
-            <div>
-              <div class="fw-semibold">${s.nombre || s.name || ('Base '+(s.id||''))}</div>
-              <div class="small text-muted">${[s.latitud||s.lat, s.longitud||s.lng].filter(Boolean).join(', ')}</div>
+    if (!list.length){
+      acc.innerHTML = `<div class="text-muted small p-2">Sin información de colas.</div>`;
+    } else {
+      (list || []).forEach((s, idx) => {
+        const drivers = Array.isArray(s.drivers) ? s.drivers : [];
+        const toEco = d => (d.eco || d.callsign || d.number || d.id || '?');
+
+        const item   = document.createElement('div'); 
+        item.className = 'accordion-item';
+        const standId = s.id || s.stand_id || idx;
+        const headId  = `qhead-${standId}`;
+        const colId   = `qcol-${standId}`;
+
+        item.innerHTML = `
+          <h2 class="accordion-header" id="${headId}">
+            <button class="accordion-button collapsed" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#${colId}"
+                    aria-expanded="false" aria-controls="${colId}">
+              <div class="d-flex w-100 justify-content-between align-items-center">
+                <div>
+                  <div class="fw-semibold">${s.nombre || s.name || ('Base '+(s.id||''))}</div>
+                  <div class="small text-muted">${
+                    [s.latitud||s.lat, s.longitud||s.lng].filter(Boolean).join(', ')
+                  }</div>
+                </div>
+                <span class="badge bg-secondary">${drivers.length}</span>
+              </div>
+            </button>
+          </h2>
+          <div id="${colId}" class="accordion-collapse collapse" data-bs-parent="#panel-queue">
+            <div class="accordion-body">
+              ${
+                drivers.length
+                  ? `<div class="queue-eco-grid">${
+                      drivers.map(d => `<span class="eco">${toEco(d)}</span>`).join('')
+                    }</div>`
+                  : `<div class="text-muted">Sin unidades en cola.</div>`
+              }
             </div>
-            <span class="badge bg-secondary">${drivers.length}</span>
           </div>
-        </button>
-      </h2>
-      <div id="${colId}" class="accordion-collapse collapse" data-bs-parent="#panel-queue">
-        <div class="accordion-body">
-          ${
-            drivers.length
-              ? `<div class="queue-eco-grid">${
-                  drivers.map(d => `<span class="eco">${toEco(d)}</span>`).join('')
-                }</div>`
-              : `<div class="text-muted">Sin unidades en cola.</div>`
+        `;
+        acc.appendChild(item);
+      });
+    }
+  }
+
+  // === Vista compacta: chips ===
+  if (compact){
+    if (!list.length){
+      compact.innerHTML = `<span class="text-muted small">Sin información de colas.</span>`;
+    } else {
+      const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[m]));
+
+      compact.innerHTML = list.map((s, idx) => {
+        const standId = s.id || s.stand_id || idx;
+        const name    = s.nombre || s.name || ('Base '+(s.id||'')); 
+        const count   = Array.isArray(s.drivers) ? s.drivers.length : 0;
+
+        return `
+          <button type="button"
+                  class="queues-compact-chip"
+                  data-stand-id="${standId}">
+            <strong>${esc(name)}</strong>
+            <span class="badge bg-light text-secondary border ms-1">${count}</span>
+          </button>
+        `;
+      }).join('');
+
+      // Click en chip → abre overlay y despliega ese paradero
+      compact.querySelectorAll('.queues-compact-chip').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const standId = btn.getAttribute('data-stand-id');
+          if (window.openQueuesOverlay) window.openQueuesOverlay();
+          if (!standId) return;
+
+          const col = document.getElementById(`qcol-${standId}`);
+          if (col) {
+            const bsCollapse = bootstrap.Collapse.getOrCreateInstance(col, { toggle: false });
+            bsCollapse.show();
+            // scroll suave dentro del overlay
+            col.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }
-        </div>
-      </div>
-    `;
-    acc.appendChild(item);
-  });
+        });
+      });
+    }
+  }
 }
+
 
 
 function resetWhenNow(){
@@ -3288,6 +3893,9 @@ async function recalcQuoteUI() {
 /* ---------- INIT (cuando el DOM está listo) ---------- */
 document.addEventListener('DOMContentLoaded', async () => {
   await loadDispatchSettings();
+  if (window.ChatInbox) {
+    window.ChatInbox.init();
+  }
   //renderQueues(queues); 
   loadActiveRides();
   // refresco suave cada 20–30s (opcional)
@@ -3299,9 +3907,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   mapEl.classList.toggle('map-dark', isDarkMode());
 
   map = L.map('map', { worldCopyJump:false, maxBoundsViscosity:1.0 })
-          .setView(CENTER_DEFAULT, DEFAULT_ZOOM);
+          .setView(CENTER, MAP_ZOOM);
   L.tileLayer(OSM.url, { attribution: OSM.attr }).addTo(map);
-
+// const coverageCircle = L.circle(CENTER, {
+//     radius: COVERAGE_RADIUS_KM * 1000
+//   }).addTo(map);
   // panes
   const sectoresPane = map.createPane('sectoresPane'); sectoresPane.style.zIndex = 350;
   const routePane    = map.createPane('routePane');    routePane.style.zIndex = 460; routePane.style.pointerEvents='none';
@@ -3416,7 +4026,9 @@ qs('#pass-phone')?.addEventListener('blur', async (e) => {
   if (hasA || hasB) return;
 
   try {
-    const r = await fetch(`/api/passengers/last-ride?phone=${encodeURIComponent(phone)}`);
+   const r = await fetch(`/api/passengers/last-ride?phone=${encodeURIComponent(phone)}`, {
+  headers: jsonHeaders()
+});
     if (!r.ok) return;
     const lastRide = await r.json(); 
     if (!lastRide) return;
@@ -3593,8 +4205,27 @@ function normalizeScheduledValue(v){
   if (!v) return null;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d.toISOString(); // manda UTC ISO
+
 }
+
+
+let isCreatingRide = false;
+
 qs('#btnCreate')?.addEventListener('click', async () => {
+  // 🔒 Evitar doble click mientras está en proceso
+  if (isCreatingRide) {
+    console.debug('⏳ Ya hay un create en curso, ignorando click doble');
+    return;
+  }
+  isCreatingRide = true;
+
+  const btn = qs('#btnCreate');
+  const originalHtml = btn ? btn.innerHTML : null;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando...';
+  }
+
   // ¿programado?
   let scheduled_for = null;
   if (qs('#when-later')?.checked) {
@@ -3608,7 +4239,7 @@ qs('#btnCreate')?.addEventListener('click', async () => {
   const fareInput = Number(qs('#fareAmount')?.value);
   const quoted_amount = Number.isFinite(fareInput) ? Math.round(fareInput) : null;
 
-  // si tienes un checkbox para fijar tarifa manual (#fareFixed o #fareLock), lo usamos; si no existe, no estorba.
+  // si tienes un checkbox para fijar tarifa manual (#fareFixed o #fareLock), lo usamos
   const userfixed = !!(qs('#fareFixed')?.checked || qs('#fareLock')?.checked);
 
   const payload = {
@@ -3624,13 +4255,12 @@ qs('#btnCreate')?.addEventListener('click', async () => {
     dest_label:   qs('#inTo')?.value || null,
 
     payment_method: qs('#pay-method')?.value || 'cash',
-    fare_mode:      qs('#fareMode')?.value || 'meter',   // si no existe el select, quedará 'meter'
+    fare_mode:      qs('#fareMode')?.value || 'meter',
     notes:          qs('#ride-notes')?.value || null,
     pax:            parseInt(qs('#pax')?.value) || 1,
     scheduled_for,
 
     quoted_amount,
-    // si marcaste “fijar tarifa”, lo mandamos; el servicio ya respeta este flag
     ...(userfixed ? { userfixed: true } : {}),
 
     distance_m:     (typeof __lastQuote !== 'undefined' ? (__lastQuote?.distance_m ?? null) : null),
@@ -3661,6 +4291,12 @@ qs('#btnCreate')?.addEventListener('click', async () => {
   // Validación mínima de origen
   if (!Number.isFinite(payload.origin_lat) || !Number.isFinite(payload.origin_lng)) {
     alert('Indica un origen válido.');
+    // 🔓 Rehabilitar botón si falla validación
+    if (btn) {
+      btn.disabled = false;
+      if (originalHtml !== null) btn.innerHTML = originalHtml;
+    }
+    isCreatingRide = false;
     return;
   }
 
@@ -3710,13 +4346,14 @@ qs('#btnCreate')?.addEventListener('click', async () => {
       resetWhenNow?.();
 
     } catch {}
-     try {
-  if (window._assignPickupMarker) {
-    try { (layerSuggested || layerRoute || map).removeLayer(window._assignPickupMarker); } catch {}
-    try { map.removeLayer(window._assignPickupMarker); } catch {}
-    window._assignPickupMarker = null;
-  }
-} catch {}
+
+    try {
+      if (window._assignPickupMarker) {
+        try { (layerSuggested || layerRoute || map).removeLayer(window._assignPickupMarker); } catch {}
+        try { map.removeLayer(window._assignPickupMarker); } catch {}
+        window._assignPickupMarker = null;
+      }
+    } catch {}
 
     // ===== Feedback + Tabs =====
     if (isScheduledStatus?.(ride)) {
@@ -3733,8 +4370,16 @@ qs('#btnCreate')?.addEventListener('click', async () => {
   } catch (e) {
     console.error(e);
     alert('No se pudo crear el viaje: ' + (e?.message || e));
+  } finally {
+    // 🔓 Siempre reactivamos el botón, haya éxito o error
+    isCreatingRide = false;
+    if (btn) {
+      btn.disabled = false;
+      if (originalHtml !== null) btn.innerHTML = originalHtml;
+    }
   }
 });
+
 
 
   
@@ -4105,7 +4750,9 @@ if (window.Echo) {
 /* ---------- Datos para mapa (sectores / stands) ---------- */
 async function loadSectores(){
   try{
-    const r = await fetch('/api/sectores', { headers:{Accept:'application/json'} });
+    const r = await fetch('/api/sectores', { 
+      headers: jsonHeaders() // ✅ AÑADIR
+    });
     if(!r.ok) return;
     const data = await r.json();
     layerSectores.clearLayers();
@@ -4127,22 +4774,43 @@ async function loadSectores(){
     }).addTo(layerSectores);
   }catch(e){ console.warn('sectores error', e); }
 }
+
+
 async function loadStands(){
   try{
-    const r = await fetch('/api/taxistands', { headers:{Accept:'application/json'} });
+    const tenantId =
+      (typeof getTenantId === 'function'
+        ? getTenantId()
+        : (window.currentTenantId || ''));
+
+    const r = await fetch(`/api/taxistands?tenant_id=${encodeURIComponent(tenantId)}`, {
+      headers: {
+        'Accept': 'application/json',
+        'X-Tenant-ID': tenantId || ''
+      }
+    });
+
     if(!r.ok) return;
     const list = await r.json();
+
     layerStands.clearLayers();
     list.forEach(z=>{
       const lat=Number(z.latitud), lng=Number(z.longitud);
       if(!Number.isFinite(lat)||!Number.isFinite(lng)) return;
+
       L.marker([lat,lng], {icon:IconStand, zIndexOffset:20})
-        .bindTooltip(`<strong>${z.nombre}</strong><div class="text-muted">(${fmt(lat)}, ${fmt(lng)})</div>`,
-                     {direction:'top',offset:[0,-12],className:'stand-tip'})
+        .bindTooltip(
+          `<strong>${z.nombre}</strong><div class="text-muted">(${fmt(lat)}, ${fmt(lng)})</div>`,
+          {direction:'top',offset:[0,-12],className:'stand-tip'}
+        )
         .addTo(layerStands);
     });
-  }catch(e){ console.warn('stands error', e); }
+  }catch(e){
+    console.warn('stands error', e);
+  }
 }
+
+
 
 })(); // FIN IIFE
 

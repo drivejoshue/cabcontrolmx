@@ -20,10 +20,19 @@ use App\Http\Controllers\Api\DriverVehiclesController;
 use App\Http\Controllers\Admin\DispatchSettingsController;
 use App\Http\Controllers\Api\PassengerAuthController;
 use App\Http\Controllers\Api\PassengerRideController;
+use App\Http\Controllers\Api\PassengerDeviceController;
+use App\Http\Controllers\Api\PassengerTestPushController;
+use App\Http\Controllers\Api\RideIssueController as PassengerRideIssueController;
+use App\Http\Controllers\Api\RideMessageController;
+use App\Http\Controllers\Api\DispatchChatController;
+use App\Http\Controllers\Api\DriverChatController;
 use App\Http\Controllers\Api\PassengerAppQuoteController;
 use App\Http\Controllers\Api\RatingController;
 use App\Http\Controllers\Api\DriverProfileController;
 use App\Http\Controllers\Api\DriverWalletController;
+use App\Http\Controllers\Api\PassengerSuggestionsController;
+use App\Http\Controllers\Api\PassengerPlacesController;
+
 use App\Events\DriverEvent;
 
 /*
@@ -89,13 +98,44 @@ Route::post('/passenger/auth-sync', [PassengerAuthController::class, 'syncFromFi
 /**
  * Rutas de la app de pasajero (quote, crear ride, bidding, cancelar, relanzar).
  */
+
+
+
+Route::prefix('dispatch/chats')->group(function () {
+
+    // 1) Lista de hilos (drivers con mensajes)
+    Route::get('/threads', [DispatchChatController::class, 'threads'])
+        ->name('api.dispatch.chats.threads');
+
+    // 2) Obtener mensajes de un driver
+    Route::get('/{driverId}/messages', [DispatchChatController::class, 'messages'])
+        ->name('api.dispatch.chats.messages');
+
+    // 3) Enviar mensaje desde Dispatch → Driver
+    Route::post('/{driverId}/messages', [DispatchChatController::class, 'send'])
+        ->name('api.dispatch.chats.send');
+
+    // 4) Marcar mensajes como leídos (opcional)
+    Route::post('/{driverId}/read', [DispatchChatController::class, 'markRead'])
+        ->name('api.dispatch.chats.read');
+
+});
+
+
+
+
 Route::prefix('passenger')->group(function () {
      Route::post('ping', [PassengerAuthController::class, 'ping']);
+      Route::post('/devices/sync', [PassengerDeviceController::class, 'sync']);
+    Route::post('/devices/delete', [PassengerDeviceController::class, 'deleteToken']); // o
+    Route::post('profile', [PassengerAuthController::class, 'profile']);
+    Route::post('test-push', [PassengerTestPushController::class, 'sendTest']);
     // Calcular tarifa recomendada para el pasajero (quote)
     Route::post('/quote', [PassengerAppQuoteController::class, 'quote']);
 
     // Crear un ride desde la app de pasajero (oferta inicial del pasajero)
     Route::post('/rides', [PassengerRideController::class, 'store']);
+    Route::get('/rides/current-any', [PassengerRideController::class, 'currentAny']);
 
     Route::get('/rides/{ride}/offers', [PassengerRideController::class, 'offers']);
 
@@ -118,11 +158,22 @@ Route::prefix('passenger')->group(function () {
     Route::post('/rides/{ride}/finished',  [PassengerRideController::class, 'finishByPassenger']);
     Route::get('/rides/current', [PassengerRideController::class, 'current']);
 
+    Route::get('/rides/history', [PassengerRideController::class, 'history']);
 
+       Route::get('rides/{ride}/issues', [PassengerRideIssueController::class, 'index']);
+    Route::post('rides/{ride}/issues', [PassengerRideIssueController::class, 'store']);
      Route::post(
         '/rides/{ride}/rate-driver',
         [RatingController::class, 'rateDriverFromPassenger']
     );
+    Route::get('suggestions', [PassengerSuggestionsController::class, 'suggestions']);
+   Route::post('places/upsert', [PassengerPlacesController::class, 'upsert']);
+    Route::post('places/fav/add', [PassengerPlacesController::class, 'addFavorite']);
+   Route::get('places', [PassengerPlacesController::class, 'list']);
+
+    Route::post('places/{id}/deactivate', [PassengerPlacesController::class, 'deactivate']);
+
+    Route::get('nearby-drivers', [\App\Http\Controllers\Api\PassengerNearbyDriversController::class, 'nearby']);
 
 });
 
@@ -146,6 +197,9 @@ Route::post('/dispatch/assign',  [DispatchController::class, 'assign']);
 Route::post('/dispatch/rides/{ride}/cancel', [DispatchController::class,'cancel']);
 Route::get ('/dispatch/nearby-drivers',      [DispatchController::class,'nearbyDrivers']);
 
+
+
+
 /* ===================== GEO (PANEL / GENERIC) ===================== */
 
 // Ruta de cálculo de ruta para el panel de despacho
@@ -160,9 +214,11 @@ Route::get('/taxistands', [TaxiStandController::class, 'index']);
 /* ===================== AUTH DRIVER (APP ORBANA DRIVER) ===================== */
 
 // Login / logout / datos del driver (Sanctum)
-Route::post('/auth/login',  [DriverAuthController::class, 'login']);
-Route::post('/auth/logout', [DriverAuthController::class, 'logout'])->middleware('auth:sanctum');
-Route::get ('/auth/me',     [DriverAuthController::class, 'me'])->middleware('auth:sanctum');
+Route::post('auth/login',  [DriverAuthController::class, 'login']);
+Route::post('auth/logout', [DriverAuthController::class, 'logout'])->middleware('auth:sanctum');
+Route::get ('auth/me',     [DriverAuthController::class, 'me'])->middleware('auth:sanctum');
+Route::put('auth/bank', [DriverAuthController::class, 'updateBank'])
+    ->middleware('auth:sanctum');
 
 /* ===================== RIDES CRUD (PANEL) ===================== */
 
@@ -191,22 +247,34 @@ Route::prefix('rides')->group(function () {
     Route::post('{ride}/drop',   [RideController::class, 'drop']);
     Route::post('{ride}/cancel', [RideController::class, 'cancel']);
 
-    // Stops (multi-paradas) desde panel
-    Route::post ('{ride}/stops',  [RideController::class,'setStops'])->name('panel.rides.stops');
-    Route::patch('{ride}/stops',  [RideController::class,'updateStops']);
+   
+
+
+
 });
+
+
+
 
 /* ===================== PASAJEROS (PANEL) ===================== */
 
 Route::get('/passengers/last-ride', [PassengerController::class, 'lastRide']);
 Route::get('/passengers/lookup',    [PassengerController::class, 'lookup']);
 
+
+
+
+
+
 /* ===================== DRIVER (APP) – Sanctum ===================== */
 
-Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
+     Route::middleware('auth:sanctum', 'tenant.billing_ok_api')->prefix('driver')->group(function () {
 
     // Vehículos asociados al driver
     Route::get('/vehicles', [DriverVehiclesController::class, 'index']);
+   
+    Route::patch('/status', [DriverAuthController::class, 'setStatus']);
+    Route::get('driver/status', [DriverAuthController::class, 'show']);
 
     // Turnos
     Route::post('/shifts/start',  [DriverShiftController::class, 'start']);
@@ -222,17 +290,23 @@ Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
     Route::post('/offers/{offer}/accept', [OfferController::class, 'accept']);
     Route::post('/offers/{offer}/reject', [OfferController::class, 'reject']);
 
+    Route::post('/offers/{offer}/viewing', [OfferController::class, 'viewing']);
+
     // Ciclo de ride (para el driver app)
     Route::post('/rides/{ride}/arrived', [RideController::class,'arrive']);
     Route::post('/rides/{ride}/board',   [RideController::class,'board']);
     Route::post('/rides/{ride}/finish',  [RideController::class,'finish']);
     Route::post('/rides/{ride}/cancel',  [RideController::class,'cancelByDriver']);
 
+     Route::post('rides/{ride}/issues', [PassengerRideIssueController::class, 'storeFromDriver']);
+    Route::get('rides/{ride}/issues', [PassengerRideIssueController::class, 'index']); // opcional
+
     Route::get('/rides/active', [RideController::class, 'activeForDriver']);
-     Route::post(
-        '/rides/{ride}/rate-passenger',
-        [RatingController::class, 'ratePassengerFromDriver']
-    );
+     Route::post('/rides/{ride}/rate-passenger',[RatingController::class, 'ratePassengerFromDriver']);
+
+     Route::get('/messages', [DriverChatController::class, 'index']);
+    Route::post('/messages', [DriverChatController::class, 'store']);
+
 
     // GEO para driver (geocode + rutas)
     Route::get ('/geo/geocode', [GeoController::class,'geocode']);
@@ -251,9 +325,13 @@ Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
     Route::delete('/queue',         [QueueController::class, 'clearAll']);
 
     // ==== TAXI STAND (BASE) ====
+     Route::get('/taxistands',      [TaxiStandController::class, 'index']); // 👈 lista para driver
     Route::post('/stands/join',   [TaxiStandController::class, 'join']);   // stand_id o código
+    Route::post('/stands/join-code', [TaxiStandController::class, 'joinByCode']); // 👈 NUEVA
+
     Route::post('/stands/leave',  [TaxiStandController::class, 'leave']);
     Route::get ('/stands/status', [TaxiStandController::class, 'status']);
+
 
     // ==== GEO extra ====
     Route::get('/geo/locate-sector', [GeoController::class, 'locateSector']); // si lo implementas
@@ -261,12 +339,18 @@ Route::middleware('auth:sanctum')->prefix('driver')->group(function () {
 
 
      // Perfil del driver (incluye payout y foto)
-    Route::get('/driver/profile', [DriverProfileController::class, 'show']);
-    Route::post('/driver/profile', [DriverProfileController::class, 'update']);
+   
+    Route::get('/profile', [DriverProfileController::class, 'show']);
+
+    Route::post('/profile', [DriverProfileController::class, 'update']);
+    Route::post('/profile/photo', [DriverProfileController::class, 'updatePhoto']);
+
+
+    Route::get('/history', [RideController::class, 'historyForDriver']);
 
     // Wallet del driver
-    Route::get('/driver/wallet', [DriverWalletController::class, 'show']);
-    Route::get('/driver/wallet/movements', [DriverWalletController::class, 'movements']);
+    Route::get('/wallet', [DriverWalletController::class, 'show']);
+    Route::get('/wallet/movements', [DriverWalletController::class, 'movements']);
 
    
 

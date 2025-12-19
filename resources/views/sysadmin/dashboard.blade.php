@@ -1,4 +1,4 @@
-@extends('layouts.admin')
+@extends('layouts.sysadmin')
 
 @section('title', 'SysAdmin · Orbana')
 

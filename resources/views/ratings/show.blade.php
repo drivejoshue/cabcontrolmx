@@ -1,20 +1,20 @@
 @extends('layouts.admin')
 
-@section('title', 'Calificaciones del Driver')
+@section('title', 'Calificaciones del Driver - ' . ($driverInfo->name ?? 'Driver'))
 
 @section('content')
 <div class="container-fluid">
     <div class="row mb-4">
         <div class="col-12">
-            <div class="card">
-                <div class="card-header bg-info">
-                    <h3 class="card-title text-white">
-                        <i class="fas fa-user-tie mr-2"></i>
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-gradient-info text-white">
+                    <h3 class="card-title mb-0">
+                        <i class="bi bi-person-badge me-2"></i>
                         Detalles de Calificaciones - Driver
                     </h3>
                     <div class="card-tools">
-                        <a href="{{ route('ratings.index') }}" class="btn btn-light btn-sm">
-                            <i class="fas fa-arrow-left mr-1"></i> Volver
+                        <a href="{{ route('ratings.index') }}" class="btn btn-light btn-sm rounded-pill">
+                            <i class="bi bi-arrow-left me-1"></i> Volver al Reporte
                         </a>
                     </div>
                 </div>
@@ -23,25 +23,49 @@
     </div>
 
     <div class="row">
-        <!-- Información del Driver -->
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header bg-primary">
-                    <h3 class="card-title text-white">
-                        <i class="fas fa-info-circle mr-2"></i>
+        <!-- Información del Driver Mejorada -->
+        <div class="col-md-4 mb-4">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-info-circle me-2"></i>
                         Información del Driver
-                    </h3>
+                    </h5>
                 </div>
                 <div class="card-body text-center">
                     @if($driverInfo)
                         <div class="mb-4">
-                            <i class="fas fa-user-circle fa-5x text-primary mb-3"></i>
+                            @if($driverInfo->foto_path)
+                                <img src="{{ asset('storage/' . $driverInfo->foto_path) }}" 
+                                     alt="{{ $driverInfo->name }}" 
+                                     class="rounded-circle mb-3" 
+                                     style="width: 100px; height: 100px; object-fit: cover;">
+                            @else
+                                <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center mx-auto mb-3" 
+                                     style="width: 100px; height: 100px;">
+                                    <i class="bi bi-person text-white" style="font-size: 2.5rem;"></i>
+                                </div>
+                            @endif
                             <h4 class="mb-1">{{ $driverInfo->name }}</h4>
-                            <p class="text-muted mb-3">{{ $driverInfo->phone }}</p>
+                            <p class="text-muted mb-2">
+                                <i class="bi bi-telephone me-1"></i>{{ $driverInfo->phone }}
+                            </p>
+                            
+                            @php
+                                $statusColors = [
+                                    'idle' => 'success',
+                                    'busy' => 'warning',
+                                    'offline' => 'secondary',
+                                    'on_ride' => 'primary'
+                                ];
+                            @endphp
+                            <span class="badge bg-{{ $statusColors[$driverInfo->status] ?? 'secondary' }} rounded-pill mb-3">
+                                <i class="bi bi-circle-fill me-1"></i>{{ ucfirst($driverInfo->status) }}
+                            </span>
                             
                             <div class="star-rating mb-3">
                                 @for($i = 1; $i <= 5; $i++)
-                                    <i class="fas fa-star fa-2x {{ $i <= $driverSummary->avg_rating ? 'text-warning' : 'text-muted' }} mr-1"></i>
+                                    <i class="bi bi-star-fill display-6 {{ $i <= $driverSummary->avg_rating ? 'text-warning' : 'text-muted' }} me-1"></i>
                                 @endfor
                                 <div class="mt-2">
                                     <h3 class="text-primary">{{ number_format($driverSummary->avg_rating, 1) }}/5</h3>
@@ -50,9 +74,44 @@
                             </div>
                         </div>
 
-                        <!-- Métricas Detalladas -->
+                        <!-- Estadísticas de Viajes -->
                         <div class="border-top pt-3">
-                            <h6 class="text-center mb-3">Métricas Específicas</h6>
+                            <h6 class="text-center mb-3">
+                                <i class="bi bi-graph-up me-1"></i>Estadísticas de Viajes
+                            </h6>
+                            <div class="row text-center">
+                                <div class="col-6 mb-3">
+                                    <div class="border rounded p-2 bg-light">
+                                        <small class="text-muted d-block">Total Viajes</small>
+                                        <strong class="text-primary fs-5">{{ $driverRidesStats->total_rides ?? 0 }}</strong>
+                                    </div>
+                                </div>
+                                <div class="col-6 mb-3">
+                                    <div class="border rounded p-2 bg-light">
+                                        <small class="text-muted d-block">Completados</small>
+                                        <strong class="text-success fs-5">{{ $driverRidesStats->completed_rides ?? 0 }}</strong>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="border rounded p-2 bg-light">
+                                        <small class="text-muted d-block">Tasa Éxito</small>
+                                        <strong class="text-info fs-5">{{ number_format($driverRidesStats->completion_rate ?? 0, 1) }}%</strong>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="border rounded p-2 bg-light">
+                                        <small class="text-muted d-block">Distancia Prom.</small>
+                                        <strong class="text-warning fs-5">{{ number_format(($driverRidesStats->avg_distance ?? 0) / 1000, 1) }} km</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Métricas Detalladas -->
+                        <div class="border-top pt-3 mt-3">
+                            <h6 class="text-center mb-3">
+                                <i class="bi bi-bar-chart me-1"></i>Métricas de Calificación
+                            </h6>
                             <div class="row text-center">
                                 <div class="col-6 mb-3">
                                     <div class="border rounded p-2">
@@ -83,7 +142,9 @@
 
                         <!-- Distribución de Estrellas -->
                         <div class="border-top pt-3 mt-3">
-                            <h6 class="text-center mb-3">Distribución de Calificaciones</h6>
+                            <h6 class="text-center mb-3">
+                                <i class="bi bi-pie-chart me-1"></i>Distribución de Calificaciones
+                            </h6>
                             @php
                                 $starsDistribution = [
                                     5 => ['count' => $driverSummary->five_stars, 'color' => 'success'],
@@ -103,21 +164,21 @@
                                     <div class="d-flex justify-content-between align-items-center">
                                         <span class="text-sm">
                                             @for($i = 0; $i < $stars; $i++)
-                                                <i class="fas fa-star text-{{ $data['color'] }} mr-1"></i>
+                                                <i class="bi bi-star-fill text-{{ $data['color'] }} me-1"></i>
                                             @endfor
                                         </span>
-                                        <span class="text-sm font-weight-bold">{{ $data['count'] }}</span>
+                                        <span class="text-sm fw-bold">{{ $data['count'] }}</span>
                                     </div>
-                                    <div class="progress" style="height: 8px;">
+                                    <div class="progress" style="height: 8px; border-radius: 4px;">
                                         <div class="progress-bar bg-{{ $data['color'] }}" 
-                                             style="width: {{ $percentage }}%"></div>
+                                             style="width: {{ $percentage }}%; border-radius: 4px;"></div>
                                     </div>
                                 </div>
                             @endforeach
                         </div>
                     @else
                         <div class="text-center text-muted py-4">
-                            <i class="fas fa-user-slash fa-3x mb-3"></i>
+                            <i class="bi bi-person-x display-4 mb-3"></i>
                             <p>Driver no encontrado</p>
                         </div>
                     @endif
@@ -125,15 +186,15 @@
             </div>
         </div>
 
-        <!-- Historial de Calificaciones -->
+        <!-- Historial de Calificaciones Mejorado -->
         <div class="col-md-8">
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <i class="fas fa-history mr-2"></i>
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-light">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-clock-history me-2"></i>
                         Historial de Calificaciones
-                        <span class="badge badge-primary ml-2">{{ $ratings->total() }}</span>
-                    </h3>
+                        <span class="badge bg-primary rounded-pill ms-2">{{ $ratings->total() }}</span>
+                    </h5>
                 </div>
                 <div class="card-body p-0">
                     @if($ratings->count() > 0)
@@ -141,65 +202,73 @@
                             <table class="table table-hover mb-0">
                                 <thead class="bg-light">
                                     <tr>
-                                        <th>Fecha</th>
-                                        <th>Pasajero</th>
-                                        <th>Calificación</th>
-                                        <th>Comentario</th>
-                                        <th>Detalles</th>
+                                        <th><i class="bi bi-calendar me-1"></i> Fecha</th>
+                                        <th><i class="bi bi-person me-1"></i> Pasajero</th>
+                                        <th><i class="bi bi-star me-1"></i> Calificación</th>
+                                        <th><i class="bi bi-chat-left me-1"></i> Comentario</th>
+                                        <th><i class="bi bi-graph-up me-1"></i> Detalles</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     @foreach($ratings as $rating)
-                                        <tr>
+                                        <tr class="align-middle">
                                             <td>
-                                                <small class="text-muted d-block">
-                                                    {{ \Carbon\Carbon::parse($rating->created_at)->format('d/m/Y') }}
-                                                </small>
-                                                <small class="text-muted">
-                                                    {{ \Carbon\Carbon::parse($rating->created_at)->format('H:i') }}
-                                                </small>
+                                                <div class="d-flex flex-column">
+                                                    <small class="text-muted fw-medium">
+                                                        {{ \Carbon\Carbon::parse($rating->created_at)->format('d/m/Y') }}
+                                                    </small>
+                                                    <small class="text-muted">
+                                                        {{ \Carbon\Carbon::parse($rating->created_at)->format('H:i') }}
+                                                    </small>
+                                                </div>
                                             </td>
                                             <td>
-                                                <strong class="d-block">{{ $rating->passenger_name ?? 'N/A' }}</strong>
-                                                <small class="text-muted">{{ $rating->passenger_phone ?? 'N/A' }}</small>
+                                                <div class="d-flex flex-column">
+                                                    <strong class="d-block">{{ $rating->passenger_name ?? 'N/A' }}</strong>
+                                                    <small class="text-muted">{{ $rating->passenger_phone ?? 'N/A' }}</small>
+                                                </div>
                                             </td>
                                             <td>
                                                 <div class="d-flex align-items-center">
                                                     @for($i = 1; $i <= 5; $i++)
-                                                        <i class="fas fa-star {{ $i <= $rating->rating ? 'text-warning' : 'text-muted' }} mr-1"></i>
+                                                        <i class="bi bi-star-fill {{ $i <= $rating->rating ? 'text-warning' : 'text-muted' }} me-1"></i>
                                                     @endfor
-                                                    <span class="badge badge-secondary ml-2">{{ $rating->rating }}/5</span>
+                                                    <span class="badge bg-secondary rounded-pill ms-2">{{ $rating->rating }}/5</span>
                                                 </div>
                                             </td>
                                             <td>
                                                 @if($rating->comment)
-                                                    <p class="mb-0 text-sm" style="max-width: 200px;">
-                                                        {{ \Illuminate\Support\Str::limit($rating->comment, 60) }}
-                                                    </p>
+                                                    <div class="comment-tooltip" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ $rating->comment }}">
+                                                        <p class="mb-0 text-sm" style="max-width: 200px;">
+                                                            {{ \Illuminate\Support\Str::limit($rating->comment, 60) }}
+                                                        </p>
+                                                    </div>
                                                 @else
-                                                    <span class="text-muted text-sm">Sin comentario</span>
+                                                    <span class="text-muted text-sm">
+                                                        <i class="bi bi-dash-circle me-1"></i>Sin comentario
+                                                    </span>
                                                 @endif
                                             </td>
                                             <td>
                                                 <div class="d-flex flex-wrap gap-1">
                                                     @if($rating->punctuality)
-                                                        <span class="badge badge-info" title="Puntualidad">
-                                                            P:{{ $rating->punctuality }}
+                                                        <span class="badge bg-info rounded-pill" title="Puntualidad">
+                                                            <i class="bi bi-clock me-1"></i>{{ $rating->punctuality }}
                                                         </span>
                                                     @endif
                                                     @if($rating->courtesy)
-                                                        <span class="badge badge-success" title="Cortesía">
-                                                            C:{{ $rating->courtesy }}
+                                                        <span class="badge bg-success rounded-pill" title="Cortesía">
+                                                            <i class="bi bi-hand-thumbs-up me-1"></i>{{ $rating->courtesy }}
                                                         </span>
                                                     @endif
                                                     @if($rating->vehicle_condition)
-                                                        <span class="badge badge-warning" title="Vehículo">
-                                                            V:{{ $rating->vehicle_condition }}
+                                                        <span class="badge bg-warning rounded-pill" title="Vehículo">
+                                                            <i class="bi bi-car-front me-1"></i>{{ $rating->vehicle_condition }}
                                                         </span>
                                                     @endif
                                                     @if($rating->driving_skills)
-                                                        <span class="badge badge-primary" title="Conducción">
-                                                            CD:{{ $rating->driving_skills }}
+                                                        <span class="badge bg-primary rounded-pill" title="Conducción">
+                                                            <i class="bi bi-speedometer2 me-1"></i>{{ $rating->driving_skills }}
                                                         </span>
                                                     @endif
                                                 </div>
@@ -211,26 +280,26 @@
                         </div>
                     @else
                         <div class="text-center p-5">
-                            <i class="fas fa-star fa-3x text-muted mb-3"></i>
+                            <i class="bi bi-star display-4 text-muted mb-3"></i>
                             <p class="text-muted mb-0">No hay calificaciones para este driver</p>
                         </div>
                     @endif
                 </div>
                 @if($ratings->hasPages())
-                    <div class="card-footer">
-                        {{ $ratings->links() }}
+                    <div class="card-footer bg-light">
+                        {{ $ratings->links('pagination::simple-bootstrap-4') }}
                     </div>
                 @endif
             </div>
 
             <!-- Gráfico de Evolución -->
             @if($monthlyDriverRatings->count() > 1)
-                <div class="card mt-4">
-                    <div class="card-header">
-                        <h3 class="card-title">
-                            <i class="fas fa-chart-line mr-2"></i>
+                <div class="card mt-4 border-0 shadow-sm">
+                    <div class="card-header bg-light">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-graph-up me-2"></i>
                             Evolución Mensual
-                        </h3>
+                        </h5>
                     </div>
                     <div class="card-body">
                         <canvas id="driverMonthlyChart" style="height: 250px;"></canvas>
@@ -245,6 +314,14 @@
 @push('scripts')
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+    // Inicializar tooltips
+    document.addEventListener('DOMContentLoaded', function() {
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl)
+        });
+    });
+
     @if($monthlyDriverRatings->count() > 1)
     document.addEventListener('DOMContentLoaded', function() {
         var ctx = document.getElementById('driverMonthlyChart').getContext('2d');
@@ -281,6 +358,11 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    }
+                },
                 scales: {
                     y: {
                         min: 0,
@@ -299,6 +381,82 @@
 
 @push('styles')
 <style>
+/* Corregir el paginado de Bootstrap 4 para AdminKit */
+.pagination {
+    display: flex;
+    padding-left: 0;
+    list-style: none;
+    border-radius: 0.25rem;
+    margin-bottom: 0;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.page-item:first-child .page-link {
+    margin-left: 0;
+    border-top-left-radius: 0.25rem;
+    border-bottom-left-radius: 0.25rem;
+}
+
+.page-item:last-child .page-link {
+    border-top-right-radius: 0.25rem;
+    border-bottom-right-radius: 0.25rem;
+}
+
+.page-item.active .page-link {
+    z-index: 1;
+    color: #fff;
+    background-color: #007bff;
+    border-color: #007bff;
+}
+
+.page-link {
+    position: relative;
+    display: block;
+    padding: 0.5rem 0.75rem;
+    margin-left: -1px;
+    line-height: 1.25;
+    color: #007bff;
+    background-color: #fff;
+    border: 1px solid #dee2e6;
+    font-size: 0.875rem;
+}
+
+.page-link:hover {
+    z-index: 2;
+    color: #0056b3;
+    text-decoration: none;
+    background-color: #e9ecef;
+    border-color: #dee2e6;
+}
+
+.page-item.disabled .page-link {
+    color: #6c757d;
+    pointer-events: none;
+    cursor: auto;
+    background-color: #fff;
+    border-color: #dee2e6;
+}
+
+/* Hacer las flechas más pequeñas */
+.page-link i.bi {
+    font-size: 0.75rem;
+    vertical-align: middle;
+}
+
+/* Para pantallas pequeñas */
+@media (max-width: 768px) {
+    .pagination {
+        font-size: 0.8rem;
+    }
+    
+    .page-link {
+        padding: 0.375rem 0.5rem;
+        margin: 1px;
+    }
+}
+
+/* Estilos existentes que mantienen */
 .star-rating {
     line-height: 1;
 }
@@ -307,6 +465,57 @@
 }
 .badge {
     font-size: 0.75em;
+}
+.comment-tooltip {
+    cursor: help;
+}
+.card {
+    border-radius: 12px;
+}
+.avatar-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Prevenir el flash blanco - SOLUCIÓN DEFINITIVA */
+body {
+    background-color: #f8f9fa;
+    opacity: 0;
+    animation: fadeInBody 0.3s ease forwards;
+}
+
+@keyframes fadeInBody {
+    to { opacity: 1; }
+}
+
+/* Mantener el contenido visible durante navegación */
+.main .content {
+    opacity: 1 !important;
+}
+
+/* Asegurar que las transiciones de AdminKit no interfieran */
+.fade {
+    opacity: 1 !important;
+}
+
+/* Deshabilitar transiciones problemáticas */
+.card,
+.table-responsive,
+.table {
+    transition: none !important;
+    animation: none !important;
+}
+
+/* FIX: AdminKit usa data-bs-* pero Bootstrap 4, necesitamos asegurar tooltips */
+[data-bs-toggle="tooltip"] {
+    cursor: pointer;
+}
+
+/* Asegurar que los badges de Bootstrap Icons se vean bien */
+.badge i.bi {
+    font-size: 0.8em;
+    vertical-align: text-top;
 }
 </style>
 @endpush

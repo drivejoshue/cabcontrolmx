@@ -23,7 +23,9 @@
     <div class="card shadow-sm border-0">
       <div class="card-header d-flex align-items-center justify-content-between">
         <h5 class="mb-0">Auto Dispatch</h5>
-        <span class="badge bg-secondary">Tenant: {{ auth()->user()->tenant_id ?? 1 }}</span>
+      <span class="badge bg-secondary">
+        Tenant: {{ auth()->user()->tenant_id ?? 'sin-tenant' }}
+      </span>
       </div>
       <div class="card-body row g-3">
         <div class="col-md-3">

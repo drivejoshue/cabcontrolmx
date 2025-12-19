@@ -26,7 +26,7 @@
     <div class="row g-3">
       <div class="col-12 col-xl-8">
         {{-- Mapa + textarea[name="area"] --}}
-        @include('sectores._form', ['sector' => null])
+        @include('admin.sectores._form', ['sector' => null])
       </div>
 
       <div class="col-12 col-xl-4">

@@ -93,10 +93,10 @@ class PassengerAppQuoteController extends Controller
             ], 500);
         }
 
-        // Calculamos rango amigable para el slider (-5% / +15%)
+        // Calculamos rango amigable para el slider (-20 +20 %)
         $recommended = $baseAmount;
-        $minFare = (int) max(1, floor($recommended * 0.80));  // -5%
-        $maxFare = (int) max($minFare + 1, ceil($recommended * 1.20)); // +15%
+        $minFare = (int) max(1, floor($recommended * 0.80));  // -20%
+        $maxFare = (int) max($minFare + 1, ceil($recommended * 1.20)); // +20%
 
         return response()->json([
             'ok'             => true,

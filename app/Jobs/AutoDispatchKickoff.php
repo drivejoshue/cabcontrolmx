@@ -49,13 +49,13 @@ class AutoDispatchKickoff implements ShouldQueue
                     ->where('ride_id',$this->rideId)
                     ->where('driver_id',$driverId)
                     ->orderByDesc('id')->value('id');
-                if ($offerId) DB::select('CALL sp_accept_offer_v3(?)', [$offerId]);
+                if ($offerId) DB::select('CALL sp_accept_offer_v7(?)', [$offerId]);
             }
             return;
         }
 
         // 2) ola a N (SP)
-        DB::select('CALL sp_offer_wave_v1(?,?,?,?,?)', [
+        DB::select('CALL sp_offer_wave_prio_v3(?,?,?,?,?)', [
             $this->tenantId, $this->rideId, $this->radiusKm, $this->waveSize, $this->offerExpiresSec
         ]);
 

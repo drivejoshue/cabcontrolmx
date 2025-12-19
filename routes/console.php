@@ -6,12 +6,11 @@ use App\Http\Controllers\Admin\RideAdminController;
 use Illuminate\Support\Facades\Schedule;
 use App\Services\ScheduledRidesService;
 use App\Services\OfferBroadcaster;
-use Illuminate\Support\Facades\Schedule;
 use App\Console\Commands\TenantsBill;
 // Corre cada minuto
 Schedule::call(function () {
     $now = now();
-    $cutOffOffline = now()->subSeconds(120);
+    $cutOffOffline = now()->subMinutes(30);
     $cutOffAuto    = now()->subMinutes(60);
 
     DB::table('drivers')
@@ -27,7 +26,7 @@ Schedule::call(function () {
 
     foreach ($open as $s) {
         DB::table('driver_shifts')->where('id',$s->id)->update([
-            'ended_at'=> $s->last_seen_at ?? $now, 'status'=>'closed', 'updated_at'=>$now
+            'ended_at'=> $s->last_seen_at ?? $now, 'status'=>'cerrado', 'updated_at'=>$now
         ]);
     }
 })->everyMinute();
@@ -92,3 +91,13 @@ Schedule::command('tenants:bill')->dailyAt('03:00');
 
 // O por clase:
 Schedule::command(TenantsBill::class)->dailyAt('03:00');
+
+
+  Schedule::command('tenants:billing-daily')->dailyAt('02:10');
+
+    // Día 1: generar mes completo
+    Schedule::command('tenants:bill-month-start')->monthlyOn(1, '02:20');
+
+/*  $schedule->command('chat:purge-old --days=60')
+        ->dailyAt('03:00')
+        ->withoutOverlapping();*/

@@ -11,165 +11,416 @@ use Illuminate\Support\Facades\DB;
 
 class TenantBillingService
 {
-    /**
-     * Verifica si el tenant puede registrar un nuevo vehículo.
-     * Aplica:
-     *  - Trial: 5 vehículos por 14 días (trial_vehicles / trial_ends_at).
-     *  - Límite de plan (max_vehicles) si se usa.
-     */
-    public function canRegisterNewVehicle(Tenant $tenant): array
+    private int $TRIAL_DAYS = 14;
+    private int $PAY_GRACE_DAYS = 5;
+
+    public function periodEomFor(Carbon $ref): array
     {
-        /** @var TenantBillingProfile|null $profile */
-        $profile = $tenant->billingProfile;
+        $start = $ref->copy()->startOfMonth()->startOfDay();
+        $end   = $ref->copy()->endOfMonth()->endOfDay();
+        return [$start, $end];
+    }
 
-        if (!$profile) {
-            return [false, 'El tenant no tiene perfil de facturación configurado.'];
-        }
+    public function trialEndsAt(TenantBillingProfile $p): ?Carbon
+    {
+        if (!empty($p->trial_ends_at)) return Carbon::parse($p->trial_ends_at)->endOfDay();
+        if (!empty($p->created_at))   return Carbon::parse($p->created_at)->copy()->addDays($this->TRIAL_DAYS)->endOfDay();
+        return null;
+    }
 
-        $now = Carbon::now();
+    public function isTrialExpired(TenantBillingProfile $p, ?Carbon $now = null): bool
+    {
+        $now = $now ?: Carbon::now();
+        $ends = $this->trialEndsAt($p);
+        return (strtolower((string)$p->status) === 'trial') && $ends && $now->gt($ends);
+    }
 
-        // Vehículos activos actuales
-        $activeVehicles = Vehicle::where('tenant_id', $tenant->id)
-            ->where('active', 1)
-            ->count();
+    public function activeVehiclesCount(int $tenantId): int
+    {
+        return Vehicle::where('tenant_id', $tenantId)->where('active', 1)->count();
+    }
 
-        // Modo TRIAL
-        if ($profile->status === 'trial') {
-            // Si existe fecha fin de trial y ya pasó
-            if ($profile->trial_ends_at && $now->gt($profile->trial_ends_at)) {
-                return [false, 'Tu periodo de prueba ha finalizado. Contacta a soporte para activar tu plan.'];
-            }
+    public function monthlyAmountForVehicles(TenantBillingProfile $p, int $activeCount): float
+    {
+        $baseFee = (float)$p->base_monthly_fee;
+        $included = (int)$p->included_vehicles;
+        $ppv = (float)$p->price_per_vehicle;
 
-            $maxTrialVehicles = $profile->trial_vehicles ?? 5;
-            if ($activeVehicles >= $maxTrialVehicles) {
-                return [false, "En el periodo de prueba puedes usar hasta {$maxTrialVehicles} vehículos."];
-            }
+        $extra = max(0, $activeCount - $included);
+        return round($baseFee + ($extra * $ppv), 2);
+    }
 
-            return [true, null];
-        }
-
-        // Modo ACTIVE
-        if ($profile->status === 'active') {
-            if ($profile->max_vehicles !== null && $activeVehicles >= $profile->max_vehicles) {
-                return [false, "Has alcanzado el límite de {$profile->max_vehicles} vehículos en tu plan."];
-            }
-
-            return [true, null];
-        }
-
-        // Pausado / cancelado
-        if (in_array($profile->status, ['paused', 'canceled'], true)) {
-            return [false, 'Tu plan está pausado o cancelado. No puedes registrar nuevos vehículos.'];
-        }
-
-        return [false, 'Estado de facturación no válido. Contacta a soporte.'];
+    public function prorateMonthly(float $monthlyAmount, Carbon $from, Carbon $to, Carbon $periodStart, Carbon $periodEnd): float
+    {
+        $daysInPeriod = $periodStart->diffInDays($periodEnd) + 1;
+        $activeDays   = $from->copy()->startOfDay()->diffInDays($to->copy()->endOfDay()) + 1;
+        $ratio = $activeDays / max(1, $daysInPeriod);
+        return round($monthlyAmount * $ratio, 2);
     }
 
     /**
-     * Calcula el periodo de facturación en base al día de corte.
-     *
-     * Regla:
-     *  - period_end  = último día de corte <= cutoffDate
-     *  - period_start = día siguiente al corte anterior
-     *
-     * Ejemplo: invoice_day = 15
-     *  - cutoffDate = 2025-03-15 -> period_end = 2025-03-15, period_start = 2025-02-16
-     *  - cutoffDate = 2025-03-20 -> sigue usando periodo que termina 15/03 pero normalmente
-     *    solo deberíamos facturar cuando cutoffDate->day == invoice_day.
+     * POST-TRIAL:
+     * - Genera invoice prorrateada (día siguiente a trial_end -> fin de mes).
+     * - Suspende profile a paused hasta pagar.
      */
-    public function calculateBillingPeriod(TenantBillingProfile $profile, Carbon $cutoffDate): array
+
+     public function canRegisterNewVehicle(Tenant $tenant): array
     {
-        $invoiceDay = $profile->invoice_day ?: 1;
-
-        $periodEnd = $cutoffDate->copy()->day($invoiceDay);
-        if ($cutoffDate->day < $invoiceDay) {
-            // Aún no llegamos al corte de este mes ⇒ usamos el corte del mes anterior
-            $periodEnd->subMonth();
-        }
-
-        $periodStart = $periodEnd->copy()->subMonth()->addDay();
-
-        return [$periodStart, $periodEnd];
-    }
-
-    /**
-     * Genera (o reutiliza) una factura mensual para el tenant, basada en el
-     * número de vehículos activos al momento del corte.
-     *
-     * - Idempotente: si ya existe factura para ese periodo, la devuelve.
-     */
-    public function generateMonthlyInvoice(Tenant $tenant, Carbon $cutoffDate): TenantInvoice
-    {
-        /** @var TenantBillingProfile|null $profile */
         $profile = $tenant->billingProfile;
-        if (!$profile) {
-            throw new \RuntimeException("Tenant {$tenant->id} no tiene perfil de facturación.");
-        }
+        if (!$profile) return [false, 'Sin perfil de facturación.'];
 
-        // Sólo tiene sentido si billing_model = per_vehicle
         if ($profile->billing_model !== 'per_vehicle') {
-            throw new \RuntimeException("Tenant {$tenant->id} no usa modelo per_vehicle.");
+            return [true, null];
         }
 
-        [$periodStart, $periodEnd] = $this->calculateBillingPeriod($profile, $cutoffDate);
+        $activeVehicles = Vehicle::where('tenant_id', $tenant->id)->where('active', 1)->count();
+        $status = strtolower((string)$profile->status);
 
-        // ¿Ya existe factura para este periodo?
+        if ($status === 'trial') {
+            if ($this->isTrialExpired($profile)) {
+                return [false, 'Tu periodo de prueba terminó. Recarga tu cuenta para reactivar.'];
+            }
+            $maxTrial = (int)($profile->trial_vehicles ?? 5);
+            if ($activeVehicles >= $maxTrial) {
+                return [false, "En el trial puedes usar hasta {$maxTrial} vehículos."];
+            }
+            return [true, null];
+        }
+
+        if ($status === 'active') {
+            if ($profile->max_vehicles !== null && $activeVehicles >= (int)$profile->max_vehicles) {
+                return [false, "Límite de plan alcanzado ({$profile->max_vehicles})."];
+            }
+            return [true, null];
+        }
+
+        if (in_array($status, ['paused','canceled'], true)) {
+            return [false, 'Plan pausado/cancelado.'];
+        }
+
+        return [false, 'Estado inválido.'];
+    }
+
+
+
+    public function ensurePostTrialActivationInvoice(Tenant $tenant, Carbon $now): ?TenantInvoice
+    {
+        $p = $tenant->billingProfile;
+        if (!$p || $p->billing_model !== 'per_vehicle') return null;
+
+        if (!$this->isTrialExpired($p, $now)) return null;
+
+        [$mStart, $mEnd] = $this->periodEomFor($now);
+        $trialEnds = $this->trialEndsAt($p);
+
+        $from = $trialEnds ? $trialEnds->copy()->addDay()->startOfDay() : $now->copy()->startOfDay();
+        if ($from->lt($mStart)) $from = $mStart->copy();
+
+        $to = $mEnd->copy();
+
+        if ($from->gt($to)) return null;
+
         $existing = TenantInvoice::where('tenant_id', $tenant->id)
-            ->where('period_start', $periodStart->toDateString())
-            ->where('period_end', $periodEnd->toDateString())
+            ->where('period_start', $from->toDateString())
+            ->where('period_end', $to->toDateString())
+            ->whereIn('status', ['draft','pending','paid'])
             ->first();
 
-        if ($existing) {
-            return $existing;
-        }
+        if ($existing) return $existing;
 
-        // Vehículos activos al momento del corte
-        $activeVehicles = Vehicle::where('tenant_id', $tenant->id)
-            ->where('active', 1)
-            ->count();
+        $activeCount = $this->activeVehiclesCount($tenant->id);
+        $monthly = $this->monthlyAmountForVehicles($p, $activeCount);
+        $amount  = $this->prorateMonthly($monthly, $from, $to, $mStart, $mEnd);
 
-        // Cálculo económico (versión simple TaxiCaller-style)
-        $baseFee         = (float) $profile->base_monthly_fee;
-        $included        = (int) $profile->included_vehicles;
-        $pricePerVehicle = (float) $profile->price_per_vehicle;
+        $status = $p->accepted_terms_at ? 'pending' : 'draft';
 
-        $extraVehicles = max(0, $activeVehicles - $included);
-        $vehiclesFee   = $extraVehicles * $pricePerVehicle;
-        $total         = $baseFee + $vehiclesFee;
+        return DB::transaction(function () use ($tenant, $p, $now, $from, $to, $activeCount, $amount, $status) {
+            $inv = new TenantInvoice();
+            $inv->tenant_id = $tenant->id;
+            $inv->billing_profile_id = $p->id;
+            $inv->period_start = $from->toDateString();
+            $inv->period_end   = $to->toDateString();
+            $inv->issue_date   = $now->toDateString();
+            $inv->due_date     = $now->copy()->addDays($this->PAY_GRACE_DAYS)->toDateString();
+            $inv->status       = $status; // draft | pending
+            $inv->vehicles_count = $activeCount;
+            $inv->base_fee = 0.00;
+            $inv->vehicles_fee = $amount;
+            $inv->total = $amount;
+            $inv->currency = 'MXN';
+            $inv->notes = 'Activación post-trial (prorrateo a fin de mes).';
+            $inv->save();
 
-        return DB::transaction(function () use (
-            $tenant,
-            $profile,
-            $periodStart,
-            $periodEnd,
-            $cutoffDate,
-            $activeVehicles,
-            $baseFee,
-            $vehiclesFee,
-            $total
-        ) {
-            $invoice = new TenantInvoice();
-            $invoice->tenant_id          = $tenant->id;
-            $invoice->billing_profile_id = $profile->id;
-            $invoice->period_start       = $periodStart->toDateString();
-            $invoice->period_end         = $periodEnd->toDateString();
-            $invoice->issue_date         = $cutoffDate->toDateString();
-            $invoice->due_date           = $cutoffDate->copy()->addDays(7)->toDateString();
-            $invoice->status             = 'pending';
-            $invoice->vehicles_count     = $activeVehicles;
-            $invoice->base_fee           = $baseFee;
-            $invoice->vehicles_fee       = $vehiclesFee;
-            $invoice->total              = $total;
-            $invoice->currency           = 'MXN';
-            $invoice->notes              = null;
-            $invoice->save();
+            // Suspender hasta pagar
+            $p->status = 'paused';
+            $p->suspended_at = now();
+            $p->suspension_reason = 'trial_expired';
+            $p->save();
 
-            // Actualizamos fechas en el profile (ayuda de tracking)
-            $profile->last_invoice_date = $invoice->issue_date;
-            $profile->next_invoice_date = $periodEnd->copy()->addMonth()->toDateString();
-            $profile->save();
-
-            return $invoice;
+            return $inv;
         });
     }
+
+    /**
+     * MES COMPLETO (PREPAGO): se corre el día 1.
+     * - status=pending
+     * - due_date = +PAY_GRACE_DAYS
+     */
+    public function generateMonthInvoicePrepaid(Tenant $tenant, Carbon $monthRef): TenantInvoice
+    {
+        $p = $tenant->billingProfile;
+        if (!$p) throw new \RuntimeException("Tenant sin billing profile.");
+        if ($p->billing_model !== 'per_vehicle') throw new \RuntimeException("No per_vehicle.");
+
+        // Si está paused por falta de pago, igual puedes generar “próximo cargo estimado”,
+        // pero NO conviene generar invoice mensual hasta reactivar.
+        if (strtolower((string)$p->status) !== 'active') {
+            throw new \RuntimeException("Billing profile no está activo.");
+        }
+
+        [$start, $end] = $this->periodEomFor($monthRef);
+
+        $existing = TenantInvoice::where('tenant_id', $tenant->id)
+            ->where('period_start', $start->toDateString())
+            ->where('period_end', $end->toDateString())
+            ->whereIn('status', ['draft','pending','paid'])
+            ->first();
+
+        if ($existing) return $existing;
+
+        $activeCount = $this->activeVehiclesCount($tenant->id);
+        $monthly = $this->monthlyAmountForVehicles($p, $activeCount);
+
+        return DB::transaction(function () use ($tenant, $p, $start, $end, $activeCount, $monthly) {
+            $inv = new TenantInvoice();
+            $inv->tenant_id = $tenant->id;
+            $inv->billing_profile_id = $p->id;
+            $inv->period_start = $start->toDateString();
+            $inv->period_end   = $end->toDateString();
+            $inv->issue_date   = $start->toDateString(); // día 1
+            $inv->due_date     = $start->copy()->addDays($this->PAY_GRACE_DAYS)->toDateString();
+            $inv->status       = 'pending';
+            $inv->vehicles_count = $activeCount;
+
+            // desglose simple (si quieres guardarlo fino: base_fee + vehicles_fee)
+            $inv->base_fee = (float)$p->base_monthly_fee;
+            $extra = max(0, $activeCount - (int)$p->included_vehicles);
+            $inv->vehicles_fee = round($extra * (float)$p->price_per_vehicle, 2);
+            $inv->total = $monthly;
+
+            $inv->currency = 'MXN';
+            $inv->notes = 'Cargo mensual por adelantado (wallet).';
+            $inv->save();
+
+            $p->last_invoice_date = $inv->issue_date;
+            $p->next_invoice_date = Carbon::parse($end)->addMonth()->startOfMonth()->toDateString();
+            $p->save();
+
+            return $inv;
+        });
+    }
+
+    /**
+     * Estimado próximo cargo (para UI).
+     * - Si trial: estimado del mes completo (pero NO se cobra)
+     * - Si paused: estimado para reactivar (post-trial prorrateo si aplica)
+     * - Si active: estimado del próximo mes (mes completo)
+     */
+    public function estimatedNextCharge(Tenant $tenant, Carbon $now): array
+    {
+        $p = $tenant->billingProfile;
+        if (!$p || $p->billing_model !== 'per_vehicle') {
+            return ['amount' => 0.0, 'label' => 'No aplica', 'period_start' => null, 'period_end' => null];
+        }
+
+        [$mStart, $mEnd] = $this->periodEomFor($now);
+        $activeCount = $this->activeVehiclesCount($tenant->id);
+        $monthly = $this->monthlyAmountForVehicles($p, $activeCount);
+
+        $st = strtolower((string)$p->status);
+
+        // trial: solo informativo
+        if ($st === 'trial') {
+            return [
+                'amount' => $monthly,
+                'label' => 'Estimado mensual (se cobrará al finalizar trial)',
+                'period_start' => $mStart->toDateString(),
+                'period_end' => $mEnd->toDateString(),
+            ];
+        }
+
+        // paused por trial vencido: prorrateo hasta fin de mes
+        if ($st === 'paused' && $p->suspension_reason === 'trial_expired') {
+            $trialEnds = $this->trialEndsAt($p);
+            $from = $trialEnds ? $trialEnds->copy()->addDay()->startOfDay() : $now->copy()->startOfDay();
+            if ($from->lt($mStart)) $from = $mStart->copy();
+            $to = $mEnd->copy();
+
+            $amount = $from->gt($to) ? 0.0 : $this->prorateMonthly($monthly, $from, $to, $mStart, $mEnd);
+
+            return [
+                'amount' => $amount,
+                'label' => 'Recarga mínima para reactivar (prorrateo fin de mes)',
+                'period_start' => $from->toDateString(),
+                'period_end' => $to->toDateString(),
+            ];
+        }
+
+        // active: próximo mes completo
+        $next = $now->copy()->addMonth()->startOfMonth();
+        [$nStart, $nEnd] = $this->periodEomFor($next);
+
+        return [
+            'amount' => $monthly,
+            'label' => 'Próximo cargo mensual (prepago)',
+            'period_start' => $nStart->toDateString(),
+            'period_end' => $nEnd->toDateString(),
+        ];
+    }
+
+    /**
+     * Pagar invoice desde wallet (si alcanza).
+     * - invoice.status debe ser pending
+     * - si paga: invoice->paid y activa profile si estaba paused
+     */
+    public function payInvoiceFromWallet(
+        TenantInvoice $invoice,
+        TenantWalletService $wallet
+    ): bool {
+        if (!in_array($invoice->status, ['pending'], true)) return false;
+
+        $tenantId = (int)$invoice->tenant_id;
+        $amount   = (float)$invoice->total;
+
+        $ok = $wallet->debitIfEnough(
+            $tenantId,
+            $amount,
+            'tenant_invoice',
+            (int)$invoice->id,
+            null,
+            'Pago de factura desde wallet'
+        );
+
+        if (!$ok) return false;
+
+        DB::transaction(function () use ($invoice) {
+            $invoice->status = 'paid';
+            $invoice->save();
+
+            // Re-activar tenant si estaba suspendido
+            $p = $invoice->billingProfile;
+            if ($p && strtolower((string)$p->status) !== 'active') {
+                $p->status = 'active';
+                $p->suspended_at = null;
+                $p->suspension_reason = null;
+                $p->save();
+            }
+        });
+
+        return true;
+    }
+
+
+
+public function requiredBalanceToFinishMonth(Tenant $tenant, $date): array
+{
+    $now = $date instanceof Carbon ? $date->copy() : Carbon::parse($date);
+    $p = $tenant->billingProfile;
+
+    if (!$p || ($p->billing_model ?? 'per_vehicle') !== 'per_vehicle') {
+        return [
+            'required_amount' => 0.0,
+            'currency' => 'MXN',
+            'label' => 'No aplica',
+            'reason' => 'not_per_vehicle',
+        ];
+    }
+
+    [$mStart, $mEnd] = $this->periodEomFor($now);
+
+    $currency = 'MXN';
+
+    $status = strtolower((string)$p->status);
+
+    // Trial vigente => no requerido (pero sugerimos estimado mensual)
+    if ($status === 'trial' && !$this->isTrialExpired($p, $now)) {
+        $activeCount = Vehicle::where('tenant_id', $tenant->id)->where('active', 1)->count();
+        $monthly = round($this->monthlyAmountForVehicles($p, $activeCount), 2);
+
+        return [
+            'required_amount' => 0.0,
+            'currency' => $currency,
+            'label' => 'Trial activo (sin cobro)',
+            'reason' => 'trial_active',
+            'estimated_monthly' => $monthly,
+            'estimated_label' => 'Estimado mensual (se cobrará al finalizar trial)',
+        ];
+    }
+
+    // 1) Si existe invoice NO pagado que toca el mes actual, ese manda
+    // (activación post-trial prorrateada o mensual adelantado en pending)
+    $unpaid = TenantInvoice::where('tenant_id', $tenant->id)
+        ->whereIn('status', ['draft','pending','overdue'])
+        ->whereDate('period_end', '>=', $mStart->toDateString())
+        ->whereDate('period_start', '<=', $mEnd->toDateString())
+        ->orderByDesc('issue_date')
+        ->orderByDesc('id')
+        ->first();
+
+    if ($unpaid) {
+        return [
+            'required_amount' => round((float)$unpaid->total, 2),
+            'currency' => $unpaid->currency ?? $currency,
+            'label' => 'Saldo requerido para continuar',
+            'reason' => 'unpaid_invoice',
+            'invoice_id' => $unpaid->id,
+            'period_start' => (string)$unpaid->period_start,
+            'period_end' => (string)$unpaid->period_end,
+            'status' => (string)$unpaid->status,
+        ];
+    }
+
+    // 2) Si está en trial_expired/paused por trial_expired y todavía no se creó invoice,
+    // el "requerido" es prorrateo desde mañana (o desde hoy) hasta fin de mes
+    // (esto permite middleware funcionar incluso si el cron no corrió)
+    if ($status === 'trial' && $this->isTrialExpired($p, $now)) {
+        $trialEnds = $this->trialEndsAt($p);
+        $from = $trialEnds ? $trialEnds->copy()->addDay()->startOfDay() : $now->copy()->startOfDay();
+        if ($from->lt($mStart)) $from = $mStart->copy();
+        $to = $mEnd->copy();
+
+        if ($from->gt($to)) {
+            return [
+                'required_amount' => 0.0,
+                'currency' => $currency,
+                'label' => 'Sin saldo requerido',
+                'reason' => 'month_passed',
+            ];
+        }
+
+        $activeCount = Vehicle::where('tenant_id', $tenant->id)->where('active', 1)->count();
+        $monthly = $this->monthlyAmountForVehicles($p, $activeCount);
+        $prorated = $this->prorate($monthly, $from, $to, $mStart, $mEnd);
+
+        return [
+            'required_amount' => round($prorated, 2),
+            'currency' => $currency,
+            'label' => 'Activación post-trial (prorrateo a fin de mes)',
+            'reason' => 'trial_expired_prorated',
+            'period_start' => $from->toDateString(),
+            'period_end' => $to->toDateString(),
+        ];
+    }
+
+    // 3) Active sin invoice pendiente del mes => ya está cubierto
+    return [
+        'required_amount' => 0.0,
+        'currency' => $currency,
+        'label' => 'Saldo suficiente',
+        'reason' => 'covered',
+    ];
+}
+
+
+
 }

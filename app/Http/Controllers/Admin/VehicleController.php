@@ -10,12 +10,22 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use App\Http\Controllers\AssignmentController;
 use App\Services\TenantBillingService;
+use App\Models\Tenant;
 
 class VehicleController extends Controller
-{
+{   
+    private function tenantId(): int
+    {
+        $tid = Auth::user()->tenant_id ?? null;
+        if (!$tid) abort(403, 'Usuario sin tenant asignado');
+        return (int) $tid;
+    }
+
+
+
     public function index(Request $r)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
         $q = trim($r->get('q',''));
 
         $vehicles = DB::table('vehicles')
@@ -34,38 +44,120 @@ class VehicleController extends Controller
         return view('admin.vehicles.index', compact('vehicles','q'));
     }
 
-    public function create()
-    {
-        return view('admin.vehicles.create');
+public function create()
+{
+    $tenantId = $this->tenantId();
+    $tenant   = Tenant::with('billingProfile')->findOrFail($tenantId);
+    $profile  = $tenant->billingProfile;
+
+    // Check de billing para mostrar mensaje en el form
+    [$canRegister, $billingMessage] = app(TenantBillingService::class)
+        ->canRegisterNewVehicle($tenant);
+
+    $activeVehicles = DB::table('vehicles')
+        ->where('tenant_id', $tenantId)
+        ->where('active', 1)
+        ->count();
+
+    // Catálogo de marcas/modelos activos
+    $vehicleCatalog = DB::table('vehicle_catalog')
+        ->where('active', 1)
+        ->orderBy('brand')
+        ->orderBy('model')
+        ->get();
+
+    // Años recientes (últimos ~25)
+    $currentYear = now()->year;
+    $years = range($currentYear, $currentYear - 25);
+
+    return view('admin.vehicles.create', [
+        'v'              => null,
+        'tenant'         => $tenant,
+        'profile'        => $profile,
+        'canRegister'    => $canRegister,
+        'billingMessage' => $billingMessage,
+        'activeVehicles' => $activeVehicles,
+        'vehicleCatalog' => $vehicleCatalog,
+        'years'          => $years,
+    ]);
+}
+
+public function store(Request $r)
+{
+    $tenantId = $this->tenantId();
+
+    // 🔹 Cargar Tenant + perfil de billing
+    $tenant = Tenant::with('billingProfile')->findOrFail($tenantId);
+
+    $data = $r->validate([
+        'economico'  => 'required|string|max:20',
+        'plate'      => 'required|string|max:20',
+        'capacity'   => 'nullable|integer|min:1|max:10',
+        'color'      => 'nullable|string|max:40',
+        'year'       => 'nullable|integer|min:1970|max:2100',
+        'policy_id'  => 'nullable|string|max:60',
+        //'active'     => 'nullable|boolean',
+        'foto'       => 'nullable|image|max:2048',
+
+        // Campos ligados al catálogo
+        'catalog_id' => 'nullable|integer|exists:vehicle_catalog,id',
+        'brand'      => 'nullable|string|max:60',
+        'model'      => 'nullable|string|max:80',
+    ]);
+
+    // ✅ Billing check ANTES de insertar (per_vehicle / trial / active / etc.)
+    [$allowed, $reason] = app(TenantBillingService::class)
+        ->canRegisterNewVehicle($tenant);
+
+    if (!$allowed) {
+        return back()
+            ->withErrors(['billing' => $reason])
+            ->withInput();
     }
 
-    public function store(Request $r)
-    {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+    // Si viene catalog_id, reforzamos brand/model desde el catálogo
+    if (!empty($data['catalog_id'])) {
+        $cat = DB::table('vehicle_catalog')
+            ->where('id', $data['catalog_id'])
+            ->first();
 
-        $data = $r->validate([
-            'economico' => 'required|string|max:20',
-            'plate'     => 'required|string|max:20',
-            'brand'     => 'nullable|string|max:60',
-            'model'     => 'nullable|string|max:60',
-            'color'     => 'nullable|string|max:40',
-            'year'      => 'nullable|integer|min:1970|max:2100',
-            'capacity'  => 'nullable|integer|min:1|max:10',
-            'policy_id' => 'nullable|string|max:60',
-            'active'    => 'nullable|boolean',
-            'foto'      => 'nullable|image|max:2048',
-        ]);
+        if ($cat) {
+            $data['brand'] = $cat->brand;
+            $data['model'] = $cat->model;
+            // Si luego agregas columna vehicle_type en vehicles, aquí puedes usar $cat->type
+        }
+    }
 
-        // Unicidad por tenant
-        $existsEco = DB::table('vehicles')->where('tenant_id',$tenantId)->where('economico',$data['economico'])->exists();
-        if ($existsEco) return back()->withErrors(['economico'=>'Ya existe ese número económico.'])->withInput();
+    return DB::transaction(function () use ($r, $data, $tenantId) {
 
-        $existsPlate = DB::table('vehicles')->where('tenant_id',$tenantId)->where('plate',$data['plate'])->exists();
-        if ($existsPlate) return back()->withErrors(['plate'=>'Ya existe esa placa.'])->withInput();
+        // Unicidad de económico por tenant
+        $existsEco = DB::table('vehicles')
+            ->where('tenant_id', $tenantId)
+            ->where('economico', $data['economico'])
+            ->exists();
 
+        if ($existsEco) {
+            return back()
+                ->withErrors(['economico' => 'Ya existe ese número económico.'])
+                ->withInput();
+        }
+
+        // Unicidad de placa por tenant
+        $existsPlate = DB::table('vehicles')
+            ->where('tenant_id', $tenantId)
+            ->where('plate', $data['plate'])
+            ->exists();
+
+        if ($existsPlate) {
+            return back()
+                ->withErrors(['plate' => 'Ya existe esa placa.'])
+                ->withInput();
+        }
+
+        // Foto
         $fotoPath = null;
         if ($r->hasFile('foto')) {
-            $fotoPath = $r->file('foto')->store('vehicles', 'public'); // public/vehicles/...
+            $fotoPath = $r->file('foto')->store('vehicles', 'public');
         }
 
         $id = DB::table('vehicles')->insertGetId([
@@ -84,23 +176,23 @@ class VehicleController extends Controller
             'updated_at'=> now(),
         ]);
 
-        $tenant = $this->resolveTenantFromUser($request->user()); // como ya lo haces ahora
+        // Flujo: alta básica → pantalla de documentos
+       // Flujo: alta básica → pantalla de documentos
+// Flujo: alta básica → pantalla de documentos
+return redirect()
+    ->route('vehicles.documents.index', ['id' => $id])
+    ->with('ok', 'Vehículo creado. Ahora sube los documentos requeridos para verificación.');
 
-        [$allowed, $reason] = app(TenantBillingService::class)->canRegisterNewVehicle($tenant);
 
-        if (!$allowed) {
-            return redirect()
-                ->back()
-                ->withErrors(['billing' => $reason])
-                ->withInput();
-        }
+    });
+}
 
-        return redirect()->route('vehicles.show',$id)->with('ok','Vehículo creado.');
-    }
+
 
 public function show(int $id)
 {
-    $tenantId = auth()->user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
+
 
     $v = DB::table('vehicles')
         ->where('tenant_id', $tenantId)
@@ -143,7 +235,7 @@ public function show(int $id)
 
 public function assignDriver(Request $r, int $id)
 {
-    $tenantId = Auth::user()->tenant_id ?? 1;
+    $tenantId = $this->tenantId();
 
     $data = $r->validate([
         'driver_id'       => 'required|integer',
@@ -208,7 +300,7 @@ public function assignDriver(Request $r, int $id)
 
     public function edit(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
         $v = DB::table('vehicles')->where('tenant_id',$tenantId)->where('id',$id)->first();
         abort_if(!$v, 404);
         return view('admin.vehicles.edit', compact('v'));
@@ -216,7 +308,7 @@ public function assignDriver(Request $r, int $id)
 
     public function update(Request $r, int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
 
         $data = $r->validate([
             'economico' => 'required|string|max:20',
@@ -271,7 +363,7 @@ public function assignDriver(Request $r, int $id)
 
     public function destroy(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
         $v = DB::table('vehicles')->where('tenant_id',$tenantId)->where('id',$id)->first();
         abort_if(!$v, 404);
 

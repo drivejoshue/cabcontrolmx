@@ -18,23 +18,50 @@
         <i data-feather="truck"></i>
       </div>
       <div>
-        <h3 class="mb-0">
-          Económico #{{ $v->economico }}
-          @php $activo = (int)($v->active ?? 0); @endphp
-          <span class="badge {{ $activo ? 'bg-success' : 'bg-secondary' }} align-middle">
+        @php
+          $activo = (int)($v->active ?? 0);
+          $vs = $v->verification_status ?? 'pending';
+          $vsBadge = $vs === 'verified'
+            ? 'success'
+            : ($vs === 'rejected' ? 'danger' : 'warning');
+        @endphp
+
+        <h3 class="mb-0 d-flex flex-wrap align-items-center gap-2">
+          <span>Económico #{{ $v->economico }}</span>
+
+          {{-- Estado operativo --}}
+          <span class="badge {{ $activo ? 'bg-success' : 'bg-secondary' }}">
             {{ $activo ? 'Activo' : 'Inactivo' }}
           </span>
+
+          {{-- Estado de verificación --}}
+          <span class="badge bg-{{ $vsBadge }}">
+            Verificación: {{ $vs }}
+          </span>
         </h3>
-        <div class="text-muted">
-          Placa: {{ $v->plate ?: '—' }} · {{ $v->brand ?: '—' }} {{ $v->model ?: '' }} {{ $v->year ? '('.$v->year.')' : '' }}
+
+        <div class="text-muted mt-1">
+          Placa: {{ $v->plate ?: '—' }} ·
+          {{ $v->brand ?: '—' }} {{ $v->model ?: '' }}
+          {{ $v->year ? '('.$v->year.')' : '' }}
         </div>
       </div>
     </div>
 
-    <div class="d-flex gap-2">
+    <div class="d-flex flex-wrap gap-2">
+      <a href="{{ route('vehicles.documents.index', $v->id) }}" class="btn btn-outline-info">
+        <i data-feather="file-text"></i>
+        @if($vs === 'verified')
+          Ver documentos
+        @else
+          Documentos / Verificación
+        @endif
+      </a>
+
       <a href="{{ route('vehicles.edit', ['id'=>$v->id]) }}" class="btn btn-primary">
         <i data-feather="edit-2"></i> Editar
       </a>
+
       <a href="{{ route('vehicles.index') }}" class="btn btn-outline-secondary">
         <i data-feather="arrow-left"></i> Volver
       </a>
@@ -93,8 +120,35 @@
 
                 <dt class="col-sm-4">Estado</dt>
                 <dd class="col-sm-8">
-                  @if($activo)<span class="badge bg-success">Activo</span>
-                  @else <span class="badge bg-secondary">Inactivo</span>@endif
+                  @if($activo)
+                    <span class="badge bg-success">Activo</span>
+                  @else
+                    <span class="badge bg-secondary">Inactivo</span>
+                  @endif
+                </dd>
+
+                <dt class="col-sm-4">Verificación</dt>
+                <dd class="col-sm-8">
+                  <span class="badge bg-{{ $vsBadge }}">{{ $vs }}</span>
+                  @if(!empty($v->verification_notes))
+                    <div class="small text-danger mt-1">
+                      {{ $v->verification_notes }}
+                    </div>
+                  @else
+                    @if($vs === 'pending')
+                      <div class="small text-muted mt-1">
+                        Documentos en revisión por Orbana. El vehículo se activará cuando la verificación esté completa.
+                      </div>
+                    @elseif($vs === 'verified')
+                      <div class="small text-muted mt-1">
+                        Vehículo verificado. Forma parte del pool activo del tenant (según configuración de billing).
+                      </div>
+                    @elseif($vs === 'rejected')
+                      <div class="small text-muted mt-1">
+                        Verificación rechazada. Revisa los documentos y vuelve a subirlos desde la sección de Documentos.
+                      </div>
+                    @endif
+                  @endif
                 </dd>
 
                 <dt class="col-sm-4">Creado</dt>
@@ -107,7 +161,7 @@
           </div>
         </div>
 
-        {{-- Resumen + mini foto --}}
+        {{-- Resumen + mini foto + verificación/documentos --}}
         <div class="col-12 col-xl-5">
           <div class="card h-100">
             <div class="card-header"><strong>Resumen</strong></div>
@@ -132,14 +186,36 @@
                   <div class="text-muted small">
                     {{ $v->brand ?: '—' }} {{ $v->model ?: '' }} {{ $v->year ? '('.$v->year.')' : '' }}
                   </div>
-                  <div class="text-muted small">Placa: {{ $v->plate ?: '—' }}</div>
+                  <div class="text-muted small">
+                    Placa: {{ $v->plate ?: '—' }}
+                  </div>
                 </div>
               </div>
 
+              {{-- Bloque verificación / documentos --}}
+              <div class="alert alert-{{ $vs === 'verified' ? 'success' : ($vs === 'rejected' ? 'danger' : 'warning') }} mb-3">
+                <div class="fw-semibold mb-1">Estado de verificación</div>
+                <div class="small mb-2">
+                  @if($vs === 'pending')
+                    Documentos en proceso de revisión por Orbana.
+                    El taxi no debería operar hasta completar esta verificación.
+                  @elseif($vs === 'verified')
+                    Vehículo verificado por Orbana. Ya puede operar según las reglas del tenant.
+                  @elseif($vs === 'rejected')
+                    Verificación rechazada. Revisa las notas y vuelve a subir documentación corregida.
+                  @endif
+                </div>
+                <a href="{{ route('vehicles.documents.index',$v->id) }}" class="btn btn-sm btn-outline-dark">
+                  <i data-feather="file-text"></i> Ver / subir documentos
+                </a>
+              </div>
+
+              {{-- Recordatorio de asignación de chofer --}}
               <div class="alert alert-secondary mb-0">
                 <div class="fw-semibold mb-1">¿Cambiar chofer?</div>
                 <div class="small mb-2">
-                  La asignación se realiza <strong>desde la ficha del conductor</strong> (Drivers → Ver → “Asignar vehículo”).
+                  La asignación se realiza <strong>desde la ficha del conductor</strong>
+                  (Conductores → Ver → “Asignar vehículo”).
                 </div>
                 <a href="{{ route('drivers.index') }}" class="btn btn-sm btn-outline-primary">
                   Ir a Conductores
@@ -205,7 +281,9 @@
                   </table>
                 </div>
               @else
-                <div class="alert alert-info mb-0">Este vehículo no tiene chofer asignado actualmente.</div>
+                <div class="alert alert-info mb-0">
+                  Este vehículo no tiene chofer asignado actualmente.
+                </div>
               @endif
             </div>
           </div>
@@ -219,7 +297,12 @@
               <div class="table-responsive">
                 <table class="table table-sm mb-0 align-middle">
                   <thead class="table-light">
-                    <tr><th>Chofer</th><th>Teléfono</th><th>Desde</th><th>Hasta</th></tr>
+                    <tr>
+                      <th>Chofer</th>
+                      <th>Teléfono</th>
+                      <th>Desde</th>
+                      <th>Hasta</th>
+                    </tr>
                   </thead>
                   <tbody>
                     @forelse($assignments ?? [] as $a)
@@ -234,7 +317,11 @@
                         <td>{{ $a->end_at ?? 'Vigente' }}</td>
                       </tr>
                     @empty
-                      <tr><td colspan="4" class="text-center text-muted">Sin registros</td></tr>
+                      <tr>
+                        <td colspan="4" class="text-center text-muted">
+                          Sin registros
+                        </td>
+                      </tr>
                     @endforelse
                   </tbody>
                 </table>
@@ -262,7 +349,9 @@
               <img src="{{ $foto }}" class="img-fluid rounded border" style="max-height:440px;object-fit:contain;">
             </div>
           @else
-            <div class="alert alert-info mb-0">Este vehículo no tiene imagen cargada todavía.</div>
+            <div class="alert alert-info mb-0">
+              Este vehículo no tiene imagen cargada todavía.
+            </div>
           @endif
 
           <div class="mt-3 d-flex gap-2">

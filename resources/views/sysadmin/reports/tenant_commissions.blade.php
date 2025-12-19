@@ -1,4 +1,4 @@
-@extends('layouts.admin') {{-- ajusta al layout que uses --}}
+@extends('layouts.sysadmin') {{-- ajusta al layout que uses --}}
 
 @section('content')
     <div class="container-fluid">

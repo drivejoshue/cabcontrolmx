@@ -5,78 +5,125 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Driver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\UploadedFile;
 
 class DriverProfileController extends Controller
 {
     /**
-     * Devuelve el perfil del driver autenticado
-     * (datos básicos + info de cobro: CLABE, banco, etc.).
+     * GET /api/driver/profile
+     * Devuelve el perfil + stats para DriverProfileShowResponse
      */
     public function show(Request $request)
     {
         $user = $request->user();
 
-        // Asumimos que el User tiene relación hasOne Driver
-        /** @var Driver $driver */
-        $driver = Driver::where('user_id', $user->id)->firstOrFail();
-
-        $fotoUrl = null;
-        if ($driver->foto_path) {
-            // Ajusta disk según tu config (public, s3, etc.)
-            $fotoUrl = Storage::disk('public')->url($driver->foto_path);
+        if (!$user) {
+            return response()->json(['message' => 'Unauthenticated'], 401);
         }
 
+        // Driver ligado al usuario
+        $driver = Driver::where('user_id', $user->id)->first();
+
+        if (!$driver) {
+            return response()->json(['message' => 'Driver no encontrado'], 404);
+        }
+
+        $tenantId = $user->tenant_id ?? $driver->tenant_id;
+        $tz       = config('app.timezone'); // si ya tienes timezone por tenant, cámbialo aquí
+
+        // --- Foto ---
+        $fotoUrl = $driver->foto_path
+            ? Storage::disk('public')->url($driver->foto_path)
+            : null;
+
+        // --- Stats de rating desde la vista driver_ratings_summary ---
+        $summary = DB::table('driver_ratings_summary')
+            ->where('driver_id', $driver->id)
+            ->when($tenantId, fn($q) => $q->where('tenant_id', $tenantId))
+            ->first();
+
+        $ratingAvg   = $summary->average_rating  ?? null;
+        $ratingCount = $summary->total_ratings   ?? 0;
+
+        // --- Stats de viajes desde rides ---
+        $completedTrips = DB::table('rides')
+            ->where('driver_id', $driver->id)
+            ->when($tenantId, fn($q) => $q->where('tenant_id', $tenantId))
+            ->where('status', 'finished')
+            ->count();
+
+        $today = now($tz)->toDateString();
+
+        $todayTrips = DB::table('rides')
+            ->where('driver_id', $driver->id)
+            ->when($tenantId, fn($q) => $q->where('tenant_id', $tenantId))
+            ->where('status', 'finished')
+            ->whereDate('finished_at', $today)
+            ->count();
+
+        $todayEarnings = DB::table('rides')
+            ->where('driver_id', $driver->id)
+            ->when($tenantId, fn($q) => $q->where('tenant_id', $tenantId))
+            ->where('status', 'finished')
+            ->whereDate('finished_at', $today)
+            ->sum('total_amount');
+
+        $monthStart = now($tz)->startOfMonth();
+        $monthEnd   = now($tz)->endOfMonth();
+
+        $monthEarnings = DB::table('rides')
+            ->where('driver_id', $driver->id)
+            ->when($tenantId, fn($q) => $q->where('tenant_id', $tenantId))
+            ->where('status', 'finished')
+            ->whereBetween('finished_at', [$monthStart, $monthEnd])
+            ->sum('total_amount');
+
+        // --- RESPUESTA ---
         return response()->json([
-            'id'            => $driver->id,
-            'name'          => $driver->name,
-            'phone'         => $driver->phone,
-            'email'         => $driver->email,
-            'status'        => $driver->status,
-            'active'        => (bool) $driver->active,
-            'foto_url'      => $fotoUrl,
+            'id'          => $driver->id,
+            'name'        => $driver->name ?? $user->name,
+            'phone'       => $driver->phone,
+            'email'       => $user->email,
+            'status'      => $driver->status,
+            'active'      => (bool) $driver->active,
+            'foto_url'    => $fotoUrl,
+            'profile_bio' => $driver->profile_bio,
 
-            // Mini bio
-            'profile_bio'   => $driver->profile_bio,
-
-            // Datos de transferencia
-            'payout' => [
-                'bank'           => $driver->payout_bank,
-                'account_name'   => $driver->payout_account_name,
-                'account_number' => $driver->payout_account_number,
-                'clabe'          => $driver->payout_clabe,
-                'notes'          => $driver->payout_notes,
+            'stats' => [
+                'rating_avg'      => $ratingAvg,
+                'rating_count'    => (int) $ratingCount,
+                'completed_trips' => (int) $completedTrips,
+                'today_trips'     => (int) $todayTrips,
+                'today_earnings'  => (float) $todayEarnings,
+                'month_earnings'  => (float) $monthEarnings,
+                'currency'        => 'MXN',
             ],
         ]);
     }
 
     /**
-     * Actualiza datos editables del perfil del driver
-     * (bio y datos de transferencia).
-     * La foto de perfil la podemos manejar en otro endpoint si quieres.
+     * POST /api/driver/profile
+     * Actualiza teléfono / bio. Respuesta tipo OkResponse
      */
     public function update(Request $request)
     {
         $user = $request->user();
-        /** @var Driver $driver */
-        $driver = Driver::where('user_id', $user->id)->firstOrFail();
+        if (!$user) {
+            return response()->json(['ok' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        $driver = Driver::where('user_id', $user->id)->first();
+        if (!$driver) {
+            return response()->json(['ok' => false, 'message' => 'Driver no encontrado'], 404);
+        }
 
         $data = $request->validate([
-            'name'                => 'sometimes|string|max:255',
-            'phone'               => 'sometimes|string|max:50',
-            'profile_bio'         => 'sometimes|nullable|string|max:255',
-
-            'payout_bank'         => 'sometimes|nullable|string|max:80',
-            'payout_account_name' => 'sometimes|nullable|string|max:120',
-            'payout_account_number' => 'sometimes|nullable|string|max:60',
-            'payout_clabe'        => 'sometimes|nullable|string|max:20',
-            'payout_notes'        => 'sometimes|nullable|string|max:255',
+            'phone'       => ['nullable', 'string', 'max:50'],
+            'profile_bio' => ['nullable', 'string', 'max:500'],
         ]);
 
-        // Campos básicos
-        if (array_key_exists('name', $data)) {
-            $driver->name = $data['name'];
-        }
         if (array_key_exists('phone', $data)) {
             $driver->phone = $data['phone'];
         }
@@ -84,24 +131,58 @@ class DriverProfileController extends Controller
             $driver->profile_bio = $data['profile_bio'];
         }
 
-        // Payout
-        foreach ([
-            'payout_bank',
-            'payout_account_name',
-            'payout_account_number',
-            'payout_clabe',
-            'payout_notes',
-        ] as $field) {
-            if (array_key_exists($field, $data)) {
-                $driver->{$field} = $data[$field];
-            }
-        }
-
         $driver->save();
 
         return response()->json([
-            'success' => true,
+            'ok'      => true,
             'message' => 'Perfil actualizado correctamente',
+        ]);
+    }
+
+    /**
+     * POST /api/driver/profile/photo
+     * Sube selfie del chofer
+     */
+    public function updatePhoto(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['ok' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        $driver = Driver::where('user_id', $user->id)->first();
+        if (!$driver) {
+            return response()->json(['ok' => false, 'message' => 'Driver no encontrado'], 404);
+        }
+
+        // Sólo validamos; el archivo real se lee con file()
+        $request->validate([
+            'foto' => ['required', 'image', 'max:4096'], // ~4MB
+        ]);
+
+        /** @var UploadedFile|null $file */
+        $file = $request->file('foto');
+        if (!$file) {
+            return response()->json([
+                'ok'      => false,
+                'message' => 'No se recibió la imagen',
+            ], 422);
+        }
+
+        // Borrar foto anterior si existe
+        if ($driver->foto_path) {
+            Storage::disk('public')->delete($driver->foto_path);
+        }
+
+        // Guardar nueva
+        $path = $file->store('drivers', 'public');
+        $driver->foto_path = $path;
+        $driver->save();
+
+        return response()->json([
+            'ok'       => true,
+            'message'  => 'Foto actualizada',
+            'foto_url' => Storage::disk('public')->url($path),
         ]);
     }
 }

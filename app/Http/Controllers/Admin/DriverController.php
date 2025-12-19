@@ -13,10 +13,22 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Hash;
 
 class DriverController extends Controller
-{
+{   
+
+    private function tenantId(): int
+    {
+        $tid = Auth::user()->tenant_id ?? null;
+        if (!$tid) {
+            abort(403, 'Usuario sin tenant asignado');
+        }
+        return (int) $tid;
+    }
+
+
+
     public function index(Request $r)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+       $tenantId = $this->tenantId();
         $q = trim($r->get('q',''));
 
         $drivers = DB::table('drivers')
@@ -42,7 +54,7 @@ class DriverController extends Controller
 
     public function store(Request $r)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+       $tenantId = $this->tenantId();
 
         $data = $r->validate([
             'name'         => 'required|string|max:120',
@@ -111,61 +123,87 @@ class DriverController extends Controller
         return redirect()->route('drivers.show', ['id'=>$id])->with('ok',$msg);
     }
 
-    public function show(int $id)
-    {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+   public function show(int $id)
+{
+    $tenantId = $this->tenantId();
 
-        $driver = DB::table('drivers')
-            ->where('tenant_id',$tenantId)
-            ->where('id',$id)
-            ->first();
-        abort_if(!$driver, 404);
+    $driver = DB::table('drivers')
+        ->where('tenant_id',$tenantId)
+        ->where('id',$id)
+        ->first();
+    abort_if(!$driver, 404);
 
-        // Asignación vigente (si existe)
-        $currentAssignment = DB::table('driver_vehicle_assignments as a')
-            ->join('vehicles as v','v.id','=','a.vehicle_id')
-            ->where('a.tenant_id',$tenantId)
-            ->where('a.driver_id',$id)
-            ->whereNull('a.end_at')
-            ->select([
-                'a.id as assignment_id',
-                'a.start_at',
-                'v.id',
-                'v.economico',
-                'v.plate',
-                'v.brand',
-                'v.model',
-            ])
-            ->first();
+    // Asignación vigente (si existe)
+    $currentAssignment = DB::table('driver_vehicle_assignments as a')
+        ->join('vehicles as v','v.id','=','a.vehicle_id')
+        ->where('a.tenant_id',$tenantId)
+        ->where('a.driver_id',$id)
+        ->whereNull('a.end_at')
+        ->select([
+            'a.id as assignment_id',
+            'a.start_at',
+            'v.id',
+            'v.economico',
+            'v.plate',
+            'v.brand',
+            'v.model',
+        ])
+        ->first();
 
-        // Histórico
-        $assignments = DB::table('driver_vehicle_assignments as a')
-            ->join('vehicles as v','v.id','=','a.vehicle_id')
-            ->where('a.tenant_id',$tenantId)
-            ->where('a.driver_id',$id)
-            ->orderByDesc('a.start_at')
-            ->select([
-                'a.start_at','a.end_at',
-                'v.id','v.economico','v.plate','v.brand','v.model',
-            ])
-            ->get();
+    // Histórico
+    $assignments = DB::table('driver_vehicle_assignments as a')
+        ->join('vehicles as v','v.id','=','a.vehicle_id')
+        ->where('a.tenant_id',$tenantId)
+        ->where('a.driver_id',$id)
+        ->orderByDesc('a.start_at')
+        ->select([
+            'a.start_at','a.end_at',
+            'v.id','v.economico','v.plate','v.brand','v.model',
+        ])
+        ->get();
 
-        // Para el modal de asignación
-        $vehiclesForSelect = DB::table('vehicles')
-            ->where('tenant_id',$tenantId)
-            ->where('active',1)
-            ->orderBy('economico')
-            ->select('id','economico','brand','model','plate')
-            ->get();
+    // Para el modal de asignación
+    $vehiclesForSelect = DB::table('vehicles')
+        ->where('tenant_id',$tenantId)
+        ->where('active',1)
+        ->orderBy('economico')
+        ->select('id','economico','brand','model','plate')
+        ->get();
 
-        return view('admin.drivers.show', compact(
-            'driver','currentAssignment','assignments','vehiclesForSelect'
-        ));
-    }
+    // ===== Documentos del conductor (licencia / INE / selfie / foto opcional) =====
+    $driverDocs = DB::table('driver_documents')
+        ->where('tenant_id', $tenantId)
+        ->where('driver_id', $id)
+        ->orderByDesc('id')
+        ->get();
+
+    // Mapa de tipos y requeridos (coinciden con DriverDocsController)
+    $driverDocTypesMap = [
+        'licencia'       => 'Licencia de conducir',
+        'ine'            => 'INE / identificación oficial',
+        'selfie'         => 'Selfie con identificación',
+        'foto_conductor' => 'Foto del conductor (opcional)',
+    ];
+
+    // Para verificación consideramos obligatorios estos 3:
+    $driverRequiredTypes = ['licencia','ine','selfie'];
+
+    return view('admin.drivers.show', compact(
+        'driver',
+        'currentAssignment',
+        'assignments',
+        'vehiclesForSelect',
+        'driverDocs',
+        'driverDocTypesMap',
+        'driverRequiredTypes'
+    ));
+}
+
 
     public function edit(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+               $tenantId = $this->tenantId();
+
 
         $driver = DB::table('drivers')
             ->where('tenant_id',$tenantId)
@@ -289,7 +327,8 @@ class DriverController extends Controller
 
     public function destroy(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+               $tenantId = $this->tenantId();
+
 
         $driver = DB::table('drivers')
             ->where('tenant_id',$tenantId)
@@ -316,7 +355,8 @@ class DriverController extends Controller
      */
     public function assignVehicle(Request $r, int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+               $tenantId = $this->tenantId();
+
 
         $data = $r->validate([
             'vehicle_id'     => 'required|integer',
@@ -383,7 +423,8 @@ class DriverController extends Controller
      */
     public function closeAssignment(int $assignmentId)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+               $tenantId = $this->tenantId();
+
 
         $a = DB::table('driver_vehicle_assignments')
             ->where('tenant_id',$tenantId)

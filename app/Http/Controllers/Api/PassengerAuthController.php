@@ -6,14 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Passenger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Str;
 
 class PassengerAuthController extends Controller
 {
     public function syncFromFirebase(Request $request)
     {
         // 🚨 TODO futuro: verificar idToken de Firebase aquí
-        // (por ahora confiamos en el cliente para avanzar rápido).
 
         $data = $request->validate([
             'firebase_uid' => 'required|string|max:128',
@@ -25,37 +23,35 @@ class PassengerAuthController extends Controller
             'app_version'  => 'nullable|string|max:20',
         ]);
 
-        // Por ahora usamos tenant_id fijo para pasajeros globales
-        $tenantId = 1; // luego lo puedes hacer configurable
+        // Si quieres seguir usando un tenant "global", hazlo configurable:
+        // $tenantId = (int) config('orbana.global_passenger_tenant_id', 100);
+        // Si los pasajeros son verdaderamente globales, puedes dejar tenant_id en null.
+        $tenantId = 100;
 
         $firebaseUid = $data['firebase_uid'];
         $phone       = $data['phone'] ?? null;
         $email       = $data['email'] ?? null;
 
-        // 1) Buscar por firebase_uid
+        // 1) Buscar por firebase_uid (global)
         $passenger = Passenger::where('firebase_uid', $firebaseUid)->first();
 
-        // 2) Si no existe, intentar por telefono (por si lo tenías de antes)
+        // 2) Si no existe, intentar por telefono (global)
         if (! $passenger && $phone) {
-            $passenger = Passenger::where('tenant_id', $tenantId)
-                ->where('phone', $phone)
-                ->first();
+            $passenger = Passenger::where('phone', $phone)->first();
         }
 
-        // 3) Si no existe, intentar por email dentro del mismo tenant
+        // 3) Si no existe, intentar por email (global)
         if (! $passenger && $email) {
-            $passenger = Passenger::where('tenant_id', $tenantId)
-                ->where('email', $email)
-                ->first();
+            $passenger = Passenger::where('email', $email)->first();
         }
 
         $payload = [
-            'tenant_id'  => $tenantId,
+            'tenant_id'    => $tenantId,            // null o global configurable
             'firebase_uid' => $firebaseUid,
-            'name'       => $data['name'] ?? null,
-            'phone'      => $phone,
-            'email'      => $data['email'] ?? null,
-            'avatar_url' => $data['avatar_url'] ?? null,
+            'name'         => $data['name'] ?? null,
+            'phone'        => $phone,
+            'email'        => $data['email'] ?? null,
+            'avatar_url'   => $data['avatar_url'] ?? null,
         ];
 
         if (! $passenger) {
@@ -67,49 +63,76 @@ class PassengerAuthController extends Controller
 
         return response()->json([
             'data' => [
-                'id'          => $passenger->id,
-                'tenant_id'   => $passenger->tenant_id,
-                'firebase_uid'=> $passenger->firebase_uid,
-                'name'        => $passenger->name,
-                'phone'       => $passenger->phone,
-                'email'       => $passenger->email,
-                'avatar_url'  => $passenger->avatar_url,
+                'id'           => $passenger->id,
+                'tenant_id'    => $passenger->tenant_id,
+                'firebase_uid' => $passenger->firebase_uid,
+                'name'         => $passenger->name,
+                'phone'        => $passenger->phone,
+                'email'        => $passenger->email,
+                'avatar_url'   => $passenger->avatar_url,
             ],
         ]);
     }
 
     public function ping(Request $request)
+    {
+        $data = $request->validate([
+            'firebase_uid' => 'required|string|max:128',
+            'platform'     => 'nullable|string|max:20',
+            'app_version'  => 'nullable|string|max:20',
+        ]);
+
+        $firebaseUid = $data['firebase_uid'];
+
+        // Buscar pasajero solo por firebase_uid (global, sin tenant)
+        $passenger = Passenger::where('firebase_uid', $firebaseUid)->first();
+
+        if (! $passenger) {
+            return response()->json([
+                'ok'  => false,
+                'msg' => 'Pasajero no encontrado, sincroniza primero /passenger/auth-sync.',
+            ], 422);
+        }
+
+        return response()->json([
+            'ok'  => true,
+            'msg' => 'pong',
+        ]);
+    }
+
+
+    // app/Http/Controllers/Api/PassengerAuthController.php
+
+public function profile(Request $request)
 {
     $data = $request->validate([
         'firebase_uid' => 'required|string|max:128',
-        'platform'     => 'nullable|string|max:20',
-        'app_version'  => 'nullable|string|max:20',
     ]);
 
-    $firebaseUid = $data['firebase_uid'];
-
-    // Buscar pasajero solo por firebase_uid (sin tenant en el payload)
-    $passenger = Passenger::where('firebase_uid', $firebaseUid)->first();
+    $passenger = \App\Models\Passenger::where('firebase_uid', $data['firebase_uid'])->first();
 
     if (! $passenger) {
         return response()->json([
             'ok'  => false,
-            'msg' => 'Pasajero no encontrado, sincroniza primero /passenger/auth-sync.',
-        ], 422);
+            'msg' => 'Pasajero no encontrado, llama primero a /passenger/auth-sync.',
+        ], 404);
     }
 
-    // (Opcional) si luego agregas last_seen_at:
-    // $passenger->forceFill(['last_seen_at' => now()])->save();
-
     return response()->json([
-        'ok'  => true,
-        'msg' => 'pong',
-        // opcional si quieres regresar algo útil:
-        // 'data' => [
-        //     'id'        => $passenger->id,
-        //     'tenant_id' => $passenger->tenant_id,
-        // ]
+        'ok'   => true,
+        'data' => [
+            'id'           => $passenger->id,
+            'tenant_id'    => $passenger->tenant_id,
+            'firebase_uid' => $passenger->firebase_uid,
+            'name'         => $passenger->name,
+            'phone'        => $passenger->phone,
+            'email'        => $passenger->email,
+            'avatar_url'   => $passenger->avatar_url,
+        ],
     ]);
 }
+
+
+
 
 }

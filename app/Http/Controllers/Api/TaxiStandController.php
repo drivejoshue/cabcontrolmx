@@ -3,169 +3,195 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\TaxiStandService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class TaxiStandController extends Controller
 {
     /**
-     * Obtiene el tenant_id del usuario autenticado.
-     * Lanza 403 si el usuario no tiene tenant asignado.
+     * Determinar tenant con estas reglas:
+     *  - Si hay header X-Tenant-ID o ?tenant_id, se usa ese (para Dispatch/sysadmin).
+     *  - Si no, se usa el tenant del usuario autenticado.
+     *  - Si no hay ninguno → 403.
      */
-    protected function currentTenantId(): int
+    private function resolveTenantId(Request $req): int
     {
-        $tenantId = Auth::user()->tenant_id ?? null;
+        $fromHeader = $req->header('X-Tenant-ID') ?? $req->query('tenant_id');
 
-        if (!$tenantId) {
-            abort(403, 'Usuario sin tenant asignado');
+        if (!empty($fromHeader)) {
+            $tid = (int) $fromHeader;
+            Log::debug('TAXI_STAND_TENANT_RESOLVED_FROM_HEADER', [
+                'tenant_id'     => $tid,
+                'header_tenant' => $req->header('X-Tenant-ID'),
+                'query_tenant'  => $req->query('tenant_id'),
+            ]);
+            return $tid;
         }
 
-        return (int) $tenantId;
+        $user = Auth::user();
+        if (!$user || !$user->tenant_id) {
+            abort(403, 'Sin tenant asignado');
+        }
+
+        return (int) $user->tenant_id;
     }
 
-    // GET /api/taxistands
-    public function index(Request $request)
+    /**
+     * Resolver driver_id desde el token (user->drivers.user_id)
+     */
+    private function resolveDriverId(): int
     {
-        $tenantId = $this->currentTenantId();
+        $user = Auth::user();
+        if (!$user) {
+            abort(401, 'No autenticado');
+        }
 
-        $rows = DB::table('taxi_stands as t')
-            ->leftJoin('sectores as s', function ($q) use ($tenantId) {
-                $q->on('s.id', '=', 't.sector_id')
-                  ->where('s.tenant_id', '=', $tenantId);
-            })
-            ->where('t.tenant_id', $tenantId)
-            ->where('t.activo', 1)
-            ->select(
-                't.id','t.nombre','t.latitud','t.longitud','t.capacidad','t.codigo',
-                't.qr_secret','t.sector_id',
-                DB::raw('COALESCE(s.nombre, "") as sector_nombre')
-            )
-            ->orderBy('t.id', 'desc')
-            ->get();
+        $driverId = \DB::table('drivers')
+            ->where('user_id', $user->id)
+            ->value('id');
 
-        return response()->json($rows);
+        if (!$driverId) {
+            abort(403, 'Driver no asociado al token');
+        }
+
+        return (int) $driverId;
     }
 
-    // POST /api/driver/stands/join { stand_id?:int, codigo?:string }
-    public function join(Request $req)
-    {
-        $tenantId = $this->currentTenantId();
-        $driverId = Auth::user()->driver_id ?? $req->user()->driver_id ?? null;
-        if (!$driverId) abort(403, 'Driver no asociado al token');
+    /**
+     * GET /api/taxistands
+     * Lista de bases + queue_count (para badge).
+     */
+public function index(Request $request)
+{
+    $tenantId = $this->resolveTenantId($request);
 
-        $data = $req->validate([
-            'stand_id' => 'nullable|integer',
-            'codigo'   => 'nullable|string'
+    $stands = TaxiStandService::listForDriver($tenantId);
+
+    // 👇 devolvemos directamente el arreglo, SIN wrapper { ok, stands }
+    return response()->json($stands);
+}
+
+    /**
+     * POST /api/stands/join  { stand_id: X }
+     */
+    public function join(Request $request)
+    {
+        $tenantId = $this->resolveTenantId($request);
+        $driverId = $this->resolveDriverId();
+
+        $data = $request->validate([
+            'stand_id' => 'required|integer',
         ]);
 
-        $standId = $data['stand_id'] ?? null;
+        $res = TaxiStandService::joinStandById($tenantId, $driverId, (int) $data['stand_id']);
 
-        // Permite unirse por código/QR también
-        if (!$standId && !empty($data['codigo'])) {
-            $stand = DB::table('taxi_stands')
-                ->where('tenant_id', $tenantId)
-                ->where(function ($q) use ($data) {
-                    $q->where('codigo', $data['codigo'])
-                      ->orWhere('qr_secret', $data['codigo']);
-                })->first();
-            if (!$stand) {
-                return response()->json(['ok'=>false,'error'=>'Código de base inválido'], 422);
-            }
-            $standId = $stand->id;
-        }
-
-        if (!$standId) {
-            return response()->json(['ok'=>false,'error'=>'stand_id o codigo requeridos'], 422);
-        }
-
-        try {
-            DB::statement('CALL sp_queue_join_stand_v1(?, ?, ?)', [
-                $tenantId, $standId, $driverId
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json(['ok'=>false,'error'=>$e->getMessage()], 422);
-        }
-
-        return response()->json(['ok'=>true]);
+        return response()->json($res);
     }
 
-    // POST /api/driver/stands/leave { stand_id:int, status_to?: "asignado"|"salio" }
-    public function leave(Request $req)
-    {
-        $tenantId = $this->currentTenantId();
-        $driverId = Auth::user()->driver_id ?? $req->user()->driver_id ?? null;
-        if (!$driverId) abort(403, 'Driver no asociado al token');
 
-        $v = $req->validate([
-            'stand_id'  => 'required|integer',
-            'status_to' => 'nullable|string|in:asignado,salio'
-        ]);
+    
+public function joinByCode(Request $request)
+{
+    $tenantId = $this->resolveTenantId($request);
+    $driverId = $this->resolveDriverId();
 
-        try {
-            DB::statement('CALL sp_queue_leave_stand_v1(?, ?, ?, ?)', [
-                $tenantId, $v['stand_id'], $driverId, $v['status_to'] ?? 'salio'
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json(['ok'=>false,'error'=>$e->getMessage()], 422);
-        }
+    $data = $request->validate([
+        'code' => 'required|string',
+    ]);
 
-        return response()->json(['ok'=>true]);
-    }
+    $raw = trim($data['code']);
+    $code = $this->extractCodeFromQr($raw);
 
-    // GET /api/driver/stands/status?stand_id=...
-    public function status(Request $req)
-    {
-        $tenantId = $this->currentTenantId();
-        $driverId = Auth::user()->driver_id ?? $req->user()->driver_id ?? null;
-        if (!$driverId) abort(403, 'Driver no asociado al token');
+    // Buscar la base por qr_secret O por codigo
+    $stand = DB::table('taxi_stands')
+        ->where('tenant_id', $tenantId)
+        ->where('activo', 1)
+        ->where(function ($q) use ($code) {
+            $q->where('qr_secret', $code)
+              ->orWhere('codigo', $code);
+        })
+        ->first();
 
-        $standId = (int) $req->query('stand_id');
-        if (!$standId) {
-            return response()->json(['ok'=>false,'error'=>'stand_id requerido'], 422);
-        }
-
-        // posición actual del driver (si está en cola)
-        $me = DB::table('taxi_stand_queue')
-            ->where('tenant_id', $tenantId)   // 👈 antes estaba compact('tenantId') (mal)
-            ->where('stand_id', $standId)
-            ->where('driver_id', $driverId)
-            ->where('status', 'en_cola')
-            ->orderByDesc('id')
-            ->first(['position']);
-
-        // lista compacta de cola (top 50)
-        $queue = DB::table('taxi_stand_queue as q')
-            ->join('drivers as d', 'd.id', '=', 'q.driver_id')
-            ->leftJoin('vehicles as v', 'v.id', '=', 'd.active_vehicle_id')
-            ->where('q.tenant_id', $tenantId)
-            ->where('q.stand_id',  $standId)
-            ->where('q.status',    'en_cola')
-            ->orderBy('q.position')
-            ->limit(50)
-            ->get([
-                'q.driver_id', 'q.position',
-                'd.status as driver_status',
-                'd.last_lat', 'd.last_lng',
-                'v.economico', 'v.plate'
-            ]);
-
-        $ahead = null;
-        if ($me && isset($me->position)) {
-            $ahead = DB::table('taxi_stand_queue')
-                ->where('tenant_id', $tenantId)
-                ->where('stand_id',  $standId)
-                ->where('status',    'en_cola')
-                ->where('position', '<', $me->position)
-                ->count();
-        }
-
+    if (!$stand) {
         return response()->json([
-            'ok'          => true,
-            'in_queue'    => !!$me,
-            'my_position' => $me->position ?? null,
-            'ahead_count' => $ahead,
-            'queue'       => $queue
-        ]);
+            'ok'      => false,
+            'message' => 'Código de base no válido',
+        ], 404);
+    }
+
+    $res = TaxiStandService::joinStandById($tenantId, $driverId, (int) $stand->id);
+
+    return response()->json($res, $res['ok'] ? 200 : 422);
+}
+
+/**
+ * Permite que el QR sea solo el token, o una URL con ?code= / ?qr= / ?s=
+ */
+private function extractCodeFromQr(string $raw): string
+{
+    $raw = trim($raw);
+
+    if (str_contains($raw, '://')) {
+        $parts = parse_url($raw);
+        if (!empty($parts['query'])) {
+            parse_str($parts['query'], $qs);
+            foreach (['code', 'qr', 's'] as $key) {
+                if (!empty($qs[$key])) {
+                    return trim($qs[$key]);
+                }
+            }
+        }
+    }
+
+    return $raw;
+}
+
+public function leave(Request $request)
+{
+    $tenantId = $this->resolveTenantId($request);
+    $driverId = $this->resolveDriverId(); // ← CAMBIA ESTO
+
+      Log::debug('TAXI_STAND_LEAVE_CALLED', [
+        'tenant_id' => $tenantId,
+        'driver_id' => $driverId,
+        'user_id' => $request->user()->id
+    ]); 
+
+    $data = $request->validate([
+        'stand_id'  => 'required|integer',
+        'status_to' => 'nullable|string|in:salio,descanso',
+    ]);
+
+    $statusTo = $data['status_to'] ?? 'salio';
+
+    $res = TaxiStandService::leaveStand($tenantId, $driverId, $data['stand_id'], $statusTo);
+
+    return response()->json($res, $res['ok'] ? 200 : 422);
+}
+
+
+    /**
+     * GET /api/stands/status  [stand_id?]
+     *
+     * Aquí se hace:
+     *  - autoLeaveIfFar (force-leave si ya se alejó)
+     *  - cálculo de my_position, ahead_count, queue_count
+     *  - queue[] con economico y plate desde vehicles
+     */
+    public function status(Request $request)
+    {
+        $tenantId = $this->resolveTenantId($request);
+        $driverId = $this->resolveDriverId();
+
+        $standId = $request->query('stand_id');
+        $standId = $standId ? (int) $standId : null;
+
+        $res = TaxiStandService::status($tenantId, $driverId, $standId);
+
+        return response()->json($res);
     }
 }

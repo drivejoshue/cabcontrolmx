@@ -4,71 +4,96 @@ namespace App\Console\Commands;
 
 use App\Models\Tenant;
 use App\Services\TenantBillingService;
+use App\Services\TenantWalletService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 class TenantsBill extends Command
 {
-    /**
-     * Nombre del comando.
-     */
-    protected $signature = 'tenants:bill {--date= : Fecha de corte (YYYY-MM-DD), por defecto hoy}';
+    protected $signature = 'tenants:bill {--date= : Fecha de referencia (YYYY-MM-DD), default hoy}';
+    protected $description = 'Wallet billing: trial->activación prorrateada, mes-prepago día 1, suspensión por overdue.';
 
-    protected $description = 'Genera facturas mensuales para tenants con billing per_vehicle.';
-
-    protected TenantBillingService $billingService;
-
-    public function __construct(TenantBillingService $billingService)
-    {
-        parent::__construct();
-        $this->billingService = $billingService;
-    }
+    public function __construct(
+        protected TenantBillingService $billing,
+        protected TenantWalletService $wallet,
+    ) { parent::__construct(); }
 
     public function handle(): int
     {
-        $dateOption = $this->option('date');
-        $cutoffDate = $dateOption
-            ? Carbon::parse($dateOption)->startOfDay()
+        $ref = $this->option('date')
+            ? Carbon::parse($this->option('date'))->startOfDay()
             : Carbon::today();
 
-        $this->info("Generando facturas para fecha de corte: " . $cutoffDate->toDateString());
+        $this->info("tenants:bill ref={$ref->toDateString()}");
 
-        $tenants = Tenant::with('billingProfile')
-            ->whereHas('billingProfile', function ($q) {
-                $q->whereIn('status', ['trial', 'active'])
-                  ->where('billing_model', 'per_vehicle');
-            })
-            ->get();
+        $tenants = Tenant::with('billingProfile')->whereHas('billingProfile')->get();
 
-        if ($tenants->isEmpty()) {
-            $this->info('No hay tenants con billing per_vehicle configurado.');
-            return Command::SUCCESS;
-        }
+        foreach ($tenants as $t) {
+            $p = $t->billingProfile;
+            if (!$p) continue;
 
-        foreach ($tenants as $tenant) {
-            $profile = $tenant->billingProfile;
+            // 0) asegurar wallet row
+            $this->wallet->ensureWallet($t->id);
 
-            // Sólo facturamos en el día de corte del tenant
-            $invoiceDay = $profile->invoice_day ?: 1;
-            if ($cutoffDate->day !== (int) $invoiceDay) {
-                $this->line("Tenant {$tenant->id} ({$tenant->name}) - hoy no es su día de corte ({$invoiceDay}).");
-                continue;
+            // Solo per_vehicle (commission lo ignoramos aquí)
+            if ($p->billing_model !== 'per_vehicle') continue;
+
+            // A) Trial expirado -> invoice activación + suspensión
+            try {
+                $inv = $this->billing->ensureActivationInvoiceIfNeeded($t, $ref);
+                if ($inv) {
+                    $this->line("Tenant {$t->id} activation-invoice #{$inv->id} status={$inv->status} total={$inv->total}");
+                }
+            } catch (\Throwable $e) {
+                $this->error("Tenant {$t->id} activation error: ".$e->getMessage());
             }
 
-            try {
-                $invoice = $this->billingService->generateMonthlyInvoice($tenant, $cutoffDate);
+            // B) Día 1 -> invoice mensual adelantada + intento de cobro
+            if ($ref->day === 1 && strtolower((string)$p->status) === 'active') {
+                try {
+                    $inv = $this->billing->generateMonthlyInvoiceEomPrepaid($t, $ref);
 
-                $this->info(sprintf(
-                    "Factura generada/recuperada para Tenant %d (%s): periodo %s a %s, total %.2f, vehículos %d",
-                    $tenant->id,
-                    $tenant->name,
-                    $invoice->period_start->toDateString(),
-                    $invoice->period_end->toDateString(),
-                    $invoice->total,
-                    $invoice->vehicles_count
-                ));
-            } catch (\Throwable $e) {
-                $this->error("Error generando factura para Tenant {$tenant->id}: " . $e->getMessage());
+                    // Intento de cobro inmediato por wallet
+                    if ($inv->status === 'pending') {
+                        $ok = $this->wallet->debitIfEnough($t->id, (float)$inv->total, 'invoice', (int)$inv->id, [
+                            'kind' => 'monthly_prepaid',
+                            'period_start' => $inv->period_start,
+                            'period_end' => $inv->period_end,
+                        ]);
+
+                        if ($ok) {
+                            DB::table('tenant_invoices')->where('id', $inv->id)->update([
+                                'status' => 'paid',
+                                'paid_at' => now(),
+                                'updated_at' => now(),
+                            ]);
+                            $this->info("Tenant {$t->id} invoice #{$inv->id} PAID via wallet");
+                        } else {
+                            $this->line("Tenant {$t->id} invoice #{$inv->id} pending (no funds)");
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    $this->error("Tenant {$t->id} month-prepaid error: ".$e->getMessage());
+                }
+            }
+
+            // C) Overdue -> suspender
+            $overdue = DB::table('tenant_invoices')
+                ->where('tenant_id', $t->id)
+                ->where('status', 'pending')
+                ->whereDate('due_date', '<', $ref->toDateString())
+                ->orderBy('due_date')
+                ->first();
+
+            if ($overdue) {
+                DB::table('tenant_billing_profiles')->where('id', $p->id)->update([
+                    'status' => 'paused',
+                    'suspended_at' => now(),
+                    'suspension_reason' => 'payment_overdue',
+                    'updated_at' => now(),
+                ]);
+                $this->warn("Tenant {$t->id} suspended: overdue invoice #{$overdue->id}");
             }
         }
 

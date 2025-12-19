@@ -26,16 +26,126 @@
     </div>
 
     <div class="d-flex gap-2">
-      <a href="{{ route('drivers.edit',$driver->id) }}" class="btn btn-primary">
-        <i data-feather="edit-2"></i> Editar
-      </a>
-      <a href="{{ route('drivers.index') }}" class="btn btn-outline-secondary">
-        <i data-feather="arrow-left"></i> Volver
-      </a>
-      <form method="post" action="{{ route('drivers.destroy',$driver->id) }}" onsubmit="return confirm('¿Eliminar definitivamente?');">
-        @csrf @method('DELETE')
-        <button class="btn btn-outline-danger"><i data-feather="trash-2"></i> Eliminar</button>
-      </form>
+  <a href="{{ route('drivers.documents.index',['id'=>$driver->id]) }}" class="btn btn-outline-primary">
+    <i data-feather="file-text"></i> Documentos y verificación
+  </a>
+  <a href="{{ route('drivers.edit',$driver->id) }}" class="btn btn-primary">
+    <i data-feather="edit-2"></i> Editar
+  </a>
+  <a href="{{ route('drivers.index') }}" class="btn btn-outline-secondary">
+    <i data-feather="arrow-left"></i> Volver
+  </a>
+  <form method="post" action="{{ route('drivers.destroy',$driver->id) }}" onsubmit="return confirm('¿Eliminar definitivamente?');">
+    @csrf @method('DELETE')
+    <button class="btn btn-outline-danger">
+      <i data-feather="trash-2"></i> Eliminar
+    </button>
+  </form>
+</div>
+
+  </div>
+
+  @if(session('ok'))
+    <div class="alert alert-success">{{ session('ok') }}</div>
+  @endif
+  @if($errors->any())
+    <div class="alert alert-danger">
+      <ul class="mb-0">
+        @foreach($errors->all() as $e)
+          <li>{{ $e }}</li>
+        @endforeach
+      </ul>
+    </div>
+  @endif
+
+  {{-- ====== Tarjeta de verificación Orbana ====== --}}
+  @php
+    $verStatus = $driver->verification_status ?? 'not_started';
+    $verBadge  = 'bg-secondary';
+    $verLabel  = 'Sin iniciar';
+
+    if ($verStatus === 'pending') {
+      $verBadge = 'bg-warning text-dark';
+      $verLabel = 'En proceso de verificación';
+    } elseif ($verStatus === 'verified') {
+      $verBadge = 'bg-success';
+      $verLabel = 'Verificado';
+    } elseif ($verStatus === 'rejected') {
+      $verBadge = 'bg-danger';
+      $verLabel = 'Rechazado';
+    }
+
+    // Resumen de documentos
+    $docsCollection   = collect($driverDocs ?? []);
+    $approvedByType   = $docsCollection
+                          ->where('status','approved')
+                          ->groupBy('type')
+                          ->map(fn($g) => $g->sortByDesc('id')->first());
+    $requiredOkDriver = collect($driverRequiredTypes ?? [])->every(fn($t) => isset($approvedByType[$t]));
+  @endphp
+
+  <div class="card mb-3">
+    <div class="card-body d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
+      <div>
+        <div class="mb-1">
+          <strong>Verificación Orbana (conductor)</strong>
+        </div>
+        <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+          <span class="badge {{ $verBadge }} stat-pill">{{ $verLabel }}</span>
+          <span class="text-muted small">
+            {{-- el chofer entra activo, la verificación es posterior --}}
+            Este conductor puede operar aun con verificación pendiente.
+          </span>
+        </div>
+
+        @if(!empty($driver->verification_notes))
+          <div class="text-danger small">
+            <strong>Notas de revisión:</strong> {{ $driver->verification_notes }}
+          </div>
+        @endif
+
+        <hr class="my-2">
+
+        <div class="mb-1 small"><strong>Documentos requeridos para verificación:</strong></div>
+        <div class="d-flex flex-wrap gap-2">
+          @foreach($driverRequiredTypes ?? [] as $rt)
+            @php
+              $ok = isset($approvedByType[$rt]);
+              $label = $driverDocTypesMap[$rt] ?? $rt;
+            @endphp
+            <span class="badge bg-{{ $ok ? 'success' : 'secondary' }} stat-pill">
+              {{ $label }} {{ $ok ? '✓' : '—' }}
+            </span>
+          @endforeach
+          {{-- opcional --}}
+          @if(isset($driverDocTypesMap['foto_conductor']))
+            @php
+              $optOk = isset($approvedByType['foto_conductor']);
+            @endphp
+            <span class="badge bg-{{ $optOk ? 'success' : 'light text-muted' }} stat-pill">
+              {{ $driverDocTypesMap['foto_conductor'] }} {{ $optOk ? '✓' : '(opcional)' }}
+            </span>
+          @endif
+        </div>
+
+        @if(!$requiredOkDriver)
+          <div class="alert alert-info mt-3 mb-0 py-2 px-3 small">
+            Sube licencia, identificación e imagen del conductor desde la sección de documentos.
+            Estos seran validados por Orbana, como proceso de validacion de identidad  (Consulte aviso de privacidad).
+          </div>
+        @else
+          <div class="alert alert-success mt-3 mb-0 py-2 px-3 small">
+            Todos los documentos requeridos están cargados y aprobados. La cuenta puede considerarse verificada.
+          </div>
+        @endif
+      </div>
+
+      <div class="text-end">
+        <a href="{{ route('drivers.documents.index', ['id' => $driver->id]) }}"
+           class="btn btn-outline-primary">
+          <i data-feather="file-text"></i> Ver / subir documentos
+        </a>
+      </div>
     </div>
   </div>
 
@@ -52,11 +162,40 @@
             </div>
           @endif
 
-          @php
-            $status = $driver->status ?? 'offline';
-            $badge  = $status==='idle' ? 'bg-success' : ($status==='busy' ? 'bg-warning text-dark' : 'bg-secondary');
-          @endphp
-          <div><span class="badge {{ $badge }} stat-pill text-uppercase">{{ $status }}</span></div>
+         @php
+  $status = $driver->status ?? 'offline';
+  $badge  = $status==='idle' ? 'bg-success' : ($status==='busy' ? 'bg-warning text-dark' : 'bg-secondary');
+
+  $vStatus = $driver->verification_status ?? 'pending';
+  $vBadge  = $vStatus==='verified' ? 'bg-success'
+              : ($vStatus==='rejected' ? 'bg-danger' : 'bg-warning text-dark');
+@endphp
+
+<div>
+  <span class="badge {{ $badge }} stat-pill text-uppercase">{{ $status }}</span>
+</div>
+
+<hr>
+
+<div class="text-start">
+  <div class="small text-muted mb-1">Verificación Orbana</div>
+  <div>
+    <span class="badge {{ $vBadge }} stat-pill text-uppercase">
+      {{ $vStatus }}
+    </span>
+  </div>
+  @if(!empty($driver->verification_notes))
+    <div class="small text-danger mt-2">
+      <b>Notas:</b> {{ $driver->verification_notes }}
+    </div>
+  @endif
+  <div class="mt-2">
+    <a href="{{ route('drivers.documents.index',['id'=>$driver->id]) }}" class="btn btn-sm btn-outline-primary">
+      Ver / subir documentos
+    </a>
+  </div>
+</div>
+
         </div>
       </div>
     </div>

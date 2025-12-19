@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class RideBroadcaster
 {
@@ -104,6 +105,8 @@ class RideBroadcaster
 
         self::update($tenantId, $rideId, 'requested', $extra);
 
+        
+
         // De paso actualizamos el contador de “drivers viendo tu viaje”
         self::offersSummary($tenantId, $rideId);
     }
@@ -189,7 +192,7 @@ public static function driverToPickupRoute(
     ]);
 
      Realtime::toRide($tenantId, $rideId)
-        ->emit('ride.route.driver_to_pickup_route', $payload);
+        ->emit('ride.driver_to_pickup_route', $payload);
 }
 
 
@@ -384,5 +387,48 @@ public static function bootstrapLocationAndRoute(
     public static function stopDone(int $tenantId, int $rideId, int $seq): void
     {
         self::update($tenantId, $rideId, 'stop_done', ['seq' => $seq]);
+    }
+
+ public static function offerViewing(
+        int   $tenantId,
+        int   $rideId,
+        int   $offerId,
+        int   $driverId,
+        string $status,          // "start" | "stop"
+        array $driver = []       // datos que ya armaste en OfferController@viewing
+    ) {
+        $payload = [
+            'ride_id'   => $rideId,
+            'offer_id'  => $offerId,
+            'driver_id' => $driverId,
+            'status'    => $status,   // "start" / "stop"
+            'driver'    => $driver,   // name, avatar_url, vehicle_*, eta_seconds, distance_m...
+        ];
+
+        try {
+            Log::info('RideBroadcaster.offerViewing sending', [
+                'tenant_id' => $tenantId,
+                'payload'   => $payload,
+            ]);
+
+            // Canal: tenant.{tenant}.ride.{ride}
+            Realtime::toRide($tenantId, $rideId)
+                ->emit('ride.offer_viewing', $payload);
+
+            Log::info('RideBroadcaster.offerViewing sent', [
+                'tenant_id' => $tenantId,
+                'ride_id'   => $rideId,
+                'offer_id'  => $offerId,
+            ]);
+
+        } catch (\Throwable $e) {
+            Log::error('RideBroadcaster.offerViewing error', [
+                'tenant_id' => $tenantId,
+                'ride_id'   => $rideId,
+                'offer_id'  => $offerId,
+                'error'     => $e->getMessage(),
+            ]);
+            // Importante: NO relanzar, para que el controller pueda seguir y devolver ok=true
+        }
     }
 }

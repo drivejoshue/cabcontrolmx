@@ -9,7 +9,7 @@ class DispatchBoardsController extends Controller
 {
     public function index(Request $req)
     {
-      $tenantId = (int)($req->header('X-Tenant-ID') ?? 1);
+      $tenantId = (int)($req->header('X-Tenant-ID') ?? null);
 
       // Rides “de tablero”: últimos N en estados de interés
       $rides = DB::table('rides')

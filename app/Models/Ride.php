@@ -21,37 +21,47 @@ class Ride extends Model
         'currency','payment_method','notes','pax',
         'distance_m','duration_s','route_polyline',
         'scheduled_for','requested_at','accepted_at','arrived_at','onboard_at',
+        // 👇 nuevos campos de señal del pasajero
+        'passenger_onway_at','passenger_onboard_at','passenger_finished_at',
         'finished_at','canceled_at','cancel_reason','canceled_by',
+        // quién lo terminó realmente
+        'finished_by',
         'created_by','created_at','updated_at',
     ];
 
     protected $casts = [
-    'origin_lat'   => 'float',
-    'origin_lng'   => 'float',
-    'dest_lat'     => 'float',
-    'dest_lng'     => 'float',
-    'quoted_amount'=> 'decimal:2',
-    'total_amount' => 'decimal:2',
-    'distance_m'   => 'int',
-    'duration_s'   => 'int',
-    'fare_snapshot'=> 'array',
-    'bidding_log'  => 'array',
-    'scheduled_for'=> 'datetime',
-    'requested_at' => 'datetime',
-    'accepted_at'  => 'datetime',
-    'arrived_at'   => 'datetime',
-    'onboard_at'   => 'datetime',
-    'finished_at'  => 'datetime',
-    'canceled_at'  => 'datetime',
-    'created_at'   => 'datetime',
-    'updated_at'   => 'datetime',
+        'origin_lat'   => 'float',
+        'origin_lng'   => 'float',
+        'dest_lat'     => 'float',
+        'dest_lng'     => 'float',
+        'quoted_amount'=> 'decimal:2',
+        'total_amount' => 'decimal:2',
+        'distance_m'   => 'int',
+        'duration_s'   => 'int',
+        'fare_snapshot'=> 'array',
+        'bidding_log'  => 'array',
 
-    // 👇 Estos tres son clave para el front
-    'stops_json'   => 'array',
-    'stops_count'  => 'int',
-    'stop_index'   => 'int',
-];
+        'scheduled_for'=> 'datetime',
+        'requested_at' => 'datetime',
+        'accepted_at'  => 'datetime',
+        'arrived_at'   => 'datetime',
+        'onboard_at'   => 'datetime',
 
+        // 👇 cast de las marcas del pasajero
+        'passenger_onway_at'    => 'datetime',
+        'passenger_onboard_at'  => 'datetime',
+        'passenger_finished_at' => 'datetime',
+
+        'finished_at'  => 'datetime',
+        'canceled_at'  => 'datetime',
+        'created_at'   => 'datetime',
+        'updated_at'   => 'datetime',
+
+        // 👇 Estos tres son clave para el front
+        'stops_json'   => 'array',
+        'stops_count'  => 'int',
+        'stop_index'   => 'int',
+    ];
 
     protected $appends = ['stops'];
 
@@ -66,7 +76,7 @@ class Ride extends Model
         return [];
     }
 
-     public function getScheduledForAttribute($value)
+    public function getScheduledForAttribute($value)
     {
         if (!$value) return null;
         
@@ -76,9 +86,6 @@ class Ride extends Model
         return \Carbon\Carbon::parse($value)->timezone($tz);
     }
 
-    /**
-     * Convertir scheduled_for a la zona del tenant al guardar
-     */
     public function setScheduledForAttribute($value)
     {
         if (!$value) {
@@ -87,15 +94,12 @@ class Ride extends Model
         }
 
         if (is_string($value)) {
-            // Si ya es string, asumimos que está en la zona correcta
             $this->attributes['scheduled_for'] = $value;
         } else {
-            // Si es Carbon, convertir a string en la zona del tenant
             $tz = $this->tenant->timezone ?? config('app.timezone');
             $this->attributes['scheduled_for'] = $value->timezone($tz)->format('Y-m-d H:i:s');
         }
     }
-
 
     public const ST_QUEUED = 'queued';
 

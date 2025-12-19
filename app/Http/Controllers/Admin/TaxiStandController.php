@@ -75,7 +75,7 @@ class TaxiStandController extends Controller
             'capacidad'  => $data['capacidad'] ?? null,
             'codigo'     => $codigo,
             'qr_secret'  => $qr_secret,
-            'active'     => 1,
+            
             'activo'     => 1,
             'created_at' => now(),
             'updated_at' => now(),
@@ -125,7 +125,7 @@ class TaxiStandController extends Controller
                 'latitud'    => $data['latitud'],
                 'longitud'   => $data['longitud'],
                 'capacidad'  => $data['capacidad'] ?? null,
-                'active'     => (int)($data['activo'] ?? 1),
+               
                 'activo'     => (int)($data['activo'] ?? 1),
                 'updated_at' => now(),
             ]);
@@ -141,7 +141,7 @@ class TaxiStandController extends Controller
             ->where('tenant_id', $tenantId)
             ->where('id', $id)
             ->update([
-                'active'     => 0,
+              
                 'activo'     => 0,
                 'updated_at' => now(),
             ]);

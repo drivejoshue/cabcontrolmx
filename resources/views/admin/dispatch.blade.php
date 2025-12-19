@@ -190,47 +190,117 @@
   </div>
 </div>
 
-
-
-  <aside class="dispatch-right">
-  {{-- COLAS POR PARADERO (acordeón) --}}
-  <div class="d-flex align-items-center justify-content-between mb-2">
-    <h6 class="mb-0">Colas por paradero</h6>
-    <span class="badge bg-secondary" id="badgeColas">0</span>
+<!-- Panel lateral para CHAT con el driver -->
+<div id="chatPanel" class="offcanvas offcanvas-end" data-bs-backdrop="false" tabindex="-1">
+  <div class="offcanvas-header">
+    <div>
+      <h5 class="offcanvas-title">Chat con conductor</h5>
+      <div class="small text-muted" id="chatPanelSubtitle">
+        Selecciona un viaje con mensajes…
+      </div>
+    </div>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button>
   </div>
 
-  <div class="accordion mb-3" id="panel-queue">
-    {{-- Se llenará por JS con items:
-         .accordion-item > .accordion-header > .accordion-button
-                         > .accordion-collapse > .accordion-body
-         Y adentro un grid de badges con los econ de drivers --}}
+  <div class="offcanvas-body d-flex flex-column">
+    <div id="chatPanelInfo" class="small text-muted mb-2">
+      <!-- aquí pondremos #viaje, nombre del conductor, teléfono, etc. -->
+    </div>
+
+    <div id="chatMessages"
+         class="flex-grow-1 border rounded small p-2 mb-2 bg-body-tertiary overflow-auto">
+      <!-- mensajes -->
+    </div>
+
+    <div id="chatQuickReplies"
+         class="d-flex flex-wrap gap-1 mb-2">
+      <!-- botones de respuesta rápida, los llenamos desde JS -->
+    </div>
+
+    <div class="input-group input-group-sm">
+      <input type="text"
+             id="chatInput"
+             class="form-control"
+             placeholder="Mensaje para el conductor…"
+             maxlength="255">
+      <button class="btn btn-primary" type="button" id="chatSendBtn">
+        <i data-feather="send"></i>
+      </button>
+    </div>
+  </div>
+</div>
+
+
+ <aside class="dispatch-right">
+
+  {{-- SHELL de colas: compacta + overlay --}}
+  <div class="queues-shell">
+
+    {{-- HEADER + modo compacto --}}
+    <div class="queues-compact-card mb-2">
+      <div class="d-flex align-items-center justify-content-between mb-1">
+        <div class="d-flex align-items-center gap-2">
+          <h6 class="mb-0">Colas por paradero</h6>
+          <span class="badge bg-secondary" id="badgeColas">0</span>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" id="btnQueuesExpand">
+          Ver detalle
+        </button>
+      </div>
+
+      {{-- Lista compacta (chips) de paraderos --}}
+      <div id="panel-queue-compact" class="queues-compact-list small text-muted">
+        {{-- JS inyecta: chips por paradero --}}
+        <span class="text-muted small">Sin información de colas.</span>
+      </div>
+    </div>
+
+    {{-- OVERLAY grande (segunda sidebar) con acordeón completo --}}
+    <div class="queues-full-overlay" id="queuesOverlay">
+      <div class="queues-full-header d-flex align-items-center justify-content-between mb-2">
+        <div class="d-flex align-items-center gap-2">
+          <h6 class="mb-0">Colas por paradero</h6>
+          <span class="badge bg-secondary" id="badgeColasFull">0</span>
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" id="btnQueuesClose">
+          Cerrar
+        </button>
+      </div>
+
+      <div class="queues-full-body">
+        <div class="accordion" id="panel-queue">
+          {{-- aquí sigue renderQueues(queues) como antes --}}
+        </div>
+      </div>
+    </div>
+
   </div>
 
-  {{-- VIAJES ACTIVOS con pestañas --}}
-  <div class="d-flex align-items-center justify-content-between mb-2">
+  {{-- VIAJES ACTIVOS con pestañas (igual que ya lo tienes) --}}
+  <div class="d-flex align-items-center justify-content-between mb-2 mt-3">
     <h6 class="mb-0">Viajes activos</h6>
     <span class="badge bg-primary" id="badgeActivos">0</span>
   </div>
 
- <ul class="nav nav-pills nav-fill small mb-2" id="activeTabs" role="tablist">
-  <li class="nav-item" role="presentation">
-    <button class="nav-link active" id="tab-active-cards" data-bs-toggle="tab"
-            data-bs-target="#pane-active-cards" type="button" role="tab">Ahora</button>
-  </li>
-  <li class="nav-item" role="presentation">
-    <button class="nav-link" id="tab-active-grid" data-bs-toggle="tab"
-            data-bs-target="#pane-active-grid" type="button" role="tab">Programados</button>
-  </li>
-</ul>
+  <ul class="nav nav-pills nav-fill small mb-2" id="activeTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="tab-active-cards" data-bs-toggle="tab"
+              data-bs-target="#pane-active-cards" type="button" role="tab">Ahora</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-active-grid" data-bs-toggle="tab"
+              data-bs-target="#pane-active-grid" type="button" role="tab">Programados</button>
+    </li>
+  </ul>
 
-<div class="tab-content" id="activeTabsContent">
-  <div class="tab-pane fade show active" id="pane-active-cards" role="tabpanel">
-    <div id="panel-active" class="small"></div>
+  <div class="tab-content" id="activeTabsContent">
+    <div class="tab-pane fade show active" id="pane-active-cards" role="tabpanel">
+      <div id="panel-active" class="small"></div>
+    </div>
+    <div class="tab-pane fade" id="pane-active-grid" role="tabpanel">
+      <div id="panel-active-scheduled"></div>
+    </div>
   </div>
-  <div class="tab-pane fade" id="pane-active-grid" role="tabpanel">
-    <div id="panel-active-scheduled"></div>
-  </div>
-</div>
 
 </aside>
 
@@ -266,6 +336,26 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/confirmDate/confirmDate.min.css">
 
 <style>
+.driver-bubble {
+    display: inline-block;
+    padding: 8px 12px;
+    background: #edf2f7;
+    border-radius: 10px;
+    max-width: 75%;
+}
+
+.dispatch-bubble {
+    display: inline-block;
+    padding: 8px 12px;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 10px;
+    max-width: 75%;
+}
+
+.chat-message .timestamp {
+    font-size: 11px;
+}
 
 .cc-metrics-panel {
   background: var(--cc-card-bg);
@@ -392,9 +482,16 @@
 
   .dispatch-wrapper { height: calc(100vh - 58px); }
   .dispatch-grid{position:relative;height:100%;display:grid;gap:0;grid-template-columns:340px 1fr 360px}
-  .dispatch-left,.dispatch-right{overflow:auto;padding:12px}
+  .dispatch-left,
+.dispatch-right{
+  overflow:auto;
+  padding:12px;
+}
   .dispatch-left{border-right:1px solid var(--bs-border-color)}
-  .dispatch-right{border-left:1px solid var(--bs-border-color)}
+  .dispatch-right{
+  border-left:1px solid var(--bs-border-color);
+  position: relative;          /* 👈 NUEVO: referencia del overlay */
+}
   .dispatch-map{position:relative}
   .dispatch-map #map{position:absolute;inset:0}
   .dispatch-right { font-size: .95rem; }
@@ -479,6 +576,8 @@
     .dispatch-right{border-left:0;border-top:1px solid var(--bs-border-color)}
   }
 
+
+
 /* ===== Dock inferior - Modo Dark (usa html[data-theme="dark"]) ===== */
 html[data-theme="dark"] #dock-active{
   background: var(--bs-body-bg) !important;         /* sobreescribe #fff */
@@ -525,6 +624,99 @@ html[data-theme="dark"] #dock-active .dock-body::-webkit-scrollbar-thumb{
 }
 
 
+/* ===== Colas por paradero: compactas + overlay ===== */
+
+.queues-shell{
+ 
+}
+
+/* Tarjeta compacta que ocupa poco alto */
+.queues-compact-card{
+  border-radius: .75rem;
+  border: 1px solid var(--bs-border-color);
+  padding: .5rem .75rem;
+  background: var(--bs-body-bg);
+}
+
+/* Lista compacta de paraderos (chips) */
+.queues-compact-list{
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  max-height: 72px;         /* 👈 solo unas 2–3 filas */
+  overflow-y: auto;
+}
+
+.queues-compact-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:.25rem;
+  padding:.15rem .4rem;
+  border-radius:999px;
+  border:1px solid var(--bs-border-color);
+  background: var(--bs-light);
+  font-size:.8rem;
+  cursor:pointer;
+}
+.queues-compact-chip strong{
+  max-width: 90px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+/* Overlay que cubre toda la dispatch-right: "segunda sidebar" */
+.queues-full-overlay{
+  position:absolute;
+  inset:0;
+  background:var(--bs-body-bg);
+  border-left:1px solid var(--bs-border-color);
+  box-shadow:-8px 0 24px rgba(0,0,0,.18);
+  padding:.75rem;
+  display:flex;
+  flex-direction:column;
+  opacity:0;
+  pointer-events:none;
+  transform: translateY(8px);
+  transition: opacity .18s ease, transform .18s ease;
+  z-index: 10;          /* por encima del contenido normal de la derecha */
+}
+
+/* cuerpo scrolleable del overlay */
+.queues-full-body{
+  flex:1;
+  overflow:auto;
+}
+
+/* Estado expandido */
+.queues-shell.queues-expanded .queues-full-overlay{
+  opacity:1;
+  pointer-events:auto;
+  transform: translateY(0);
+}
+
+/* Cuando está expandido, atenuamos lo de atrás */
+.queues-shell.queues-expanded .queues-compact-card,
+.queues-shell.queues-expanded ~ .d-flex,
+.queues-shell.queues-expanded ~ .nav,
+.queues-shell.queues-expanded ~ .tab-content{
+  filter: blur(1px);
+  opacity:.4;
+  pointer-events:none;
+}
+
+/* Dark mode-friendly */
+html[data-theme="dark"] .queues-compact-card{
+  background: var(--bs-body-bg);
+}
+html[data-theme="dark"] .queues-full-overlay{
+  background: var(--bs-body-bg);
+}
+html[data-theme="dark"] .queues-compact-chip{
+  background: var(--bs-dark);
+}
+
+
 </style>
 @endpush
 
@@ -538,6 +730,63 @@ html[data-theme="dark"] #dock-active .dock-body::-webkit-scrollbar-thumb{
   // si existe la ruta nombrada, úsala; de lo contrario, default
   window.__QUOTE_URL__ = "{{ Route::has('api.dispatch.quote') ? route('api.dispatch.quote') : '/api/dispatch/quote' }}";
    window.__GEO_ROUTE_URL__ = "{{ Route::has('api.geo.route') ? route('api.geo.route') : url('/api/geo/route') }}";
+window.__CHAT_THREADS_URL__  = "{{ route('api.dispatch.chats.threads') }}";
+window.__CHAT_MESSAGES_URL__ = "{{ route('api.dispatch.chats.messages', ['driverId' => 'DRIVER_ID']) }}";
+window.__CHAT_SEND_URL__     = "{{ route('api.dispatch.chats.send', ['driverId' => 'DRIVER_ID']) }}";
+
+
+</script>
+<script>
+console.log('TENANT(view) id=', @json($tenant->id ?? null), 'name=', @json($tenant->name ?? null));
+</script>
+
+<meta name="tenant-id" content="{{ auth()->user()->tenant_id }}">
+
+<script>
+  window.ccTenant = {
+    id:   {{ (int)($tenant->id ?? (auth()->user()->tenant_id ?? 0)) }},
+    name: @json($tenant->name ?? ''),
+    map: {
+      lat: {{ (float)($tenant->latitud ?? 0) }},
+      lng: {{ (float)($tenant->longitud ?? 0) }},
+      zoom: {{ (int)($tenant->map_zoom ?? 14) }},
+      radius_km: {{ (float)($tenant->coverage_radius_km ?? 8) }},
+    },
+    map_icons: {
+      origin:  '/images/origen.png',
+      dest:    '/images/destino.png',
+      stand:   '/images/marker-parqueo5.png',
+      stop:    '/images/stopride.png',
+    }
+  };
+</script>
+
+
+
+
+<script>
+(() => {
+  const shell  = document.querySelector('.queues-shell');
+  const btnOpen  = document.getElementById('btnQueuesExpand');
+  const btnClose = document.getElementById('btnQueuesClose');
+
+  if (!shell || !btnOpen || !btnClose) return;
+
+  btnOpen.addEventListener('click', (e) => {
+    e.preventDefault();
+    shell.classList.add('queues-expanded');
+  });
+
+  btnClose.addEventListener('click', (e) => {
+    e.preventDefault();
+    shell.classList.remove('queues-expanded');
+  });
+
+  // helper global por si quieres abrir desde JS (ej. click sobre chip)
+  window.openQueuesOverlay = function(){
+    shell.classList.add('queues-expanded');
+  };
+})();
 </script>
 
 <script>

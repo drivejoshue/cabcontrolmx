@@ -9,9 +9,14 @@ class SetTenantFromUser
 {
     public function handle(Request $request, Closure $next)
     {
-        $tenantId = optional($request->user())->tenant_id;
+        $user = $request->user();
 
-        app()->instance('currentTenantId', $tenantId); // lo usa el trait
+        // Por defecto, sin tenant (rutas públicas/guest)
+        $tenantId = $user?->tenant_id;
+
+        // Si quieres, evita “ensuciar” el contenedor con null
+        // pero en general es útil que siempre exista la key.
+        app()->instance('currentTenantId', $tenantId ?: null);
 
         return $next($request);
     }

@@ -8,10 +8,19 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class SectorController extends Controller
-{
+{   
+
+     private function tenantId(): int
+    {
+        $tid = Auth::user()->tenant_id ?? null;
+        if (!$tid) abort(403, 'Usuario sin tenant asignado');
+        return (int) $tid;
+    }
+
+    
     public function index(Request $request)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
 
         $sectores = DB::table('sectores')
             ->select('id','nombre','activo','created_at','updated_at')
@@ -29,7 +38,7 @@ class SectorController extends Controller
 
     public function store(Request $request)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
 
         $data = $request->validate([
             'nombre' => 'required|string|max:120',
@@ -72,7 +81,7 @@ class SectorController extends Controller
 
     public function show(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
 
         $sector = DB::table('sectores')
             ->where('tenant_id', $tenantId)
@@ -86,7 +95,7 @@ class SectorController extends Controller
 
     public function edit(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
 
         $sector = DB::table('sectores')
             ->where('tenant_id', $tenantId)
@@ -100,7 +109,7 @@ class SectorController extends Controller
 
     public function update(Request $request, int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
 
         $data = $request->validate([
             'nombre' => 'required|string|max:120',
@@ -145,7 +154,7 @@ class SectorController extends Controller
     /** Desactivar (NO borrar físico) */
     public function destroy(int $id)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
 
         DB::table('sectores')
             ->where('tenant_id', $tenantId)
@@ -164,7 +173,7 @@ class SectorController extends Controller
      */
     public function geojson(Request $request)
     {
-        $tenantId = Auth::user()->tenant_id ?? 1;
+        $tenantId = $this->tenantId();
 
         $rows = DB::table('sectores')
             ->select('id','nombre','area')

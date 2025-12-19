@@ -10,13 +10,25 @@ use App\Services\AutoDispatchService;
 use App\Models\DispatchSetting;
 
 class DispatchSettingsController extends Controller
+{   
+
+    private function tenantIdFrom(Request $request): int
 {
+    $tid = $request->header('X-Tenant-ID')
+        ?? $request->query('tenant_id')
+        ?? optional(Auth::user())->tenant_id;
+
+    if (!$tid) {
+        abort(403, 'Usuario sin tenant asignado');
+    }
+
+    return (int) $tid;
+}
+
+
       public function show(Request $request): JsonResponse
     {
-        $tenantId = (int) (
-            $request->header('X-Tenant-ID')
-            ?? $request->query('tenant_id', 1)
-        );
+        $tenantId = $this->tenantIdFrom($request);
 
         // ✅✅✅ USAR SERVICIO UNIFICADO
         $s = \App\Services\DispatchSettingsService::forTenant($tenantId);
@@ -42,9 +54,7 @@ class DispatchSettingsController extends Controller
     // UI: /admin/dispatch-settings
     public function edit(Request $request)
     {
-        $tenantId = (int)($request->header('X-Tenant-ID')
-            ?? $request->query('tenant_id', Auth::user()->tenant_id ?? 1));
-
+        $tenantId = $this->tenantIdFrom($request);
         $row = DispatchSetting::firstOrCreate(['tenant_id' => $tenantId]);
 
         return view('admin.dispatch_settings.edit', [

@@ -1,49 +1,36 @@
-<?php
-/** Layout base: sidebar + topbar + content */
-?>
+
+
 @push('styles')
 <style>
 /* ===== Only DARK theme ===== */
 [data-theme="dark"] .sidebar{
-  background: #0b1220 !important;           /* base slate casi negro */
+  background: #0b1220 !important;
   border-right: 1px solid #111827 !important;
 }
-
-/* Marca / título de la app */
 [data-theme="dark"] .sidebar .sidebar-brand-text{
-  color: #a5b4fc !important;                /* indigo-300 */
+  color: #a5b4fc !important;
   font-weight: 700;
 }
-
-/* Secciones (encabezados “Panel”, “Operación”…) */
 [data-theme="dark"] .sidebar .sidebar-header{
-  color: #7dd3fc !important;                /* sky-300 */
+  color: #7dd3fc !important;
   letter-spacing: .06em;
 }
-
-/* Links del sidebar (texto azul sobrio) */
 [data-theme="dark"] .sidebar .sidebar-item .sidebar-link{
-  color: #93c5fd !important;                /* sky-300 */
+  color: #93c5fd !important;
   opacity: 1 !important;
   background: transparent !important;
 }
-
-/* Hover: azul un poco más brillante */
 [data-theme="dark"] .sidebar .sidebar-item .sidebar-link:hover{
-  color: #bfdbfe !important;                /* sky-200 */
-  background: rgba(29, 78, 216, .12) !important; /* indigo-600 @ 12% */
+  color: #bfdbfe !important;
+  background: rgba(29, 78, 216, .12) !important;
 }
-
-/* Activo: resalte azul + fondo sutil */
 [data-theme="dark"] .sidebar .sidebar-item.active > .sidebar-link{
-  color: #60a5fa !important;                /* blue-400 */
-  background: rgba(37, 99, 235, .18) !important; /* blue-600 @ 18% */
+  color: #60a5fa !important;
+  background: rgba(37, 99, 235, .18) !important;
   font-weight: 600;
   box-shadow: inset 0 0 0 1px rgba(59,130,246,.25);
   border-radius: .5rem;
 }
-
-/* Íconos (feather) que hereden el color del link */
 [data-theme="dark"] .sidebar .sidebar-item .sidebar-link [data-feather],
 [data-theme="dark"] .sidebar .sidebar-item .sidebar-link i,
 [data-theme="dark"] .sidebar .sidebar-item .sidebar-link svg.feather{
@@ -51,50 +38,47 @@
   stroke: currentColor !important;
   opacity: 1 !important;
 }
-
-/* Logo oscuro por si usas versiones light/dark */
 [data-theme="dark"] .logo-dark  { display: inline !important; }
 [data-theme="dark"] .logo-light { display: none  !important; }
 </style>
 @endpush
 
 <!doctype html>
-<html lang="es" data-theme="default" data-layout="fluid" data-sidebar-position="left" data-sidebar-layout="default">
+<html lang="es" data-theme="dark" data-layout="fluid" data-sidebar-position="left" data-sidebar-layout="default">
 <head>
   <meta charset="utf-8">
-  <meta name="page-id" content="dashboard">
+  <meta name="page-id" content="@yield('page-id','dashboard')">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ config('app.name') }} · @yield('title','Admin') </title>
 
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/feather-icons"></script> 
-   <script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
 
-   <link
-  rel="stylesheet"
-  href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
-/>
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+        referrerpolicy="no-referrer" />
 
-  <!-- Tema AdminKit: servido estático desde /public -->
- <link
-  id="themeStylesheet"
-  rel="stylesheet"
-  href="{{ asset('assets/adminkit/light.css') }}"
-  data-light="{{ asset('assets/adminkit/light.css') }}"
-  data-dark="{{ asset('assets/adminkit/dark.css') }}"
->
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
 
-@vite(['resources/css/app.css','resources/js/app.js','resources/js/adminkit.js'])
+  <link id="themeStylesheet"
+        rel="stylesheet"
+        href="{{ asset('assets/adminkit/dark.css') }}"
+        data-light="{{ asset('assets/adminkit/light.css') }}"
+        data-dark="{{ asset('assets/adminkit/dark.css') }}">
+
+  {{-- Importante: NO cargar Tailwind (resources/css/app.css) en AdminKit/Bootstrap para evitar choques. --}}
+  @vite(['resources/js/app.js','resources/js/adminkit.js'])
 
   @stack('styles')
 </head>
+
 <body>
 <div class="wrapper">
-  {{-- SIDEBAR --}}
   @include('partials.sidebar_adminkit')
 
   <div class="main">
-    {{-- TOPBAR --}}
     @include('partials.topbar_adminkit')
 
     <main class="content">
@@ -116,8 +100,47 @@
   </div>
 </div>
 
-@stack('scripts')
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
 
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  // Siempre visible (evitar flashes)
+  document.body.style.opacity = '1';
+
+  // Feather icons
+  if (window.feather) window.feather.replace();
+
+  // Inyectar estilos anti-transiciones + pagination base
+  const style = document.createElement('style');
+  style.textContent = `
+    body, .content, .card, .table, .fade { transition:none !important; animation:none !important; }
+    body { opacity:1 !important; visibility:visible !important; }
+
+    /* Paginación base compacta */
+    .pagination { font-size: 14px !important; }
+    .page-link { padding: 6px 12px !important; font-size: 14px !important; line-height: 1.5 !important; }
+    .page-link i.bi { font-size: 12px !important; }
+  `;
+  document.head.appendChild(style);
+
+  // Click en paginación: evitar “flash” sin romper ctrl/⌘ click, middle click, target=_blank, etc.
+  document.addEventListener('click', function (e) {
+    const link = e.target.closest('.page-link, .pagination a');
+    if (!link || !link.href) return;
+    if (e.defaultPrevented) return;
+    if (e.button !== 0) return; // solo click izquierdo
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (link.target && link.target !== '_self') return;
+
+    e.preventDefault();
+    const contentArea = document.querySelector('.content');
+    if (contentArea) contentArea.style.opacity = '0.95';
+    window.location.assign(link.href);
+  }, false);
+});
+</script>
+
+@stack('scripts')
 </body>
 </html>
