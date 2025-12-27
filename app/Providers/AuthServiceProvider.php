@@ -14,9 +14,6 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
 
-        // No defines Gate admin/sysadmin para evitar inconsistencias.
-        // Toda la seguridad web se controla por middleware:
-        // - admin => users.isadmin
-        // - sysadmin => users.is_sysadmin
+      
     }
 }

@@ -1,5 +1,7 @@
 
-<?php $__env->startSection('title','Vehículos'); ?>
+
+<?php $__env->startSection('title','Vehiculos'); ?>
+<?php $__env->startSection('page-id','vehicles'); ?>
 
 <?php $__env->startSection('content'); ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -56,4 +58,4 @@
 </div>
 <?php $__env->stopSection(); ?>
 
-<?php echo $__env->make('layouts.admin', array_diff_key(get_defined_vars(), ['__data' => 1, '__path' => 1]))->render(); ?><?php /**PATH C:\xampp\htdocs\cabcontrolmx\resources\views/admin/vehicles/index.blade.php ENDPATH**/ ?>
+<?php echo $__env->make('layouts.admin_tabler', array_diff_key(get_defined_vars(), ['__data' => 1, '__path' => 1]))->render(); ?><?php /**PATH C:\xampp\htdocs\cabcontrolmx\resources\views/admin/vehicles/index.blade.php ENDPATH**/ ?>

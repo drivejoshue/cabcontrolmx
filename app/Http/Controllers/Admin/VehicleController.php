@@ -171,7 +171,7 @@ public function store(Request $r)
             'capacity'  => $data['capacity'] ?? 4,
             'policy_id' => $data['policy_id'] ?? null,
             'foto_path' => $fotoPath,
-            'active'    => (int)($data['active'] ?? 1),
+            'active'    =>  1,
             'created_at'=> now(),
             'updated_at'=> now(),
         ]);
@@ -298,68 +298,135 @@ public function assignDriver(Request $r, int $id)
 }
 
 
-    public function edit(int $id)
-    {
-        $tenantId = $this->tenantId();
-        $v = DB::table('vehicles')->where('tenant_id',$tenantId)->where('id',$id)->first();
-        abort_if(!$v, 404);
-        return view('admin.vehicles.edit', compact('v'));
+   public function edit(int $id)
+{
+    $tenantId = $this->tenantId();
+
+    $v = DB::table('vehicles')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $id)
+        ->first();
+    abort_if(!$v, 404);
+
+    $tenant   = Tenant::with('billingProfile')->findOrFail($tenantId);
+    $profile  = $tenant->billingProfile;
+
+    // Check de billing (para habilitar/inhabilitar guardar)
+    [$canRegister, $billingMessage] = app(TenantBillingService::class)
+        ->canRegisterNewVehicle($tenant);
+
+    $activeVehicles = DB::table('vehicles')
+        ->where('tenant_id', $tenantId)
+        ->where('active', 1)
+        ->count();
+
+    // Catálogo activo
+    $vehicleCatalog = DB::table('vehicle_catalog')
+        ->where('active', 1)
+        ->orderBy('brand')
+        ->orderBy('model')
+        ->get();
+
+    // Años recientes
+    $currentYear = now()->year;
+    $years = range($currentYear, $currentYear - 25);
+
+    return view('admin.vehicles.edit', [
+        'v'              => $v,
+        'tenant'         => $tenant,
+        'profile'        => $profile,
+        'canRegister'    => $canRegister,
+        'billingMessage' => $billingMessage,
+        'activeVehicles' => $activeVehicles,
+        'vehicleCatalog' => $vehicleCatalog,
+        'years'          => $years,
+    ]);
+}
+
+   public function update(Request $r, int $id)
+{
+    $tenantId = $this->tenantId();
+
+    $data = $r->validate([
+        'economico'  => 'required|string|max:20',
+        'plate'      => 'required|string|max:20',
+        'capacity'   => 'nullable|integer|min:1|max:10',
+        'color'      => 'nullable|string|max:40',
+        'year'       => 'nullable|integer|min:1970|max:2100',
+        'policy_id'  => 'nullable|string|max:60',
+        'active'     => 'nullable|boolean',
+        'foto'       => 'nullable|image|max:2048',
+
+        // catálogo
+        'catalog_id' => 'nullable|integer|exists:vehicle_catalog,id',
+        'brand'      => 'nullable|string|max:60',
+        'model'      => 'nullable|string|max:80',
+    ]);
+
+    $v = DB::table('vehicles')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $id)
+        ->first();
+    abort_if(!$v, 404);
+
+    // Unicidad de económico
+    $existsEco = DB::table('vehicles')
+        ->where('tenant_id', $tenantId)
+        ->where('economico', $data['economico'])
+        ->where('id', '<>', $id)
+        ->exists();
+    if ($existsEco) {
+        return back()->withErrors(['economico' => 'Ya existe otro vehículo con ese número económico.'])->withInput();
     }
 
-    public function update(Request $r, int $id)
-    {
-        $tenantId = $this->tenantId();
+    // Unicidad de placa
+    $existsPlate = DB::table('vehicles')
+        ->where('tenant_id', $tenantId)
+        ->where('plate', $data['plate'])
+        ->where('id', '<>', $id)
+        ->exists();
+    if ($existsPlate) {
+        return back()->withErrors(['plate' => 'Ya existe otro vehículo con esa placa.'])->withInput();
+    }
 
-        $data = $r->validate([
-            'economico' => 'required|string|max:20',
-            'plate'     => 'required|string|max:20',
-            'brand'     => 'nullable|string|max:60',
-            'model'     => 'nullable|string|max:60',
-            'color'     => 'nullable|string|max:40',
-            'year'      => 'nullable|integer|min:1970|max:2100',
-            'capacity'  => 'nullable|integer|min:1|max:10',
-            'policy_id' => 'nullable|string|max:60',
-            'active'    => 'nullable|boolean',
-            'foto'      => 'nullable|image|max:2048',
+    // Si viene catalog_id, reforzamos brand/model
+    if (!empty($data['catalog_id'])) {
+        $cat = DB::table('vehicle_catalog')->where('id', $data['catalog_id'])->first();
+        if ($cat) {
+            $data['brand'] = $cat->brand;
+            $data['model'] = $cat->model;
+        }
+    }
+
+    // Foto
+    $fotoPath = $v->foto_path;
+    if ($r->hasFile('foto')) {
+        if ($fotoPath && Storage::disk('public')->exists($fotoPath)) {
+            Storage::disk('public')->delete($fotoPath);
+        }
+        $fotoPath = $r->file('foto')->store('vehicles', 'public');
+    }
+
+    DB::table('vehicles')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $id)
+        ->update([
+            'economico' => $data['economico'],
+            'plate'     => $data['plate'],
+            'brand'     => $data['brand'] ?? null,
+            'model'     => $data['model'] ?? null,
+            'color'     => $data['color'] ?? null,
+            'year'      => $data['year'] ?? null,
+            'capacity'  => $data['capacity'] ?? 4,
+            'policy_id' => $data['policy_id'] ?? null,
+            'foto_path' => $fotoPath,
+            'active'    => (int)($data['active'] ?? 1),
+            'updated_at'=> now(),
         ]);
 
-        $v = DB::table('vehicles')->where('tenant_id',$tenantId)->where('id',$id)->first();
-        abort_if(!$v, 404);
+    return redirect()->route('vehicles.show', ['id' => $id])->with('ok', 'Vehículo actualizado.');
+}
 
-        $existsEco = DB::table('vehicles')
-            ->where('tenant_id',$tenantId)->where('economico',$data['economico'])->where('id','<>',$id)->exists();
-        if ($existsEco) return back()->withErrors(['economico'=>'Ya existe otro vehículo con ese número económico.'])->withInput();
-
-        $existsPlate = DB::table('vehicles')
-            ->where('tenant_id',$tenantId)->where('plate',$data['plate'])->where('id','<>',$id)->exists();
-        if ($existsPlate) return back()->withErrors(['plate'=>'Ya existe otro vehículo con esa placa.'])->withInput();
-
-        $fotoPath = $v->foto_path;
-        if ($r->hasFile('foto')) {
-            if ($fotoPath && Storage::disk('public')->exists($fotoPath)) {
-                Storage::disk('public')->delete($fotoPath);
-            }
-            $fotoPath = $r->file('foto')->store('vehicles', 'public');
-        }
-
-        DB::table('vehicles')
-            ->where('tenant_id',$tenantId)->where('id',$id)
-            ->update([
-                'economico' => $data['economico'],
-                'plate'     => $data['plate'],
-                'brand'     => $data['brand'] ?? null,
-                'model'     => $data['model'] ?? null,
-                'color'     => $data['color'] ?? null,
-                'year'      => $data['year'] ?? null,
-                'capacity'  => $data['capacity'] ?? 4,
-                'policy_id' => $data['policy_id'] ?? null,
-                'foto_path' => $fotoPath,
-                'active'    => (int)($data['active'] ?? 1),
-                'updated_at'=> now(),
-            ]);
-
-        return redirect()->route('vehicles.show',$id)->with('ok','Vehículo actualizado.');
-    }
 
     public function destroy(int $id)
     {

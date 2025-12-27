@@ -1,0 +1,481 @@
+/* =========================
+   ORBANA - MEJORAS DE DISEÑO
+   ========================= */
+
+/* =========================
+   VARIABLES Y TEMA
+   ========================= */
+:root {
+  /* Colores principales */
+  --primary-color: #0dcaf0;
+  --primary-dark: #0aa2c0;
+  --primary-light: #3fd8fc;
+  
+  /* Fondo y texto para tema claro */
+  --bg-light: #ffffff;
+  --bg-light-secondary: #f8f9fa;
+  --text-light: #212529;
+  --text-light-muted: #6c757d;
+  --border-light: #dee2e6;
+  
+  /* Fondo y texto para tema oscuro */
+  --bg-dark: #121212;
+  --bg-dark-secondary: #1e1e1e;
+  --text-dark: #e9ecef;
+  --text-dark-muted: #adb5bd;
+  --border-dark: #2d3748;
+  
+  /* Cards y elementos */
+  --card-bg-light: #ffffff;
+  --card-bg-dark: #1e1e1e;
+  --input-bg-light: #ffffff;
+  --input-bg-dark: #2d3748;
+  
+  /* Fuentes */
+  --font-heading: 'Poppins', sans-serif;
+  --font-body: 'Nunito', sans-serif;
+  --font-ui: 'Roboto', sans-serif;
+}
+
+/* =========================
+   TEMA OSCURO
+   ========================= */
+[data-theme="dark"] {
+  /* Fondo */
+  --bg-color: var(--bg-dark);
+  --bg-secondary: var(--bg-dark-secondary);
+  
+  /* Texto */
+  --text-color: var(--text-dark);
+  --text-muted: var(--text-dark-muted);
+  --text-inverse: var(--text-light);
+  
+  /* Bordes */
+  --border-color: var(--border-dark);
+  
+  /* Cards */
+  --card-bg: var(--card-bg-dark);
+  
+  /* Inputs */
+  --input-bg: var(--input-bg-dark);
+  --input-border: var(--border-dark);
+  --input-text: var(--text-dark);
+  
+  /* Botones */
+  --btn-text: var(--text-dark);
+}
+
+/* =========================
+   TEMA CLARO
+   ========================= */
+[data-theme="light"] {
+  /* Fondo */
+  --bg-color: var(--bg-light);
+  --bg-secondary: var(--bg-light-secondary);
+  
+  /* Texto */
+  --text-color: var(--text-light);
+  --text-muted: var(--text-light-muted);
+  --text-inverse: var(--text-dark);
+  
+  /* Bordes */
+  --border-color: var(--border-light);
+  
+  /* Cards */
+  --card-bg: var(--card-bg-light);
+  
+  /* Inputs */
+  --input-bg: var(--input-bg-light);
+  --input-border: var(--border-light);
+  --input-text: var(--text-light);
+  
+  /* Botones */
+  --btn-text: var(--text-light);
+}
+
+/* =========================
+   FUENTES Y TIPOGRAFÍA
+   ========================= */
+body {
+  font-family: var(--font-body);
+  color: var(--text-color);
+  background-color: var(--bg-color);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+h1, h2, h3, h4, h5, h6,
+.h1, .h2, .h3, .h4, .h5, .h6 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.section-title h2 {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(135deg, var(--primary-color), #0a58ca);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.section-title p {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+}
+
+/* =========================
+   HEADER Y NAVEGACIÓN
+   ========================= */
+.header {
+  background-color: rgba(var(--bg-color), 0.95);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+}
+
+.header .sitename {
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--primary-color), #0a58ca);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.navmenu ul li a {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  transition: all 0.3s ease;
+}
+
+.navmenu ul li a:hover,
+.navmenu ul li a.active {
+  background-color: var(--primary-color);
+  color: white !important;
+}
+
+/* =========================
+   BOTONES MEJORADOS
+   ========================= */
+.btn-getstarted {
+  background: linear-gradient(135deg, var(--primary-color), #0a58ca);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.75rem;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  border: none;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(13, 202, 240, 0.3);
+}
+
+.btn-getstarted:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(13, 202, 240, 0.4);
+  color: white;
+}
+
+.btn-getstarted-secondary {
+  background: transparent;
+  border: 2px solid var(--primary-color);
+  color: var(--primary-color);
+  box-shadow: none;
+}
+
+.btn-getstarted-secondary:hover {
+  background: var(--primary-color);
+  color: white;
+}
+
+/* =========================
+   HERO SECTION
+   ========================= */
+.hero {
+  padding-top: 120px;
+  background: linear-gradient(135deg, 
+    rgba(var(--primary-color), 0.05) 0%,
+    rgba(var(--bg-secondary), 0.1) 100%);
+}
+
+.hero h1 {
+  font-size: 3.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 1.5rem;
+  background: linear-gradient(135deg, var(--text-color), var(--primary-color));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.badge.text-bg-light {
+  background-color: rgba(var(--primary-color), 0.1) !important;
+  color: var(--primary-color) !important;
+  border: 1px solid rgba(var(--primary-color), 0.2);
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+}
+
+/* =========================
+   CARDS MEJORADAS
+   ========================= */
+.service-item {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  padding: 2rem;
+  transition: all 0.3s ease;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.service-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(to bottom, var(--primary-color), #0a58ca);
+  transform: scaleY(0);
+  transition: transform 0.3s ease;
+}
+
+.service-item:hover::before {
+  transform: scaleY(1);
+}
+
+.service-item:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  border-color: var(--primary-color);
+}
+
+.service-item .icon {
+  font-size: 2.5rem;
+  color: var(--primary-color);
+  margin-bottom: 1.5rem;
+  background: linear-gradient(135deg, 
+    rgba(var(--primary-color), 0.1) 0%,
+    rgba(10, 88, 202, 0.05) 100%);
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pricing-tem {
+  background: var(--card-bg);
+  border: 2px solid var(--border-color);
+  padding: 2.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.pricing-tem.featured {
+  border-color: var(--primary-color);
+  box-shadow: 0 10px 40px rgba(13, 202, 240, 0.15);
+}
+
+.pricing-tem .featured {
+  position: absolute;
+  top: 20px;
+  right: -30px;
+  background: var(--primary-color);
+  color: white;
+  padding: 0.25rem 2rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transform: rotate(45deg);
+}
+
+.pricing-tem .price {
+  font-size: 3rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  margin: 1.5rem 0;
+}
+
+.pricing-tem .icon {
+  font-size: 4rem;
+  margin-bottom: 1.5rem;
+}
+
+/* =========================
+   INPUTS MEJORADOS PARA DARK MODE
+   ========================= */
+input, textarea, select, .form-control {
+  background-color: var(--input-bg) !important;
+  border-color: var(--input-border) !important;
+  color: var(--input-text) !important;
+  font-family: var(--font-body);
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  transition: all 0.3s ease;
+}
+
+input:focus, textarea:focus, select:focus, .form-control:focus {
+  border-color: var(--primary-color) !important;
+  box-shadow: 0 0 0 0.25rem rgba(13, 202, 240, 0.25) !important;
+  background-color: var(--input-bg) !important;
+  color: var(--input-text) !important;
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-muted) !important;
+}
+
+/* =========================
+   FAQ MEJORADO
+   ========================= */
+.faq-item {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.faq-item:hover {
+  border-color: var(--primary-color);
+  transform: translateX(5px);
+}
+
+.faq-item.faq-active {
+  border-color: var(--primary-color);
+  background: linear-gradient(135deg, 
+    rgba(var(--primary-color), 0.05) 0%,
+    rgba(10, 88, 202, 0.02) 100%);
+}
+
+.faq-toggle {
+  transition: transform 0.3s ease;
+}
+
+.faq-item.faq-active .faq-toggle {
+  transform: rotate(90deg);
+}
+
+/* =========================
+   INFO CARDS
+   ========================= */
+.info-item {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 1rem;
+  padding: 2rem;
+  height: 100%;
+  transition: all 0.3s ease;
+}
+
+.info-item:hover {
+  border-color: var(--primary-color);
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+.info-item i {
+  font-size: 2.5rem;
+  color: var(--primary-color);
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, 
+    rgba(var(--primary-color), 0.1) 0%,
+    rgba(10, 88, 202, 0.05) 100%);
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* =========================
+   SECTIONS
+   ========================= */
+.section {
+  padding: 5rem 0;
+}
+
+.section.bg-light {
+  background-color: var(--bg-secondary) !important;
+}
+
+.section.bg-white {
+  background-color: var(--bg-color) !important;
+}
+
+.border-top {
+  border-top: 1px solid var(--border-color) !important;
+}
+
+/* =========================
+   FOOTER
+   ========================= */
+.footer {
+  background-color: var(--bg-secondary);
+  padding: 3rem 0;
+  border-top: 1px solid var(--border-color);
+}
+
+/* =========================
+   RESPONSIVE
+   ========================= */
+@media (max-width: 768px) {
+  .hero h1 {
+    font-size: 2.5rem;
+  }
+  
+  .section-title h2 {
+    font-size: 2rem;
+  }
+  
+  .service-item {
+    padding: 1.5rem;
+  }
+  
+  .pricing-tem {
+    padding: 2rem 1.5rem;
+  }
+}
+
+/* =========================
+   ANIMACIONES
+   ========================= */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animated {
+  animation: float 6s ease-in-out infinite;
+}
+
+
+/* =========================
+   SCROLL BAR PERSONALIZADA
+   ========================= */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary-color);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-dark);
+}

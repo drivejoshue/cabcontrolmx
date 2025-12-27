@@ -1,174 +1,216 @@
 
-<?php $__env->startSection('title','Orbana — Gestión de taxis y despacho'); ?>
+<?php $__env->startSection('title','Orbana Dispatch — Acceso'); ?>
+
+
+<?php $__env->startSection('nav'); ?>
+<header id="header" class="header d-flex align-items-center fixed-top" style="background:#0b1220;">
+  <div class="container-fluid container-xl d-flex align-items-center justify-content-between">
+    <a href="<?php echo e(route('public.landing')); ?>" class="logo d-flex align-items-center text-decoration-none">
+      <img src="<?php echo e(asset('images/landing/logo.png')); ?>"
+           alt="Orbana"
+           style="height:34px;width:auto;"
+           onerror="this.src='<?php echo e(asset('vendor/FlexStart/assets/img/logo.png')); ?>'">
+    </a>
+
+    <div class="d-flex align-items-center gap-2">
+      <a href="<?php echo e(route('login')); ?>" class="btn btn-sm btn-outline-light">
+        <i class="bi bi-box-arrow-in-right me-1"></i> Entrar
+      </a>
+    </div>
+  </div>
+</header>
+<?php $__env->stopSection(); ?>
 
 <?php $__env->startSection('content'); ?>
-<section class="hero-grad">
-  <div class="container py-5">
-    <div class="row align-items-center g-4">
-      <div class="col-lg-6">
-        <span class="badge text-bg-primary-subtle border border-primary-subtle mb-3">
-          Plataforma para Centrales y Flotas
-        </span>
-        <h1 class="display-6 fw-bold mb-3">
-          Despacho moderno para tu central de taxis
-        </h1>
-        <p class="lead text-muted mb-4">
-          Controla viajes, conductores, ofertas y métricas en tiempo real.
-          Apps para conductor y pasajero, panel web y operación multi-tenant.
-        </p>
 
-        <div class="d-flex flex-column flex-sm-row gap-2">
-          <a class="btn btn-primary btn-lg" href="<?php echo e(route('public.signup')); ?>">
-            Crear mi central
-          </a>
-          <a class="btn btn-outline-secondary btn-lg" href="#pricing">
-            Ver planes
-          </a>
-        </div>
+<?php $__env->startPush('styles'); ?>
+<style>
+  /* Puerta Dispatch (dark hero) */
+  .dispatch-gate {
+    min-height: calc(100vh - 76px);
+    padding-top: 76px; /* respeta header fijo */
+    background:
+      radial-gradient(1200px 600px at 50% -20%, rgba(13,202,240,.22), transparent 60%),
+      radial-gradient(900px 520px at 80% 10%, rgba(10,88,202,.18), transparent 55%),
+      linear-gradient(180deg, #0b1220 0%, #0b1220 35%, #0f172a 100%);
+    color: #e9eef7;
+  }
 
-        <div class="d-flex gap-3 mt-4 small text-muted">
-          <div><i class="bi bi-shield-check me-1"></i> Seguro</div>
-          <div><i class="bi bi-lightning-charge me-1"></i> Tiempo real</div>
-          <div><i class="bi bi-geo-alt me-1"></i> Mapa operativo</div>
-        </div>
-      </div>
+  .gate-card {
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.04);
+    backdrop-filter: blur(10px);
+  }
 
-      <div class="col-lg-6">
-        <div class="card card-soft shadow-sm">
-          <div class="card-body p-4">
-            <div class="d-flex align-items-center justify-content-between mb-3">
-              <div class="fw-semibold">Vista previa</div>
-              <span class="badge text-bg-light border">Dispatch</span>
-            </div>
-            <div class="ratio ratio-16x9 bg-body-tertiary rounded-3 border">
-              <div class="d-flex align-items-center justify-content-center text-muted">
-                Aquí puedes poner screenshot / mock del panel
-              </div>
-            </div>
-            <div class="row g-3 mt-3">
-              <div class="col-6">
-                <div class="p-3 bg-body-tertiary rounded-3 border">
-                  <div class="small text-muted">Rides activos</div>
-                  <div class="h5 mb-0">—</div>
-                </div>
-              </div>
-              <div class="col-6">
-                <div class="p-3 bg-body-tertiary rounded-3 border">
-                  <div class="small text-muted">Conductores online</div>
-                  <div class="h5 mb-0">—</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+  .gate-muted { color: rgba(233, 238, 247, .75); }
 
-    </div>
-  </div>
-</section>
+  .gate-logo {
+    width: 96px;
+    height: 96px;
+    border-radius: 22px;
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.12);
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
 
-<section class="py-5 bg-white border-top">
+  .gate-logo img { width: 72px; height: auto; display:block; }
+
+  .btn-orbana {
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-weight: 600;
+  }
+
+  .btn-orbana-primary {
+    background: linear-gradient(135deg, #0dcaf0, #0a58ca);
+    border: none;
+    color: #fff;
+    box-shadow: 0 10px 30px rgba(13,202,240,.18);
+  }
+  .btn-orbana-primary:hover { color:#fff; filter: brightness(1.03); }
+
+  .btn-orbana-outline {
+    border: 1px solid rgba(255,255,255,.22);
+    color: #e9eef7;
+    background: rgba(255,255,255,.03);
+  }
+  .btn-orbana-outline:hover { color:#fff; background: rgba(255,255,255,.06); }
+
+  .gate-linkcard {
+    display:block;
+    text-decoration:none;
+    color: inherit;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.03);
+    padding: 18px;
+    transition: .2s ease;
+    height: 100%;
+  }
+  .gate-linkcard:hover {
+    transform: translateY(-3px);
+    border-color: rgba(13,202,240,.45);
+    background: rgba(255,255,255,.05);
+  }
+
+  .gate-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    display:grid;
+    place-items:center;
+    background: rgba(13,202,240,.12);
+    border: 1px solid rgba(13,202,240,.22);
+    color: #0dcaf0;
+  }
+
+  .gate-footer {
+    color: rgba(233, 238, 247, .55);
+  }
+</style>
+<?php $__env->stopPush(); ?>
+
+<section class="dispatch-gate d-flex align-items-center">
   <div class="container">
-    <div class="text-center mb-4">
-      <h2 class="h3 mb-2">Todo lo que necesitas para operar</h2>
-      <p class="text-muted mb-0">Sin complicaciones. Enfocado a centrales y flotas reales.</p>
-    </div>
+    <div class="row justify-content-center">
+      <div class="col-12 col-lg-9 col-xl-8">
 
-    <div class="row g-3">
-      <?php
-        $features = [
-          ['bi bi-diagram-3','Despacho inteligente','Olas de ofertas, prioridades por base y control de estados.'],
-          ['bi bi-map','Mapa operativo','Visualiza rides, rutas y drivers con movimientos suaves y estados.'],
-          ['bi bi-phone','Apps Driver / Passenger','Flujos claros, notificaciones, y experiencia tipo marketplace.'],
-          ['bi bi-bar-chart','Reportes','Métricas operativas por rango, conductor y estados de viaje.'],
-          ['bi bi-gear','Multi-tenant','Cada central aislada: datos, settings, timezone y facturación.'],
-          ['bi bi-lock','Seguridad','Roles, auditoría y verificación para evitar registros basura.'],
-        ];
-      ?>
-
-      <?php $__currentLoopData = $features; $__env->addLoop($__currentLoopData); foreach($__currentLoopData as [$icon,$title,$desc]): $__env->incrementLoopIndices(); $loop = $__env->getLastLoop(); ?>
-        <div class="col-12 col-md-6 col-lg-4">
-          <div class="card card-soft h-100">
-            <div class="card-body">
-              <div class="d-flex gap-3">
-                <div class="fs-4 text-primary"><i class="<?php echo e($icon); ?>"></i></div>
-                <div>
-                  <div class="fw-semibold"><?php echo e($title); ?></div>
-                  <div class="text-muted small"><?php echo e($desc); ?></div>
-                </div>
-              </div>
+        <div class="text-center mb-4">
+          <div class="d-flex justify-content-center mb-3">
+            <div class="gate-logo">
+              
+              <img src="<?php echo e(asset('images/landing/logo-symbol.png')); ?>"
+                   alt="Orbana"
+                   onerror="this.src='<?php echo e(asset('images/landing/logo.png')); ?>'">
             </div>
           </div>
+
+          <div class="d-flex justify-content-center">
+            <span class="badge rounded-pill text-bg-light border px-3 py-2">
+              Orbana Dispatch
+            </span>
+          </div>
+
+          <h1 class="mt-3 mb-2 fw-bold" style="letter-spacing:-.02em;">
+            Acceso a tu panel
+          </h1>
+
+          <p class="gate-muted mb-0">
+            Esta página es la puerta de entrada. La información completa está en el sitio principal.
+          </p>
         </div>
-      <?php endforeach; $__env->popLoop(); $loop = $__env->getLastLoop(); ?>
-    </div>
-  </div>
-</section>
 
-<section class="py-5 bg-light border-top" id="pricing">
-  <div class="container">
-    <div class="text-center mb-4">
-      <h2 class="h3 mb-2">Planes</h2>
-      <p class="text-muted mb-0">Empieza con prueba y escala cuando estés listo.</p>
-    </div>
+        <div class="gate-card p-4 p-md-5">
+          <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-7">
+              <div class="fw-semibold mb-1">¿Ya tienes cuenta?</div>
+              <div class="gate-muted small">
+                Inicia sesión para entrar a tu central y abrir el Dispatch.
+              </div>
+            </div>
+            <div class="col-12 col-md-5 d-grid gap-2">
+              <a href="<?php echo e(route('login')); ?>" class="btn btn-orbana btn-orbana-primary">
+                <i class="bi bi-box-arrow-in-right me-1"></i> Entrar
+              </a>
+              <a href="<?php echo e(route('public.signup')); ?>" class="btn btn-orbana btn-orbana-outline">
+                <i class="bi bi-lightning-charge me-1"></i> Registrar mi central
+              </a>
+            </div>
+          </div>
 
-    <div class="row g-3 justify-content-center">
-      <div class="col-12 col-md-6 col-lg-4">
-        <div class="card card-soft h-100 shadow-sm">
-          <div class="card-body p-4">
-            <div class="fw-semibold">Starter</div>
-            <div class="display-6 fw-bold my-2">$—</div>
-            <div class="text-muted small mb-3">Ideal para pruebas o flotillas pequeñas.</div>
-            <ul class="small text-muted">
-              <li>Incluye X vehículos</li>
-              <li>Panel + app driver</li>
-              <li>Soporte básico</li>
-            </ul>
-            <a class="btn btn-primary w-100" href="<?php echo e(route('public.signup')); ?>">Empezar</a>
+          <hr class="my-4" style="border-color: rgba(255,255,255,.10);">
+
+          <div class="row g-3">
+            <div class="col-12 col-md-4">
+              <a class="gate-linkcard" href="<?php echo e(url('/docs')); ?>">
+                <div class="d-flex gap-3">
+                  <div class="gate-icon"><i class="bi bi-journal-text"></i></div>
+                  <div>
+                    <div class="fw-semibold">Documentación</div>
+                    <div class="gate-muted small">Guías rápidas y configuración.</div>
+                  </div>
+                </div>
+              </a>
+            </div>
+
+            <div class="col-12 col-md-4">
+              <a class="gate-linkcard" href="<?php echo e(url('/legal')); ?>">
+                <div class="d-flex gap-3">
+                  <div class="gate-icon"><i class="bi bi-shield-check"></i></div>
+                  <div>
+                    <div class="fw-semibold">Políticas</div>
+                    <div class="gate-muted small">Privacidad y términos de uso.</div>
+                  </div>
+                </div>
+              </a>
+            </div>
+
+            <div class="col-12 col-md-4">
+              <a class="gate-linkcard" href="<?php echo e(url('/soporte')); ?>">
+                <div class="d-flex gap-3">
+                  <div class="gate-icon"><i class="bi bi-headset"></i></div>
+                  <div>
+                    <div class="fw-semibold">Soporte</div>
+                    <div class="gate-muted small">Ayuda y contacto.</div>
+                  </div>
+                </div>
+              </a>
+            </div>
+          </div>
+
+          <div class="text-center mt-4 gate-footer small">
+            © <?php echo e(date('Y')); ?> Orbana · Operación en tiempo real
           </div>
         </div>
-      </div>
 
-      <div class="col-12 col-md-6 col-lg-4">
-        <div class="card card-soft h-100 border-primary shadow-sm">
-          <div class="card-body p-4">
-            <div class="fw-semibold">Pro</div>
-            <div class="display-6 fw-bold my-2">$—</div>
-            <div class="text-muted small mb-3">Para centrales en operación diaria.</div>
-            <ul class="small text-muted">
-              <li>Más vehículos</li>
-              <li>Reportes avanzados</li>
-              <li>Prioridad en soporte</li>
-            </ul>
-            <a class="btn btn-outline-primary w-100" href="<?php echo e(route('public.signup')); ?>">Crear central</a>
-          </div>
-        </div>
       </div>
-    </div>
-
-    <div class="text-center small text-muted mt-3">
-      Los precios y límites se ajustan a tu modelo de facturación real.
     </div>
   </div>
 </section>
 
-<section class="py-5 bg-white border-top">
-  <div class="container">
-    <div class="row g-4 align-items-center">
-      <div class="col-lg-7">
-        <h2 class="h3 mb-2">¿Listo para operar con Orbana?</h2>
-        <p class="text-muted mb-0">
-          Registra tu central en minutos y empieza con el onboarding.
-        </p>
-      </div>
-      <div class="col-lg-5 text-lg-end">
-        <a class="btn btn-primary btn-lg" href="<?php echo e(route('public.signup')); ?>">
-          Crear mi central
-        </a>
-      </div>
-    </div>
-  </div>
-</section>
 <?php $__env->stopSection(); ?>
 
 <?php echo $__env->make('layouts.public', array_diff_key(get_defined_vars(), ['__data' => 1, '__path' => 1]))->render(); ?><?php /**PATH C:\xampp\htdocs\cabcontrolmx\resources\views/public/landing.blade.php ENDPATH**/ ?>

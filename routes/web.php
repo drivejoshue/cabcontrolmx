@@ -18,6 +18,7 @@ use App\Http\Controllers\Admin\TenantFarePolicyController;
 use App\Http\Controllers\Admin\Reports\RidesReportController;
 use App\Http\Controllers\Admin\Reports\RatingReportController;
 use App\Http\Controllers\Admin\Reports\DriverActivityReportController;
+use App\Http\Controllers\Admin\Reports\ClientsReportController;
 use App\Http\Controllers\Admin\VehicleDocsController;
 use App\Http\Controllers\Admin\DriverDocsController;
 use App\Http\Controllers\Admin\TenantProfileController;
@@ -28,10 +29,14 @@ use App\Http\Controllers\Admin\TenantBillingController as AdminTenantBillingCont
 use App\Http\Controllers\Admin\AdminRideController;
 use App\Http\Controllers\Admin\TenantWalletTopupController;
 use App\Http\Controllers\Admin\TenantWalletController;
+use App\Http\Controllers\Admin\StaffUserController;
+use App\Http\Controllers\Admin\TenantQrPointController;
+
 // API “panel” (web+auth) para JS (dentro de /admin)
 use App\Http\Controllers\Api\SectorController as ApiSectorController;
 use App\Http\Controllers\Api\TaxiStandController as ApiTaxiStandController;
-
+use App\Http\Controllers\Admin\Billing\TaxiFeesController;
+use App\Http\Controllers\Admin\Billing\TaxiChargesController;
 // SysAdmin
 use App\Http\Controllers\SysAdmin\TenantController as SysTenantController;
 use App\Http\Controllers\SysAdmin\TenantBillingController;
@@ -41,20 +46,30 @@ use App\Http\Controllers\SysAdmin\TenantCommissionReportController;
 use App\Http\Controllers\SysAdmin\DashboardController as SysAdminDashboardController;
 use App\Http\Controllers\SysAdmin\VerificationQueueController;
 use App\Http\Controllers\SysAdmin\SysDriverDocumentController;
-
+use App\Http\Controllers\Admin\TenantTopupController;
 use Illuminate\Http\Request;
 use Illuminate\Auth\Events\Verified;
 use Illuminate\Foundation\Auth\EmailVerificationRequest;
 use App\Models\Tenant;
-
+use App\Http\Controllers\Admin\BI\DemandHeatmapController;
 // Debug/events
 use App\Events\TestEvent;
+
+use App\Http\Controllers\Webhooks\MercadoPagoWebhookController;
+
 
 /*
 |--------------------------------------------------------------------------
 | Landing pública
 |--------------------------------------------------------------------------
 */
+
+
+Route::match(['GET', 'POST'], '/webhooks/mercadopago', [MercadoPagoWebhookController::class, 'handle'])
+    ->withoutMiddleware([\App\Http\Middleware\VerifyCsrfToken::class])
+    ->name('webhooks.mercadopago');
+
+    
 Route::get('/', [TenantSignupController::class, 'landing'])->name('public.landing');
 
 
@@ -132,33 +147,43 @@ Route::view('/pending', 'public.pending')->name('public.pending-tenant');
 |--------------------------------------------------------------------------
 */
 Route::get('/go', function () {
-    if (!Auth::check()) return redirect()->route('public.landing');
+    if (!Auth::check()) return redirect('/login');
 
     $u = Auth::user();
-    if (!empty($u->is_sysadmin)) return redirect()->route('sysadmin.dashboard');
 
-    return redirect()->route('admin.dashboard');
+    if (!empty($u->is_sysadmin)) return redirect()->route('sysadmin.dashboard');
+    if (!empty($u->is_admin)) return redirect()->route('admin.dashboard');
+    if (!empty($u->is_dispatcher)) return redirect()->route('dispatch');
+
+    abort(403, 'Tu cuenta no tiene permisos asignados. Contacta a un administrador.');
 })->name('go');
 
-/*
-|--------------------------------------------------------------------------
-| Breeze /dashboard => manda a panel correcto
-|--------------------------------------------------------------------------
-*/
 Route::get('/dashboard', function () {
-    if (!Auth::check()) return redirect()->route('public.landing');
+    if (!Auth::check()) return redirect('/login');
 
     $u = Auth::user();
-    if (!empty($u->is_sysadmin)) return redirect()->route('sysadmin.dashboard');
 
-    return redirect()->route('admin.dashboard');
+    if (!empty($u->is_sysadmin)) return redirect()->route('sysadmin.dashboard');
+    if (!empty($u->is_admin)) return redirect()->route('admin.dashboard');
+    if (!empty($u->is_dispatcher)) return redirect()->route('dispatch');
+
+    abort(403, 'Tu cuenta no tiene permisos asignados. Contacta a un administrador.');
 })->middleware('auth')->name('dashboard');
+
 
 /*
 |--------------------------------------------------------------------------
 | Reportes ratings (si quieres, puedes meterlos dentro de /admin)
 |--------------------------------------------------------------------------
 */
+
+Route::middleware(['auth', 'dispatch', 'tenant.onboarded'])->group(function () {
+    Route::get('/dispatch', [\App\Http\Controllers\Admin\DispatchController::class, 'index'])
+        ->name('dispatch');
+});
+
+
+
 Route::middleware('auth')->group(function () {
     Route::get('/ratings/reports', [RatingReportController::class, 'index'])->name('ratings.index');
     Route::get('/ratings/driver/{driverId}', [RatingReportController::class, 'showDriver'])->name('ratings.show');
@@ -203,9 +228,25 @@ Route::prefix('admin')
             Route::get('/wallet/movements', [TenantWalletController::class, 'movements'])->name('admin.wallet.movements');
 
             Route::post('/wallet/topup-manual', [TenantWalletController::class, 'topupManual'])->name('admin.wallet.topup.manual');
+            // recargar wallet    
 
-            Route::get('/wallet/topup', [TenantWalletTopupController::class, 'create'])->name('admin.wallet.topup.create');
-            Route::post('/wallet/topup', [TenantWalletTopupController::class, 'store'])->name('admin.wallet.topup.store');
+
+          Route::get('/wallet', [\App\Http\Controllers\Admin\TenantWalletController::class, 'index'])->name('admin.wallet.index');
+    Route::get('/wallet/movements', [\App\Http\Controllers\Admin\TenantWalletController::class, 'movements'])->name('admin.wallet.movements');
+
+    Route::get('/wallet/topup', [\App\Http\Controllers\Admin\TenantWalletTopupController::class, 'create'])->name('admin.wallet.topup.create');
+    Route::post('/wallet/topup', [\App\Http\Controllers\Admin\TenantWalletTopupController::class, 'store'])->name('admin.wallet.topup.store');
+
+    Route::post('/admin/wallet/transfer/notice', function () {
+    return back()->with('warning', 'Transferencia: flujo pendiente (se implementa en SysAdmin).');
+})->name('admin.wallet.transfer.notice.store');
+
+Route::get('/admin/wallet/topup/{topup}/checkout', [\App\Http\Controllers\Admin\TenantWalletTopupController::class, 'checkout'])
+    ->name('admin.wallet.topup.checkout');
+
+Route::get('/admin/wallet/topup/{topup}/status', [\App\Http\Controllers\Admin\TenantWalletTopupController::class, 'status'])
+    ->name('admin.wallet.topup.status');
+
 
             // ---------------------------
             // Operación (requiere saldo suficiente)
@@ -215,7 +256,8 @@ Route::prefix('admin')
                 Route::get('/', [DashboardController::class, 'index'])->name('admin.dashboard');
                 Route::get('/dispatch', [DispatchController::class, 'index'])->name('admin.dispatch');
 
-                Route::get('/perfil', fn () => view('admin.profile'))->name('profile.edit');
+               Route::get('/profile', [\App\Http\Controllers\Admin\ProfileController::class, 'edit'])->name('admin.profile.edit');
+              Route::post('/profile', [\App\Http\Controllers\Admin\ProfileController::class, 'update'])->name('admin.profile.update');
 
                 // Rides
                 Route::get('/rides', [AdminRideController::class, 'index'])->name('admin.rides.index');
@@ -263,9 +305,50 @@ Route::prefix('admin')
                 Route::get('/taxistands/{id}/qr/refresh', [AdminTaxiStandController::class,'refreshQr'])->name('taxistands.qr.refresh');
                 Route::get('/taxistands/{id}/qr.png', [AdminTaxiStandController::class,'qrPng'])->name('taxistands.qr.png');
 
+
+                  Route::get('/qr-points',             [TenantQrPointController::class, 'index'])->name('admin.qr-points.index');
+                    Route::get('/qr-points/create',      [TenantQrPointController::class, 'create'])->name('admin.qr-points.create');
+                    Route::post('/qr-points',            [TenantQrPointController::class, 'store'])->name('admin.qr-points.store');
+                    Route::get('/qr-points/{qrPoint}/edit', [TenantQrPointController::class, 'edit'])->name('admin.qr-points.edit');
+                    Route::put('/qr-points/{qrPoint}',   [TenantQrPointController::class, 'update'])->name('admin.qr-points.update');
+                    Route::delete('/qr-points/{qrPoint}',[TenantQrPointController::class, 'destroy'])->name('admin.qr-points.destroy');
+                    Route::get('/qr-points/{qrPoint}', [TenantQrPointController::class, 'show'])->name('admin.qr-points.show');
+
+                // cuotas taxis  
+
+                Route::get('/cobros/cuotas-taxi', [TaxiFeesController::class, 'index'])->name('admin.taxi_fees');
+                Route::post('/cobros/cuotas-taxi/{id}', [TaxiFeesController::class, 'update'])->name('admin.taxi_fees.update');
+
+                Route::get('/cobros/taxi', [TaxiChargesController::class, 'index'])->name('admin.taxi_charges');
+                Route::post('/cobros/taxi/generar', [TaxiChargesController::class, 'generate'])->name('admin.taxi_charges.generate');
+                Route::post('/cobros/taxi/{charge}/pagar', [TaxiChargesController::class, 'markPaid'])->name('admin.taxi_charges.pay');
+                Route::post('/cobros/taxi/{charge}/cancelar', [TaxiChargesController::class, 'cancel'])->name('admin.taxi_charges.cancel');
+
+                Route::post('/cobros/taxi/{charge}/recibo', [TaxiChargesController::class, 'issueReceipt'])->name('admin.taxi_charges.receipt');
+                Route::get('/cobros/taxi/recibos/{receipt}', [TaxiChargesController::class, 'receiptShow'])->name('admin.taxi_receipts.show');
+
+
+
                 // Settings
-                Route::get('/tenant-settings', [TenantSettingsController::class, 'edit'])->name('admin.tenant_settings.edit');
-                Route::put('/tenant-settings', [TenantSettingsController::class, 'update'])->name('admin.tenant_settings.update');
+
+                Route::get('/usuarios', [StaffUserController::class, 'index'])->name('admin.users.index');
+                Route::get('/usuarios/create', [StaffUserController::class, 'create'])->name('admin.users.create');
+                Route::post('/usuarios', [StaffUserController::class, 'store'])->name('admin.users.store');
+
+                Route::get('/usuarios/{user}/edit', [StaffUserController::class, 'edit'])->name('admin.users.edit');
+                Route::put('/usuarios/{user}', [StaffUserController::class, 'update'])->name('admin.users.update');
+
+                // Acciones de password (sin mail, o con mail)
+                Route::post('/usuarios/{user}/set-password', [StaffUserController::class, 'setPassword'])->name('admin.users.set_password');
+                Route::post('/usuarios/{user}/send-reset', [StaffUserController::class, 'sendResetLink'])->name('admin.users.send_reset');
+
+
+
+                  Route::get('/tenant-settings',  [TenantSettingsController::class, 'edit'])
+                ->name('tenant_settings.edit');
+
+            Route::put('/tenant-settings',  [TenantSettingsController::class, 'update'])
+                ->name('tenant_settings.update');
 
                 Route::get('/dispatch-settings', [DispatchSettingsController::class, 'edit'])->name('admin.dispatch_settings.edit');
                 Route::put('/dispatch-settings', [DispatchSettingsController::class, 'update'])->name('admin.dispatch_settings.update');
@@ -285,7 +368,19 @@ Route::prefix('admin')
                 Route::get('/driver-documents/{doc}/download', [DriverDocsController::class,'download'])->name('drivers.documents.download');
                 Route::post('/driver-documents/{doc}/delete', [DriverDocsController::class,'destroy'])->name('drivers.documents.delete');
 
-                // Reportes
+
+Route::get('/reportes/clientes', [ClientsReportController::class, 'index'])
+    ->name('admin.reports.clients');
+
+Route::get('/reportes/clientes/{ref}', [ClientsReportController::class, 'show'])
+    ->name('admin.reports.clients.show');
+
+// (Opcional) Export CSV de clientes (si lo implementas después)
+Route::get('/reportes/clientes.csv', [ClientsReportController::class, 'exportCsv'])
+    ->name('admin.reports.clients.csv');
+
+
+
                 Route::get('/reportes/viajes', [RidesReportController::class, 'index'])->name('admin.reports.rides');
                 Route::get('/reportes/viajes/{ride}', [RidesReportController::class, 'show'])->name('admin.reports.rides.show');
                 Route::get('/reportes/viajes.csv', [RidesReportController::class, 'exportCsv'])->name('admin.reports.rides.csv');
@@ -299,6 +394,13 @@ Route::prefix('admin')
                     Route::get('conductores/actividad', [DriverActivityReportController::class, 'index'])->name('drivers.activity');
                 });
 
+
+                Route::get('/bi/mapa-demanda', [DemandHeatmapController::class, 'index'])
+                  ->name('admin.bi.demand');
+
+                Route::get('/bi/api/heat-origins', [DemandHeatmapController::class, 'heatOrigins'])
+                  ->name('admin.bi.heat.origins');
+
                 // API panel
                 Route::prefix('api')->group(function () {
                     Route::get('/sectores', [ApiSectorController::class, 'index']);
@@ -307,6 +409,111 @@ Route::prefix('admin')
             });
         });
     });
+
+
+
+
+/*
+|--------------------------------------------------------------------------
+| PANEL SYSADMIN (/sysadmin/… ) – totalmente separado del tenant
+|--------------------------------------------------------------------------
+| Aquí SOLO entra quien tenga is_sysadmin = 1 → Gate::define('sysadmin')
+| No hay ningún enlace a estas rutas desde el panel /admin.
+*/
+Route::prefix('sysadmin')
+    ->middleware(['auth','sysadmin'])
+    ->group(function () {
+
+        // Dashboard SysAdmin
+        Route::get('/', [SysAdminDashboardController::class, 'index'])
+            ->name('sysadmin.dashboard');
+
+      // Tenants (lista y alta)
+        Route::get ('/tenants',               [SysTenantController::class, 'index'])->name('sysadmin.tenants.index');
+        Route::get ('/tenants/create',        [SysTenantController::class, 'create'])->name('sysadmin.tenants.create');
+        Route::post('/tenants',               [SysTenantController::class, 'store'])->name('sysadmin.tenants.store');
+        Route::get ('/tenants/{tenant}/edit', [SysTenantController::class, 'edit'])->name('sysadmin.tenants.edit');
+        Route::post('/tenants/{tenant}',      [SysTenantController::class, 'update'])->name('sysadmin.tenants.update');
+
+        // Billing del tenant
+        Route::get ('/tenants/{tenant}/billing', [TenantBillingController::class, 'show'])
+            ->name('sysadmin.tenants.billing.show');
+        Route::post('/tenants/{tenant}/billing', [TenantBillingController::class, 'update'])
+            ->name('sysadmin.tenants.billing.update');
+
+        // Facturas a tenants
+        Route::get('/invoices',              [TenantInvoiceController::class, 'index'])
+            ->name('sysadmin.invoices.index');
+        Route::get('/invoices/{invoice}',    [TenantInvoiceController::class, 'show'])
+            ->name('sysadmin.invoices.show');
+
+        // Documentos de vehículos
+        Route::get('/tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'index'])
+            ->name('sysadmin.vehicles.documents.index');
+        Route::post('/tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'store'])
+            ->name('sysadmin.vehicles.documents.store');
+        Route::post('/vehicle-documents/{document}/review', [VehicleDocumentController::class, 'review'])
+            ->name('sysadmin.vehicle-documents.review');
+        Route::get('/vehicle-documents/{document}/download', [VehicleDocumentController::class, 'download'])
+            ->name('sysadmin.vehicle-documents.download');
+
+        // Reporte de comisiones por tenant
+        Route::get('/tenants/{tenant}/reports/commissions', [TenantCommissionReportController::class, 'index'])
+            ->name('sysadmin.tenants.reports.commissions');
+
+
+            // Cola de verificación (documentos, etc.)
+        Route::get('/verifications', [VerificationQueueController::class, 'index'])
+            ->name('sysadmin.verifications.index');
+
+        Route::get('/verifications/vehicles/{document}', [VerificationQueueController::class, 'showVehicle'])
+            ->name('sysadmin.verifications.vehicles.show');
+
+        Route::get('/verifications/drivers/{document}', [VerificationQueueController::class, 'showDriver'])
+            ->name('sysadmin.verifications.drivers.show');
+
+        Route::post('/verifications/{document}/review', [VerificationQueueController::class, 'review'])
+            ->name('sysadmin.verifications.review');
+    });
+
+/*
+|--------------------------------------------------------------------------
+| Rutas de DEBUG / pruebas de broadcast (puedes ponerles auth si quieres)
+|--------------------------------------------------------------------------
+*/
+
+Route::get('/dispatch/test-driver/{tenantId}/{driverId}', function ($tenantId, $driverId) {
+    \Log::info("🧪 TEST EVENT - Specific driver", [
+        'tenant_id' => $tenantId,
+        'driver_id' => $driverId
+    ]);
+
+    broadcast(new \App\Events\DriverEvent(
+        tenantId: $tenantId,
+        driverId: $driverId,
+        type: 'TestEvent',
+        payload: [
+            'message'   => 'Test específico desde Dispatch',
+            'tenant_id' => $tenantId,
+            'driver_id' => $driverId,
+            'timestamp' => now()->toDateTimeString()
+        ]
+    ));
+
+    return response()->json([
+        'sent'      => true,
+        'tenant_id' => $tenantId,
+        'driver_id' => $driverId,
+        'channel'   => "tenant.{$tenantId}.driver.{$driverId}",
+        'message'   => 'Evento enviado correctamente'
+    ]);
+});
+
+Route::get('/debug/test-event', function () {
+    event(new TestEvent('Hola desde Laravel @ '.now()));
+    return ['ok' => true];
+});
+
 
 /*
 |--------------------------------------------------------------------------
@@ -319,6 +526,10 @@ Route::middleware(['auth','sysadmin'])->group(function () {
         return ['ok' => true];
     });
 });
+
+
+
+
 
 /*
 |--------------------------------------------------------------------------

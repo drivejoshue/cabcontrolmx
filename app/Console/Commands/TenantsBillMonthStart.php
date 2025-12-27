@@ -11,7 +11,8 @@ use Illuminate\Console\Command;
 class TenantsBillMonthStart extends Command
 {
     protected $signature = 'tenants:bill-month-start {--date= : YYYY-MM-DD para simular}';
-    protected $description = 'Genera factura mensual por adelantado (mes completo) y cobra por wallet si hay saldo.';
+
+    protected $description = 'Día 1: genera factura mensual adelantada y la intenta cobrar por wallet.';
 
     public function __construct(
         private TenantBillingService $billing,
@@ -22,21 +23,49 @@ class TenantsBillMonthStart extends Command
 
     public function handle(): int
     {
-        $d = $this->option('date')
+        /**
+         * Fecha base:
+         * - Normal: primer día del mes actual
+         * - Simulada: --date
+         */
+        $date = $this->option('date')
             ? Carbon::parse($this->option('date'))->startOfDay()
-            : Carbon::now()->startOfMonth(); // default día 1
+            : Carbon::now()->startOfMonth();
 
-        $tenants = Tenant::with('billingProfile')->whereHas('billingProfile', function ($q) {
-            $q->where('billing_model', 'per_vehicle')
-              ->where('status', 'active');
-        })->get();
+        /**
+         * Solo tenants:
+         * - Modelo por vehículo
+         * - Activos (los paused se reactivan solo al recargar)
+         */
+        $tenants = Tenant::with('billingProfile')
+            ->whereHas('billingProfile', function ($q) {
+                $q->where('billing_model', 'per_vehicle')
+                  ->where('status', 'active');
+            })
+            ->get();
 
         foreach ($tenants as $tenant) {
             try {
-                $inv = $this->billing->generateMonthInvoicePrepaid($tenant, $d);
-                $this->info("Tenant {$tenant->id}: invoice mes {$inv->id} pending total={$inv->total}");
+                /**
+                 * 1) Generar factura mensual (prepaid)
+                 */
+                $invoice = $this->billing->generateMonthInvoicePrepaid($tenant, $date);
 
-                $this->billing->payInvoiceFromWallet($inv, $this->wallet);
+                $this->info(
+                    "Tenant {$tenant->id}: invoice mensual {$invoice->id} total={$invoice->total}"
+                );
+
+                /**
+                 * 2) Intentar cobrar inmediatamente del wallet
+                 */
+                $this->billing->payInvoiceFromWallet($invoice, $this->wallet);
+
+                /**
+                 * 3) Validar estado del tenant
+                 * (si no alcanzó saldo, se bloquea)
+                 */
+                $this->billing->recheckTenantBillingState($tenant->id);
+
             } catch (\Throwable $e) {
                 $this->error("Tenant {$tenant->id}: ".$e->getMessage());
             }

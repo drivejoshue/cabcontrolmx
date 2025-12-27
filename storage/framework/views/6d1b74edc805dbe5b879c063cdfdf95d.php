@@ -61,6 +61,19 @@
       padding: 0;
       min-height: calc(100vh - 56px);
     }
+
+    /* Chat panel base */
+#chatPanel .offcanvas-body { padding: 12px 12px 14px; }
+#chatMessages { font-size: 14px; line-height: 1.25; }
+#chatMessages .msg-bubble { border-radius: 14px; padding: 10px 12px; max-width: 82%; }
+#chatMessages .msg-meta { font-size: 12px; opacity: .75; }
+#chatMessages .msg-text { font-size: 14px; }
+
+/* Dark theme tweaks */
+[data-theme="dark"] #chatMessages { color: rgba(255,255,255,.92); }
+[data-theme="dark"] #chatMessages .msg-bubble.bg-light { background: rgba(255,255,255,.08) !important; }
+[data-theme="dark"] #chatMessages .date-chip { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.12); }
+
   </style>
 
   <script>
@@ -161,7 +174,7 @@
         <span class="text-truncate" style="max-width:140px;"><?php echo e($name); ?></span>
       </a>
       <div class="dropdown-menu dropdown-menu-end">
-        <a class="dropdown-item" href="<?php echo e(route('profile.edit')); ?>">Perfil</a>
+        <a class="dropdown-item" href="<?php echo e(route('admin.profile.edit')); ?>">Perfil</a>
         <div class="dropdown-divider"></div>
         <form method="POST" action="<?php echo e(route('logout')); ?>"><?php echo csrf_field(); ?>
           <button class="dropdown-item" type="submit">Cerrar sesión</button>
@@ -178,7 +191,6 @@
 </main>
 
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
 <?php echo app('Illuminate\Foundation\Vite')('resources/js/adminkit.js'); ?>
 <?php echo $__env->yieldPushContent('scripts'); ?>
 

@@ -4,32 +4,98 @@
 @section('title', 'Crear tu central')
 
 @section('content')
+@php
+  // Helpers visuales
+  $heroBadge = 'Registro de central · Orbana Dispatch';
+@endphp
+
+<section class="py-5" style="background: linear-gradient(135deg, rgba(13,202,240,.10), rgba(10,88,202,.04) 60%, transparent 100%); border-bottom:1px solid rgba(0,0,0,.06);">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-12 col-lg-9 col-xl-8 text-center">
+
+        <span class="badge rounded-pill text-bg-light border px-3 py-2">
+          <i class="bi bi-building me-1"></i> {{ $heroBadge }}
+        </span>
+
+        <h1 class="mt-3 mb-1 fw-bold" style="letter-spacing:-.02em;">
+          Crear tu central
+        </h1>
+
+        <p class="text-muted mb-0">
+          Registra tu tenant y crea el usuario administrador en un solo paso.
+          Listo para operar en tiempo real.
+        </p>
+
+      </div>
+    </div>
+  </div>
+</section>
+
 <div class="container py-5">
   <div class="row justify-content-center">
     <div class="col-12 col-lg-9 col-xl-8">
 
-      <div class="mb-4 text-center">
-        <h1 class="h3 mb-1">Crear tu central</h1>
-        <p class="text-muted mb-0">Registra tu tenant y crea el usuario administrador en un solo paso.</p>
-      </div>
+      {{-- Alerts --}}
+      @if(session('status'))
+        <div class="alert alert-success d-flex align-items-start gap-2">
+          <i class="bi bi-check-circle mt-1"></i>
+          <div>{{ session('status') }}</div>
+        </div>
+      @endif
 
-      <div class="card shadow-sm border-0">
+      @if($errors->any())
+        <div class="alert alert-danger">
+          <div class="fw-semibold mb-1">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            Revisa los campos marcados:
+          </div>
+          <ul class="mb-0">
+            @foreach($errors->all() as $e)
+              <li>{{ $e }}</li>
+            @endforeach
+          </ul>
+        </div>
+      @endif
+
+      <div class="card shadow-sm border-0" style="border-radius: 18px;">
         <div class="card-body p-4 p-md-5">
 
-          @if(session('status'))
-            <div class="alert alert-success">{{ session('status') }}</div>
-          @endif
-
-          @if($errors->any())
-            <div class="alert alert-danger">
-              <div class="fw-semibold mb-1">Revisa los campos marcados:</div>
-              <ul class="mb-0">
-                @foreach($errors->all() as $e)
-                  <li>{{ $e }}</li>
-                @endforeach
-              </ul>
+          {{-- Stepper --}}
+          <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between mb-4">
+            <div class="d-flex align-items-center gap-2">
+              <div class="rounded-circle d-flex align-items-center justify-content-center"
+                   style="width:34px;height:34px;background:rgba(13,202,240,.12);color:#0aa2c0;">
+                <i class="bi bi-1-circle"></i>
+              </div>
+              <div>
+                <div class="fw-semibold">Datos de la central</div>
+                <div class="small text-muted">Nombre, zona horaria y contacto</div>
+              </div>
             </div>
-          @endif
+
+            <div class="d-flex align-items-center gap-2">
+              <div class="rounded-circle d-flex align-items-center justify-content-center"
+                   style="width:34px;height:34px;background:rgba(10,88,202,.08);color:#0a58ca;">
+                <i class="bi bi-2-circle"></i>
+              </div>
+              <div>
+                <div class="fw-semibold">Usuario administrador</div>
+                <div class="small text-muted">Cuenta principal del panel</div>
+              </div>
+            </div>
+
+            <div class="d-flex align-items-center gap-2">
+              <div class="rounded-circle d-flex align-items-center justify-content-center"
+                   style="width:34px;height:34px;background:rgba(0,0,0,.06);color:#495057;">
+                <i class="bi bi-3-circle"></i>
+              </div>
+              <div>
+                <div class="fw-semibold">Activación</div>
+                <div class="small text-muted">Verificación de correo</div>
+              </div>
+            </div>
+          </div>
 
           <form method="POST" action="{{ route('public.signup.store') }}" id="signupForm" novalidate>
             @csrf
@@ -48,6 +114,7 @@
                   value="{{ old('central_name') }}"
                   placeholder="Ej. Central Veracruz" required maxlength="150">
                 @error('central_name') <div class="invalid-feedback">{{ $message }}</div> @enderror
+                <div class="form-text">Este nombre se verá en tu panel y facturación.</div>
               </div>
 
               <div class="col-12 col-md-6">
@@ -83,7 +150,9 @@
                   @endif
                 </select>
                 @error('timezone') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                <div class="form-text">Se usará para horarios, reportes y programación.</div>
+                <div class="form-text">
+                  Se usará para horarios, programación de rides y reportes.
+                </div>
               </div>
 
               <div class="col-12 col-md-6">
@@ -102,7 +171,9 @@
                   value="{{ old('notification_email') }}"
                   placeholder="Ej. alertas@tucentral.com" maxlength="190">
                 @error('notification_email') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                <div class="form-text">Si lo dejas vacío, usaremos el email del dueño.</div>
+                <div class="form-text">
+                  Si lo dejas vacío, se usará el email del administrador.
+                </div>
               </div>
             </div>
 
@@ -152,19 +223,26 @@
               </div>
             </div>
 
-            <div class="alert alert-info mb-4">
-              <div class="fw-semibold">Trial automático</div>
-              <div class="small text-muted">
-                Al registrarte, se creará un periodo de prueba (según tu configuración de billing profile).
+            {{-- Trial --}}
+            <div class="alert alert-info mb-4 d-flex gap-2 align-items-start">
+              <i class="bi bi-hourglass-split mt-1"></i>
+              <div>
+                <div class="fw-semibold">Trial automático</div>
+                <div class="small text-muted">
+                  Al registrarte se creará un periodo de prueba según tu configuración actual de facturación.
+                </div>
               </div>
             </div>
 
-            {{-- ===================== Turnstile ===================== --}}
+            {{-- Turnstile --}}
             @php $siteKey = config('services.turnstile.site_key'); @endphp
 
             @if(empty($siteKey))
               <div class="alert alert-warning">
-                Turnstile no está configurado: revisa <code>TURNSTILE_SITE_KEY</code> en tu <code>.env</code> y <code>config/services.php</code>.
+                <div class="fw-semibold">Turnstile no configurado</div>
+                <div class="small mb-0">
+                  Revisa <code>TURNSTILE_SITE_KEY</code> en <code>.env</code> y <code>config/services.php</code>.
+                </div>
               </div>
             @else
               <div class="mb-3">
@@ -177,11 +255,11 @@
 
             <div class="d-flex flex-column flex-md-row gap-2 justify-content-between align-items-stretch align-items-md-center">
               <a href="{{ route('public.landing') }}" class="btn btn-light border">
-                Volver
+                <i class="bi bi-arrow-left me-1"></i> Volver
               </a>
 
               <button type="submit" class="btn btn-primary px-4" id="submitBtn">
-                Crear central
+                <i class="bi bi-check2-circle me-1"></i> Crear central
               </button>
             </div>
 
@@ -201,17 +279,21 @@
   </div>
 </div>
 
-{{-- Anti doble-submit (evita 2 tenants por click rápido) --}}
+{{-- Anti doble-submit --}}
 <script>
   (function () {
     const form = document.getElementById('signupForm');
     const btn  = document.getElementById('submitBtn');
     if (!form || !btn) return;
 
+    let locked = false;
     form.addEventListener('submit', function () {
+      if (locked) return false;
+      locked = true;
+
       btn.disabled = true;
       btn.dataset.originalText = btn.innerHTML;
-      btn.innerHTML = 'Creando...';
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Creando...';
     });
   })();
 </script>

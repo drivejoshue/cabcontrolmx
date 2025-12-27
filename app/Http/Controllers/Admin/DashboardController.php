@@ -64,20 +64,34 @@ class DashboardController extends Controller
             ->whereDate('created_at', $date)
             ->count();
     }
+private function getActiveDrivers(int $tenantId, string $tenantTz): int
+{
+    // Ventana de actividad (15 min)
+    $minutes = 15;
+    $freshCut = DB::raw("DATE_SUB(NOW(), INTERVAL {$minutes} MINUTE)");
 
-    private function getActiveDrivers(int $tenantId, string $tenantTz): int
-    {
-        // Si last_seen_at lo guardas en hora local del tenant, este now() es correcto.
-        // Si lo guardas en UTC, aquí habría que usar Carbon::now('UTC').
-        $cutoff = Carbon::now($tenantTz)->subMinutes(15);
+    // Subquery: último row de driver_locations por driver (en este tenant)
+    $latestPerDriver = DB::table('driver_locations as dl1')
+        ->select('dl1.tenant_id', 'dl1.driver_id', DB::raw('MAX(dl1.id) as last_id'))
+        ->where('dl1.tenant_id', $tenantId)
+        ->groupBy('dl1.tenant_id', 'dl1.driver_id');
 
-        return (int) DB::table('drivers')
-            ->where('tenant_id', $tenantId)
-            ->whereIn('status', ['idle', 'busy', 'on_ride'])
-            ->where('active', 1)
-            ->where('last_seen_at', '>=', $cutoff->toDateTimeString())
-            ->count();
-    }
+    return (int) DB::table('drivers as d')
+        ->joinSub($latestPerDriver, 'last', function ($j) {
+            $j->on('last.tenant_id', '=', 'd.tenant_id')
+              ->on('last.driver_id', '=', 'd.id');
+        })
+        ->join('driver_locations as dl', function ($j) {
+            $j->on('dl.tenant_id', '=', 'last.tenant_id')
+              ->on('dl.driver_id', '=', 'last.driver_id')
+              ->on('dl.id', '=', 'last.last_id');
+        })
+        ->where('d.tenant_id', $tenantId)
+        ->whereIn('d.status', ['idle', 'busy', 'on_ride'])
+        ->where('d.active', 1)
+        ->where('dl.reported_at', '>=', $freshCut)
+        ->count();
+}
 
     private function getTotalVehicles(int $tenantId): int
     {

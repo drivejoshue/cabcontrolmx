@@ -1,0 +1,237 @@
+/* ===== VARIABLES Y TEMA DARK/BLUE ===== */
+:root {
+    /* Paleta principal - Dark Blue */
+    --ob-primary: #1a365d;
+    --ob-secondary: #2d3748;
+    --ob-accent: #3182ce;
+    --ob-steelblue: #4a5568;
+    --ob-light: #edf2f7;
+    --ob-dark: #0f1419;
+    
+    /* Colores de estado */
+    --ob-success: #38a169;
+    --ob-warning: #d69e2e;
+    --ob-info: #4299e1;
+    
+    /* Sombras y efectos */
+    --ob-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+    --ob-shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.2);
+    --ob-glow: 0 0 20px rgba(49, 130, 206, 0.3);
+    
+    /* Bordes */
+    --ob-radius: 12px;
+    --ob-radius-lg: 20px;
+    
+    /* Transiciones */
+    --ob-transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.1);
+}
+
+/* ===== ANIMACIONES PERSONALIZADAS ===== */
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+}
+
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: var(--ob-shadow); }
+    50% { box-shadow: var(--ob-glow); }
+}
+
+@keyframes slide-up {
+    from { 
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to { 
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes gradient-shift {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+
+/* ===== CLASES UTILITARIAS ===== */
+.animate-float {
+    animation: float 3s ease-in-out infinite;
+}
+
+.animate-slide-up {
+    animation: slide-up 0.8s ease-out;
+}
+
+.animate-pulse-glow {
+    animation: pulse-glow 2s infinite;
+}
+
+.animate-on-scroll {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: var(--ob-transition);
+}
+
+.animate-on-scroll.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* ===== COMPONENTES PERSONALIZADOS ===== */
+/* Hero con gradiente animado */
+.hero-gradient {
+    background: linear-gradient(135deg, 
+        var(--ob-dark) 0%, 
+        var(--ob-primary) 30%, 
+        var(--ob-secondary) 70%, 
+        var(--ob-steelblue) 100%);
+    background-size: 400% 400%;
+    animation: gradient-shift 15s ease infinite;
+    position: relative;
+    overflow: hidden;
+}
+
+.hero-gradient::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        radial-gradient(circle at 20% 80%, rgba(49, 130, 206, 0.15) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(26, 54, 93, 0.1) 0%, transparent 50%);
+}
+
+/* Tarjetas premium */
+.card-ob {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--ob-radius);
+    transition: var(--ob-transition);
+    overflow: hidden;
+    position: relative;
+}
+
+.card-ob::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--ob-accent), transparent);
+    transition: left 0.6s ease;
+}
+
+.card-ob:hover {
+    transform: translateY(-8px);
+    border-color: var(--ob-accent);
+    box-shadow: var(--ob-shadow-lg);
+}
+
+.card-ob:hover::before {
+    left: 100%;
+}
+
+/* Botones mejorados */
+.btn-ob {
+    padding: 0.875rem 2.5rem;
+    border-radius: 50px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    position: relative;
+    overflow: hidden;
+    transition: var(--ob-transition);
+    border: none;
+    z-index: 1;
+}
+
+.btn-ob-primary {
+    background: linear-gradient(135deg, var(--ob-accent), #2b6cb0);
+    color: white;
+}
+
+.btn-ob-primary::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #2b6cb0, var(--ob-accent));
+    transition: left 0.4s ease;
+    z-index: -1;
+}
+
+.btn-ob-primary:hover::before {
+    left: 0;
+}
+
+.btn-ob-outline {
+    background: transparent;
+    border: 2px solid var(--ob-accent);
+    color: var(--ob-accent);
+}
+
+.btn-ob-outline:hover {
+    background: var(--ob-accent);
+    color: white;
+    box-shadow: var(--ob-glow);
+}
+
+/* Badges modernos */
+.badge-ob {
+    padding: 0.5rem 1.25rem;
+    border-radius: 50px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    border: 1px solid transparent;
+}
+
+.badge-ob-gradient {
+    background: linear-gradient(135deg, rgba(49, 130, 206, 0.15), rgba(26, 54, 93, 0.1));
+    border-color: rgba(49, 130, 206, 0.3);
+    color: var(--ob-light);
+}
+
+/* Estilos para estadísticas */
+.stat-card {
+    background: rgba(255, 255, 255, 0.03);
+    border-left: 4px solid var(--ob-accent);
+    padding: 1.5rem;
+    border-radius: 8px;
+    transition: var(--ob-transition);
+}
+
+.stat-card:hover {
+    background: rgba(49, 130, 206, 0.1);
+    transform: translateX(5px);
+}
+
+/* Tabla de precios mejorada */
+.pricing-card {
+    position: relative;
+    border: 2px solid transparent;
+    background: linear-gradient(var(--ob-secondary), var(--ob-secondary)) padding-box,
+                linear-gradient(135deg, var(--ob-accent), transparent) border-box;
+}
+
+.pricing-card.featured {
+    border: 2px solid var(--ob-accent);
+    transform: scale(1.05);
+}
+
+.pricing-card.featured::after {
+    content: 'POPULAR';
+    position: absolute;
+    top: -12px;
+    right: 20px;
+    background: var(--ob-accent);
+    color: white;
+    padding: 0.25rem 1rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}

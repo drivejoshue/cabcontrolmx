@@ -8,6 +8,8 @@ use App\Models\TenantInvoice;
 use App\Models\Vehicle;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use App\Services\TenantWalletService;
+
 
 class TenantBillingService
 {
@@ -132,7 +134,9 @@ class TenantBillingService
         $monthly = $this->monthlyAmountForVehicles($p, $activeCount);
         $amount  = $this->prorateMonthly($monthly, $from, $to, $mStart, $mEnd);
 
-        $status = $p->accepted_terms_at ? 'pending' : 'draft';
+        //$status = $p->accepted_terms_at ? 'pending' : 'draft';
+        $status = 'pending';
+
 
         return DB::transaction(function () use ($tenant, $p, $now, $from, $to, $activeCount, $amount, $status) {
             $inv = new TenantInvoice();
@@ -400,7 +404,8 @@ public function requiredBalanceToFinishMonth(Tenant $tenant, $date): array
 
         $activeCount = Vehicle::where('tenant_id', $tenant->id)->where('active', 1)->count();
         $monthly = $this->monthlyAmountForVehicles($p, $activeCount);
-        $prorated = $this->prorate($monthly, $from, $to, $mStart, $mEnd);
+        $prorated = $this->prorateMonthly($monthly, $from, $to, $mStart, $mEnd);
+
 
         return [
             'required_amount' => round($prorated, 2),
@@ -418,6 +423,285 @@ public function requiredBalanceToFinishMonth(Tenant $tenant, $date): array
         'currency' => $currency,
         'label' => 'Saldo suficiente',
         'reason' => 'covered',
+    ];
+}
+
+/**
+ * Revalida el estado del tenant según:
+ * - saldo en wallet
+ * - requerimiento del mes actual
+ *
+ * Se llama desde:
+ * - Webhook Mercado Pago
+ * - Cron diario
+ * - Acciones críticas (login, middleware)
+ */
+public function recheckTenantBillingState(
+    Tenant $tenant,
+    TenantWalletService $wallet,
+    ?Carbon $date = null
+): void {
+    $now = $date ?: Carbon::now();
+    $p = $tenant->billingProfile;
+
+    if (!$p || ($p->billing_model ?? '') !== 'per_vehicle') {
+        return;
+    }
+
+    // Trial vigente no bloquea aquí
+    $profileStatus = strtolower((string)$p->status);
+    if ($profileStatus === 'trial' && !$this->isTrialExpired($p, $now)) {
+        return;
+    }
+
+    // UI State “canónico”
+    $ui = $this->billingUiState($tenant, $wallet, $now);
+    $state = $ui['billing_state'] ?? 'ok';
+
+    // Ubicar factura relevante (si existe)
+    $inv = $this->findCurrentUnpaidInvoice($tenant, $now);
+
+    // 1) Si no hay deuda del mes => activar
+    if ($state === 'ok' || $state === 'trial') {
+        if (strtolower((string)$p->status) !== 'active') {
+            $p->status = 'active';
+            $p->suspended_at = null;
+            $p->suspension_reason = null;
+            $p->save();
+        }
+        return;
+    }
+
+    // 2) Draft: requiere términos. No pausamos automáticamente aquí.
+    //    (La UI debe empujar a "Aceptar términos".)
+    if ($state === 'action_required') {
+        // Si estaba paused por algo anterior, lo dejamos como está.
+        // Opcional: podrías mantenerlo active pero con mensaje de acción requerida.
+        return;
+    }
+
+    // 3) Pending dentro de gracia (aunque no alcance saldo) => NO pausar
+    if ($state === 'pending' || $state === 'grace') {
+        // Asegurar que no quede "paused" solo por saldo insuficiente dentro de gracia
+        if (strtolower((string)$p->status) === 'paused' && ($p->suspension_reason ?? null) === 'insufficient_balance') {
+            $p->status = 'active';
+            $p->suspended_at = null;
+            $p->suspension_reason = null;
+            $p->save();
+        }
+        return;
+    }
+
+    // 4) Overdue => marcar invoice overdue (si aplica) y pausar
+    if ($state === 'overdue') {
+        if ($inv && strtolower((string)$inv->status) === 'pending') {
+            // Marcar overdue al vencimiento (idempotente)
+            $inv->status = 'overdue';
+            $inv->save();
+        }
+
+        if (strtolower((string)$p->status) !== 'paused') {
+            $p->status = 'paused';
+            $p->suspended_at = now();
+            $p->suspension_reason = 'overdue';
+            $p->save();
+        } else {
+            // Si ya estaba paused, normalizamos reason si venía vacío
+            if (empty($p->suspension_reason)) {
+                $p->suspension_reason = 'overdue';
+                $p->save();
+            }
+        }
+
+        return;
+    }
+
+    // Fallback conservador: si algo raro ocurre, no tocar estado.
+}
+
+
+/**
+ * Devuelve la "factura relevante" para bloqueo/estado:
+ * - draft|pending|overdue
+ * - que toque el mes actual (por period_start/period_end)
+ */
+private function findCurrentUnpaidInvoice(Tenant $tenant, Carbon $now): ?TenantInvoice
+{
+    [$mStart, $mEnd] = $this->periodEomFor($now);
+
+    return TenantInvoice::where('tenant_id', $tenant->id)
+        ->whereIn('status', ['draft','pending','overdue'])
+        ->whereDate('period_end', '>=', $mStart->toDateString())
+        ->whereDate('period_start', '<=', $mEnd->toDateString())
+        ->orderByDesc('issue_date')
+        ->orderByDesc('id')
+        ->first();
+}
+
+/**
+ * Construye un estado "limpio" para UI/SDK:
+ * billing_state:
+ * - ok
+ * - trial
+ * - action_required (draft por términos)
+ * - pending (por pagar, dentro de gracia)
+ * - grace (saldo insuficiente pero aún en gracia)
+ * - overdue (venció)
+ * - paused (bloqueado)
+ */
+public function billingUiState(
+    Tenant $tenant,
+    TenantWalletService $wallet,
+    ?Carbon $date = null
+): array {
+    $now = $date ?: Carbon::now();
+    $p = $tenant->billingProfile;
+
+    if (!$p || ($p->billing_model ?? '') !== 'per_vehicle') {
+        return [
+            'billing_state' => 'ok',
+            'billing_message' => null,
+            'required_amount' => 0.0,
+            'balance' => null,
+            'currency' => 'MXN',
+            'invoice_id' => null,
+            'invoice_status' => null,
+            'due_date' => null,
+        ];
+    }
+
+    $balance = (float)($wallet->ensureWallet((int)$tenant->id)->balance ?? 0);
+    $currency = 'MXN';
+
+    // Trial vigente: no bloquea, solo informativo
+    $st = strtolower((string)$p->status);
+    if ($st === 'trial' && !$this->isTrialExpired($p, $now)) {
+        $ends = $this->trialEndsAt($p);
+        return [
+            'billing_state' => 'trial',
+            'billing_message' => $ends
+                ? ('Trial activo. Termina el '.$ends->toDateString().'.')
+                : 'Trial activo.',
+            'required_amount' => 0.0,
+            'balance' => $balance,
+            'currency' => $currency,
+            'invoice_id' => null,
+            'invoice_status' => null,
+            'due_date' => null,
+        ];
+    }
+
+    // Factura abierta del mes actual (draft|pending|overdue)
+    $inv = $this->findCurrentUnpaidInvoice($tenant, $now);
+
+    if (!$inv) {
+        return [
+            'billing_state' => 'ok',
+            'billing_message' => null,
+            'required_amount' => 0.0,
+            'balance' => $balance,
+            'currency' => $currency,
+            'invoice_id' => null,
+            'invoice_status' => null,
+            'due_date' => null,
+        ];
+    }
+
+    $invStatus = strtolower((string)$inv->status);
+    $due = !empty($inv->due_date) ? Carbon::parse($inv->due_date)->endOfDay() : null;
+    $amount = round((float)($inv->total ?? 0), 2);
+    $currency = $inv->currency ?: $currency;
+
+    // Draft = falta aceptar términos (no debería bloquear “técnicamente”, pero sí requiere acción)
+    if ($invStatus === 'draft') {
+        return [
+            'billing_state' => 'action_required',
+            'billing_message' => 'Acepta términos para habilitar el cobro de tu factura y continuar operando.',
+            'required_amount' => $amount,
+            'balance' => $balance,
+            'currency' => $currency,
+            'invoice_id' => (int)$inv->id,
+            'invoice_status' => $invStatus,
+            'due_date' => $due?->toDateString(),
+        ];
+    }
+
+    // Pending/Overdue: validar gracia
+    $inGrace = $due ? $now->copy()->endOfDay()->lte($due) : true;
+
+    if ($invStatus === 'pending') {
+        if ($balance + 1e-9 >= $amount) {
+            // Tiene saldo suficiente (el cron lo cobrará)
+            return [
+                'billing_state' => 'pending',
+                'billing_message' => $due
+                    ? ('Factura pendiente por $'.number_format($amount,2).' '.$currency.'. Vence el '.$due->toDateString().'.')
+                    : ('Factura pendiente por $'.number_format($amount,2).' '.$currency.'.'),
+                'required_amount' => $amount,
+                'balance' => $balance,
+                'currency' => $currency,
+                'invoice_id' => (int)$inv->id,
+                'invoice_status' => $invStatus,
+                'due_date' => $due?->toDateString(),
+            ];
+        }
+
+        // No alcanza
+        if ($inGrace) {
+            $faltante = max(0, round($amount - $balance, 2));
+            return [
+                'billing_state' => 'grace',
+                'billing_message' => $due
+                    ? ('Saldo insuficiente. Te faltan $'.number_format($faltante,2).' '.$currency.' para cubrir la factura antes del '.$due->toDateString().'.')
+                    : ('Saldo insuficiente. Completa tu saldo para cubrir la factura.'),
+                'required_amount' => $amount,
+                'balance' => $balance,
+                'currency' => $currency,
+                'invoice_id' => (int)$inv->id,
+                'invoice_status' => $invStatus,
+                'due_date' => $due?->toDateString(),
+            ];
+        }
+
+        // Ya venció pero aún está pending (lo convertiremos a overdue en recheck)
+        return [
+            'billing_state' => 'overdue',
+            'billing_message' => $due
+                ? ('Factura vencida desde el '.$due->toDateString().'. Recarga para reactivar.')
+                : 'Factura vencida. Recarga para reactivar.',
+            'required_amount' => $amount,
+            'balance' => $balance,
+            'currency' => $currency,
+            'invoice_id' => (int)$inv->id,
+            'invoice_status' => 'overdue',
+            'due_date' => $due?->toDateString(),
+        ];
+    }
+
+    // overdue
+    if ($invStatus === 'overdue') {
+        return [
+            'billing_state' => 'overdue',
+            'billing_message' => 'Factura vencida. Recarga para reactivar.',
+            'required_amount' => $amount,
+            'balance' => $balance,
+            'currency' => $currency,
+            'invoice_id' => (int)$inv->id,
+            'invoice_status' => $invStatus,
+            'due_date' => $due?->toDateString(),
+        ];
+    }
+
+    // fallback
+    return [
+        'billing_state' => 'pending',
+        'billing_message' => 'Estado de facturación pendiente.',
+        'required_amount' => $amount,
+        'balance' => $balance,
+        'currency' => $currency,
+        'invoice_id' => (int)$inv->id,
+        'invoice_status' => $invStatus,
+        'due_date' => $due?->toDateString(),
     ];
 }
 

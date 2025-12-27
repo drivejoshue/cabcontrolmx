@@ -221,97 +221,164 @@ class DispatchController extends Controller
     ]);
     }
 
-    public function driversLive(Request $r)
-    {
-        $tenantId = $this->tenantId($r);
+ public function driversLive(Request $r)
+{
+    $tenantId = $this->tenantId($r);
 
-        $latestPerDriver = DB::table('driver_locations as dl1')
-            ->select('dl1.driver_id', DB::raw('MAX(dl1.id) as last_id'))
-            ->groupBy('dl1.driver_id');
+    // =========================================================
+    // 1) Última ubicación por driver (FILTRADA por tenant)
+    // =========================================================
+    $latestPerDriver = DB::table('driver_locations as dl1')
+        ->select('dl1.tenant_id', 'dl1.driver_id', DB::raw('MAX(dl1.id) as last_id'))
+        ->where('dl1.tenant_id', $tenantId)
+        ->groupBy('dl1.tenant_id', 'dl1.driver_id');
 
-        $locs = DB::table('driver_locations as dl')
-            ->joinSub($latestPerDriver,'last',function($j){
-                $j->on('dl.driver_id','=','last.driver_id')
-                  ->on('dl.id','=','last.last_id');
-            })
-            ->select(
-                'dl.driver_id',
-                'dl.lat','dl.lng','dl.reported_at','dl.bearing',
-                DB::raw('COALESCE(dl.heading_deg, dl.bearing) as heading_deg'),
-                DB::raw('CASE WHEN dl.reported_at >= (NOW() - INTERVAL 120 SECOND) THEN 1 ELSE 0 END AS is_fresh')
-            );
+    $locs = DB::table('driver_locations as dl')
+        ->joinSub($latestPerDriver, 'last', function ($j) {
+            $j->on('dl.tenant_id', '=', 'last.tenant_id')
+              ->on('dl.driver_id', '=', 'last.driver_id')
+              ->on('dl.id', '=', 'last.last_id');
+        })
+        ->select(
+            'dl.tenant_id',
+            'dl.driver_id',
+            'dl.lat',
+            'dl.lng',
+            'dl.reported_at',
+            DB::raw('COALESCE(dl.heading_deg, dl.bearing) as heading_deg'),
+            DB::raw('CASE WHEN dl.reported_at >= (NOW() - INTERVAL 30 SECOND) THEN 1 ELSE 0 END AS is_fresh')
+        );
 
-        $assignedOrInProgress = DB::table('rides as r')
-            ->select([
-                'r.driver_id',
-                DB::raw("
-                    CASE
-                      WHEN UPPER(r.status) IN ('ON_BOARD','ONBOARD','BOARDING') THEN 'on_board'
-                      WHEN UPPER(r.status) = 'EN_ROUTE'                         THEN 'en_route'
-                      WHEN UPPER(r.status) = 'ARRIVED'                          THEN 'arrived'
-                      WHEN UPPER(r.status) IN ('ACCEPTED','ASSIGNED')           THEN 'accepted'
-                      WHEN UPPER(r.status) = 'REQUESTED'                        THEN 'requested'
-                      WHEN UPPER(r.status) = 'SCHEDULED'                        THEN 'scheduled'
-                      ELSE LOWER(r.status)
-                    END AS ride_status
-                ")
-            ])
-            ->where('r.tenant_id', $tenantId)
-            ->whereNotNull('r.driver_id')
-            ->whereIn(DB::raw('UPPER(r.status)'), [
-                'ON_BOARD','ONBOARD','BOARDING','EN_ROUTE','ARRIVED','ACCEPTED','ASSIGNED','REQUESTED','SCHEDULED'
-            ]);
+    // =========================================================
+    // 2) Estado activo por driver (ride asignado / en progreso + offers vivas)
+    // =========================================================
+    $assignedOrInProgress = DB::table('rides as r')
+        ->select([
+            'r.driver_id',
+            DB::raw("
+                CASE
+                  WHEN UPPER(r.status) IN ('ON_BOARD','ONBOARD','BOARDING') THEN 'on_board'
+                  WHEN UPPER(r.status) = 'EN_ROUTE'                         THEN 'en_route'
+                  WHEN UPPER(r.status) = 'ARRIVED'                          THEN 'arrived'
+                  WHEN UPPER(r.status) IN ('ACCEPTED','ASSIGNED')           THEN 'accepted'
+                  WHEN UPPER(r.status) = 'REQUESTED'                        THEN 'requested'
+                  WHEN UPPER(r.status) = 'SCHEDULED'                        THEN 'scheduled'
+                  ELSE LOWER(r.status)
+                END AS ride_status
+            ")
+        ])
+        ->where('r.tenant_id', $tenantId)
+        ->whereNotNull('r.driver_id')
+        ->whereIn(DB::raw('UPPER(r.status)'), [
+            'ON_BOARD','ONBOARD','BOARDING','EN_ROUTE','ARRIVED','ACCEPTED','ASSIGNED','REQUESTED','SCHEDULED'
+        ]);
 
-        $liveOffers = DB::table('ride_offers as o')
-            ->join('rides as r','r.id','=','o.ride_id')
-            ->select([
-                'o.driver_id',
-                DB::raw("'offered' as ride_status")
-            ])
-            ->where('o.tenant_id', $tenantId)
-            ->whereRaw('o.expires_at IS NULL OR o.expires_at > NOW()')
-            ->where(DB::raw('LOWER(o.status)'),'offered');
+    $liveOffers = DB::table('ride_offers as o')
+        ->join('rides as r', function ($j) use ($tenantId) {
+            $j->on('r.id', '=', 'o.ride_id')
+              ->where('r.tenant_id', '=', $tenantId);
+        })
+        ->select([
+            'o.driver_id',
+            DB::raw("'offered' as ride_status")
+        ])
+        ->where('o.tenant_id', $tenantId)
+        ->whereRaw('o.expires_at IS NULL OR o.expires_at > NOW()')
+        ->where(DB::raw('LOWER(o.status)'), 'offered');
 
-        $activeForDriver = DB::query()
-            ->fromSub(
-                $assignedOrInProgress->unionAll($liveOffers),
-                'ar'
-            )
-            ->select('ar.driver_id','ar.ride_status')
-            ->orderByRaw("FIELD(ar.ride_status,'on_board','en_route','arrived','accepted','offered','requested','scheduled')")
-            ->orderBy('ar.driver_id');
+    $activeForDriver = DB::query()
+        ->fromSub($assignedOrInProgress->unionAll($liveOffers), 'ar')
+        ->select('ar.driver_id', 'ar.ride_status')
+        ->orderByRaw("FIELD(ar.ride_status,'on_board','en_route','arrived','accepted','offered','requested','scheduled')")
+        ->orderBy('ar.driver_id');
 
-        $drivers = DB::table('drivers')
-            ->where('drivers.tenant_id',$tenantId)
-            ->leftJoin('driver_shifts as ds', function($j){
-                $j->on('ds.driver_id','=','drivers.id')->whereNull('ds.ended_at');
-            })
-            ->leftJoinSub($locs,'loc', function($j){
-                $j->on('loc.driver_id','=','drivers.id');
-            })
-            ->leftJoinSub($activeForDriver,'ar', function($j){
-                $j->on('ar.driver_id','=','drivers.id');
-            })
-            ->leftJoin('vehicles as v','v.id','=','ds.vehicle_id')
-            ->select(
-                'drivers.id','drivers.name','drivers.phone',
-                DB::raw('loc.lat as lat'),
-                DB::raw('loc.lng as lng'),
-                DB::raw('loc.reported_at'),
-                DB::raw('loc.heading_deg'),
-                DB::raw('loc.is_fresh'),
-                DB::raw('COALESCE(v.type,"sedan") as vehicle_type'),
-                DB::raw('v.plate as vehicle_plate'),
-                DB::raw('v.economico as vehicle_economico'),
-                DB::raw('LOWER(COALESCE(drivers.status,"offline")) as driver_status'),
-                DB::raw('ar.ride_status'),
-                DB::raw('CASE WHEN ds.id IS NULL THEN 0 ELSE 1 END AS shift_open')
-            )
-            ->orderBy('drivers.id')
-            ->get();
+    // =========================================================
+    // 3) Última fila de queue por driver (por tenant)
+    // =========================================================
+   $latestQueuePerDriver = DB::table('taxi_stand_queue as q1')
+    ->select('q1.driver_id', DB::raw('MAX(q1.id) as last_id'))
+    ->where('q1.tenant_id', $tenantId)
+    ->whereIn(DB::raw('LOWER(q1.status)'), ['en_cola','saltado']) // ✅ SOLO ESTOS
+    ->groupBy('q1.driver_id');
 
-        return response()->json($drivers);
-    }
+
+    $queue = DB::table('taxi_stand_queue as q')
+        ->joinSub($latestQueuePerDriver, 'lq', function ($j) {
+            $j->on('q.driver_id', '=', 'lq.driver_id')
+              ->on('q.id', '=', 'lq.last_id');
+        })
+        ->where('q.tenant_id', $tenantId)
+        ->select(
+            'q.driver_id',
+            'q.stand_id',
+            'q.position',
+            DB::raw('LOWER(q.status) as stand_status'),
+            'q.joined_at'
+        );
+
+    // =========================================================
+    // 4) Drivers live (tenant) + shift + lastloc + ride_status + queue/stand
+    // =========================================================
+    $drivers = DB::table('drivers')
+        ->where('drivers.tenant_id', $tenantId)
+
+        ->leftJoin('driver_shifts as ds', function ($j) use ($tenantId) {
+            $j->on('ds.driver_id', '=', 'drivers.id')
+              ->where('ds.tenant_id', '=', $tenantId)
+              ->whereNull('ds.ended_at');
+        })
+
+        ->leftJoinSub($locs, 'loc', function ($j) use ($tenantId) {
+            $j->on('loc.driver_id', '=', 'drivers.id')
+              ->where('loc.tenant_id', '=', $tenantId);
+        })
+
+        ->leftJoinSub($activeForDriver, 'ar', function ($j) {
+            $j->on('ar.driver_id', '=', 'drivers.id');
+        })
+
+        // ✅ vehicles debe respetar tenant también
+        ->leftJoin('vehicles as v', function ($j) use ($tenantId) {
+            $j->on('v.id', '=', 'ds.vehicle_id')
+              ->where('v.tenant_id', '=', $tenantId);
+        })
+
+        ->leftJoinSub($queue, 'q', function ($j) {
+            $j->on('q.driver_id', '=', 'drivers.id');
+        })
+
+        ->leftJoin('taxi_stands as ts', function ($j) use ($tenantId) {
+            $j->on('ts.id', '=', 'q.stand_id')
+              ->where('ts.tenant_id', '=', $tenantId);
+        })
+
+        ->select(
+            'drivers.id','drivers.name','drivers.phone',
+            DB::raw('loc.lat as lat'),
+            DB::raw('loc.lng as lng'),
+            DB::raw('loc.reported_at'),
+            DB::raw('loc.heading_deg'),
+            DB::raw('loc.is_fresh'),
+            DB::raw('COALESCE(v.type,"sedan") as vehicle_type'),
+            DB::raw('v.plate as vehicle_plate'),
+            DB::raw('v.economico as vehicle_economico'),
+            DB::raw('LOWER(COALESCE(drivers.status,"offline")) as driver_status'),
+            DB::raw('ar.ride_status'),
+            DB::raw('CASE WHEN ds.id IS NULL THEN 0 ELSE 1 END AS shift_open'),
+
+            DB::raw('q.stand_id as stand_id'),
+            DB::raw('q.position as stand_position'),
+            DB::raw('q.stand_status as stand_status'),
+            DB::raw('q.joined_at as stand_joined_at'),
+            DB::raw('ts.nombre as stand_name')
+        )
+        ->orderBy('drivers.id')
+        ->get();
+
+    return response()->json($drivers);
+}
+
+
 
     public function nearbyDrivers(Request $r)
     {

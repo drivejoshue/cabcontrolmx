@@ -47,4 +47,13 @@ return [
     'secret_key' => env('TURNSTILE_SECRET_KEY'),
   ],
 
+
+      'mercadopago' => [
+    'token'          => env('MERCADOPAGO_ACCESS_TOKEN'),
+    'webhook_secret' => env('MERCADOPAGO_WEBHOOK_SECRET'),
+     'public_key' => env('MERCADOPAGO_PUBLIC_KEY'),
+    'sandbox'        => (bool) env('MERCADOPAGO_SANDBOX', true),
+    'public_url'     => env('MERCADOPAGO_PUBLIC_URL', env('APP_URL')),
+],
+
 ];

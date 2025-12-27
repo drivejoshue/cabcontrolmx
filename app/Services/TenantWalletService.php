@@ -4,28 +4,44 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
 
+/**
+ * TenantWalletService
+ *
+ * Reglas clave:
+ * - El wallet es la ÚNICA fuente de verdad financiera del tenant.
+ * - Nunca se modifica balance sin crear un movimiento.
+ * - Todas las operaciones son idempotentes por external_ref.
+ * - Los tenants NO pueden acreditar manualmente.
+ */
 class TenantWalletService
 {
+    /**
+     * Asegura que el tenant tenga wallet.
+     * Se llama en todos los puntos de entrada.
+     */
     public function ensureWallet(int $tenantId): object
     {
         $w = DB::table('tenant_wallets')->where('tenant_id', $tenantId)->first();
         if ($w) return $w;
 
         DB::table('tenant_wallets')->insert([
-            'tenant_id'    => $tenantId,
-            'balance'      => 0.00,
-            'currency'     => 'MXN',
-            'last_topup_at'=> null,
-            'created_at'   => now(),
-            'updated_at'   => now(),
+            'tenant_id'     => $tenantId,
+            'balance'       => 0.00,
+            'currency'      => 'MXN',
+            'last_topup_at' => null,
+            'created_at'    => now(),
+            'updated_at'    => now(),
         ]);
 
         return DB::table('tenant_wallets')->where('tenant_id', $tenantId)->first();
     }
 
     /**
-     * Recarga confirmada (simulación o webhook “approved” en el futuro).
-     * Crea movimiento type=topup y sube balance.
+     * Acredita una recarga confirmada (webhook MercadoPago).
+     *
+     * - type=topup
+     * - Idempotente por external_ref
+     * - DEVUELVE true si acreditó, false si ya existía
      */
     public function creditTopup(
         int $tenantId,
@@ -33,24 +49,22 @@ class TenantWalletService
         string $externalRef,
         ?string $notes = null,
         ?string $currency = 'MXN'
-    ): void {
+    ): bool {
         $amount = round((float)$amount, 2);
         if ($amount <= 0) {
             throw new \InvalidArgumentException('Amount inválido');
         }
 
-        DB::transaction(function () use ($tenantId, $amount, $externalRef, $notes, $currency) {
+        return DB::transaction(function () use ($tenantId, $amount, $externalRef, $notes, $currency) {
             $this->ensureWallet($tenantId);
 
-            // Evitar doble aplicación por external_ref (idempotencia simple)
+            // Evita doble acreditación
             $exists = DB::table('tenant_wallet_movements')
                 ->where('tenant_id', $tenantId)
                 ->where('external_ref', $externalRef)
                 ->exists();
 
-            if ($exists) {
-                return; // ya aplicada
-            }
+            if ($exists) return false;
 
             DB::table('tenant_wallets')
                 ->where('tenant_id', $tenantId)
@@ -66,18 +80,22 @@ class TenantWalletService
                 'type'         => 'topup',
                 'amount'       => $amount,
                 'currency'     => $currency ?? 'MXN',
-                'ref_type'     => null,
-                'ref_id'       => null,
                 'external_ref' => $externalRef,
                 'notes'        => $notes,
                 'created_at'   => now(),
             ]);
+
+            return true;
         });
     }
 
     /**
-     * Debita (cobro) si hay saldo suficiente. Ideal para cobrar invoices.
-     * type=debit, ref_type/ref_id apuntan a invoice.
+     * Debita saldo si hay balance suficiente.
+     * Usado para cobrar invoices.
+     *
+     * - type=debit
+     * - lockForUpdate evita race conditions
+     * - external_ref debe ser único por cargo (ej: invoice:123)
      */
     public function debitIfEnough(
         int $tenantId,
@@ -94,15 +112,18 @@ class TenantWalletService
         return DB::transaction(function () use ($tenantId, $amount, $refType, $refId, $externalRef, $notes, $currency) {
             $this->ensureWallet($tenantId);
 
-            // lock wallet row
-            $w = DB::table('tenant_wallets')->where('tenant_id', $tenantId)->lockForUpdate()->first();
-            $bal = (float)($w->balance ?? 0);
+            // Bloquea fila para evitar doble débito concurrente
+            $w = DB::table('tenant_wallets')
+                ->where('tenant_id', $tenantId)
+                ->lockForUpdate()
+                ->first();
 
-            if ($bal + 1e-9 < $amount) {
+            $balance = (float)($w->balance ?? 0);
+            if ($balance + 1e-9 < $amount) {
                 return false;
             }
 
-            // Idempotencia opcional por external_ref
+            // Idempotencia por external_ref
             if ($externalRef) {
                 $exists = DB::table('tenant_wallet_movements')
                     ->where('tenant_id', $tenantId)
@@ -136,8 +157,8 @@ class TenantWalletService
     }
 
     /**
-     * Crédito “no topup” (ajustes, bonificaciones).
-     * type=credit
+     * Crédito interno (ajustes, bonificaciones).
+     * NO se usa para recargas de clientes.
      */
     public function credit(
         int $tenantId,
@@ -183,4 +204,36 @@ class TenantWalletService
             ]);
         });
     }
+
+
+    /**
+     * Obtiene el balance actual del wallet del tenant.
+     * - Siempre asegura existencia del wallet (ensureWallet)
+     * - Solo lectura (NO crea movimientos)
+     */
+    public function getBalance(int $tenantId): float
+    {
+        $w = $this->ensureWallet($tenantId);
+        return round((float)($w->balance ?? 0), 2);
+    }
+
+        /**
+     * Obtiene el registro completo del wallet (objeto DB::first()).
+     * Útil para UI (balance, currency, last_topup_at, etc.)
+     */
+    public function getWallet(int $tenantId): object
+    {
+        return $this->ensureWallet($tenantId);
+    }
+
+        /**
+     * Moneda configurada en wallet (por si en el futuro soportas multi-moneda).
+     */
+    public function getCurrency(int $tenantId): string
+    {
+        $w = $this->ensureWallet($tenantId);
+        return (string)($w->currency ?? 'MXN');
+    }
+
+
 }

@@ -106,6 +106,8 @@ $logoInline = asset('images/logo.png');     // logo inline (con texto o sin, per
           </a>
         </li>
 
+  
+
         {{-- =======================
              CONFIGURACIÓN
         ======================= --}}
@@ -143,18 +145,36 @@ $logoInline = asset('images/logo.png');     // logo inline (con texto o sin, per
           </a>
         </li>
 
+        <li class="sidebar-header">Cobros</li>
+
+        <li class="sidebar-item {{ $isActive('admin.taxi_fees') }}">
+          <a class="sidebar-link" href="{{ route('admin.taxi_fees') }}">
+            <i class="align-middle" data-feather="sliders"></i>
+            <span class="align-middle">Cuotas por taxi</span>
+          </a>
+        </li>
+
+        <li class="sidebar-item {{ $isActive('admin.taxi_charges') }}">
+          <a class="sidebar-link" href="{{ route('admin.taxi_charges') }}">
+            <i class="align-middle" data-feather="file-text"></i>
+            <span class="align-middle">Cobros</span>
+          </a>
+        </li>
+
+
         {{-- =======================
              REPORTES
         ======================= --}}
         <li class="sidebar-header">Reportes</li>
 
-        <li class="sidebar-item {{ $isActive('admin.reports.clients*') }}">
-          <a class="sidebar-link"
-             href="{{ Route::has('admin.reports.clients') ? route('admin.reports.clients') : url('/admin/reportes/clientes') }}">
-            <i class="align-middle" data-feather="users"></i>
-            <span class="align-middle">Clientes</span>
-          </a>
-        </li>
+      <li class="sidebar-item {{ $isActive('admin.reports.clients*') }}">
+      <a class="sidebar-link"
+         href="{{ Route::has('admin.reports.clients') ? route('admin.reports.clients') : url('/admin/reportes/clientes') }}">
+        <i class="align-middle" data-feather="users"></i>
+        <span class="align-middle">Clientes</span>
+      </a>
+    </li>
+
 
         <li class="sidebar-item {{ $isActive('admin.reports.rides*') }}">
           <a class="sidebar-link"

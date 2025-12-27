@@ -21,6 +21,8 @@ const scheme = import.meta.env.VITE_REVERB_SCHEME
 console.log('🔧 Dispatch - Configuración final:', { host, port, scheme })
 
 // Configuración de Echo para el Dispatch
+const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
 window.Echo = new Echo({
   broadcaster: 'reverb',
   key: import.meta.env.VITE_REVERB_APP_KEY,
@@ -30,7 +32,15 @@ window.Echo = new Echo({
   forceTLS: scheme === 'https',
   enabledTransports: ['ws', 'wss'],
   enableStats: false,
-})
+
+  // Importante para private/presence
+  authEndpoint: '/broadcasting/auth',
+  auth: {
+    headers: csrf ? { 'X-CSRF-TOKEN': csrf } : {}
+  },
+  withCredentials: true,
+});
+
 
 // Logs de conexión para debugging
 window.Echo.connector.pusher.connection.bind('connecting', () => {

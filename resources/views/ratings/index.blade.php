@@ -1,13 +1,14 @@
-@extends('layouts.admin')
+@extends('layouts.admin_tabler')
 
-@section('title', 'Reporte de Calificaciones y Viajes')
+@section('title','Reporte de Calificaciones y Viajes')
+@section('page-id','rating')
 
 @section('content')
 <div class="container-fluid">
     <div class="row mb-4">
         <div class="col-12">
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-gradient-primary text-white">
+            <div class="card">
+                <div class="card-header">
                     <h3 class="card-title mb-0">
                         <i class="bi bi-graph-up me-2"></i>
                         Reporte General de Calificaciones y Viajes
@@ -20,16 +21,16 @@
     <!-- Resumen General Mejorado -->
     <div class="row mb-4">
         <div class="col-lg-3 col-md-6 mb-3">
-            <div class="card bg-gradient-info text-white shadow">
+            <div class="card">
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h3 class="text-white mb-1">{{ number_format($generalSummary->overall_avg_rating, 1) }}/5</h3>
-                            <p class="text-white-50 mb-0">Calificación Promedio</p>
-                            <small class="text-white-50">{{ $generalSummary->total_ratings }} calificaciones</small>
+                            <h3 class="mb-1">{{ number_format($generalSummary->overall_avg_rating, 1) }}/5</h3>
+                            <p class="text-muted mb-0">Calificación Promedio</p>
+                            <small class="text-muted">{{ $generalSummary->total_ratings }} calificaciones</small>
                         </div>
                         <div class="align-self-center">
-                            <i class="bi bi-star-fill fa-2x text-white-50"></i>
+                            <i class="bi bi-star-fill fa-2x text-blue"></i>
                         </div>
                     </div>
                 </div>
@@ -37,16 +38,16 @@
         </div>
         
         <div class="col-lg-3 col-md-6 mb-3">
-            <div class="card bg-gradient-success text-white shadow">
+            <div class="card">
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h3 class="text-white mb-1">{{ $ridesStats->total_rides ?? 0 }}</h3>
-                            <p class="text-white-50 mb-0">Total Viajes</p>
-                            <small class="text-white-50">{{ $ridesStats->completed_rides ?? 0 }} completados</small>
+                            <h3 class="mb-1">{{ $ridesStats->total_rides ?? 0 }}</h3>
+                            <p class="text-muted mb-0">Total Viajes</p>
+                            <small class="text-muted">{{ $ridesStats->completed_rides ?? 0 }} completados</small>
                         </div>
                         <div class="align-self-center">
-                            <i class="bi bi-car-front-fill fa-2x text-white-50"></i>
+                            <i class="bi bi-car-front-fill fa-2x text-teal"></i>
                         </div>
                     </div>
                 </div>
@@ -54,16 +55,16 @@
         </div>
         
         <div class="col-lg-3 col-md-6 mb-3">
-            <div class="card bg-gradient-warning text-white shadow">
+            <div class="card">
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h3 class="text-white mb-1">{{ $generalSummary->rated_drivers }}</h3>
-                            <p class="text-white-50 mb-0">Drivers Calificados</p>
-                            <small class="text-white-50">{{ $generalSummary->rated_rides }} viajes calificados</small>
+                            <h3 class="mb-1">{{ $generalSummary->rated_drivers }}</h3>
+                            <p class="text-muted mb-0">Drivers Calificados</p>
+                            <small class="text-muted">{{ $generalSummary->rated_rides }} viajes calificados</small>
                         </div>
                         <div class="align-self-center">
-                            <i class="bi bi-person-badge-fill fa-2x text-white-50"></i>
+                            <i class="bi bi-person-badge-fill fa-2x text-azure"></i>
                         </div>
                     </div>
                 </div>
@@ -71,16 +72,16 @@
         </div>
         
         <div class="col-lg-3 col-md-6 mb-3">
-            <div class="card bg-gradient-purple text-white shadow">
+            <div class="card">
                 <div class="card-body">
                     <div class="d-flex justify-content-between">
                         <div>
-                            <h3 class="text-white mb-1">{{ number_format($ridesStats->completion_rate ?? 0, 1) }}%</h3>
-                            <p class="text-white-50 mb-0">Tasa de Completación</p>
-                            <small class="text-white-50">Viajes exitosos</small>
+                            <h3 class="mb-1">{{ number_format($ridesStats->completion_rate ?? 0, 1) }}%</h3>
+                            <p class="text-muted mb-0">Tasa de Completación</p>
+                            <small class="text-muted">Viajes exitosos</small>
                         </div>
                         <div class="align-self-center">
-                            <i class="bi bi-check-circle-fill fa-2x text-white-50"></i>
+                            <i class="bi bi-check-circle-fill fa-2x text-green"></i>
                         </div>
                     </div>
                 </div>
@@ -91,21 +92,21 @@
     <div class="row">
         <!-- Distribución de Estrellas Mejorada -->
         <div class="col-lg-6 mb-4">
-            <div class="card shadow-sm border-0">
-                <div class="card-header bg-light">
+            <div class="card">
+                <div class="card-header">
                     <h5 class="card-title mb-0">
-                        <i class="bi bi-pie-chart-fill text-primary me-2"></i>
+                        <i class="bi bi-pie-chart-fill text-blue me-2"></i>
                         Distribución de Calificaciones
                     </h5>
                 </div>
                 <div class="card-body">
                     @php
                         $stars = [
-                            5 => ['count' => $generalSummary->five_stars, 'color' => 'success', 'icon' => 'bi-star-fill'],
-                            4 => ['count' => $generalSummary->four_stars, 'color' => 'info', 'icon' => 'bi-star-fill'],
-                            3 => ['count' => $generalSummary->three_stars, 'color' => 'warning', 'icon' => 'bi-star-fill'],
+                            5 => ['count' => $generalSummary->five_stars, 'color' => 'green', 'icon' => 'bi-star-fill'],
+                            4 => ['count' => $generalSummary->four_stars, 'color' => 'teal', 'icon' => 'bi-star-fill'],
+                            3 => ['count' => $generalSummary->three_stars, 'color' => 'yellow', 'icon' => 'bi-star-fill'],
                             2 => ['count' => $generalSummary->two_stars, 'color' => 'orange', 'icon' => 'bi-star-fill'],
-                            1 => ['count' => $generalSummary->one_stars, 'color' => 'danger', 'icon' => 'bi-star-fill']
+                            1 => ['count' => $generalSummary->one_stars, 'color' => 'red', 'icon' => 'bi-star-fill']
                         ];
                     @endphp
                     
@@ -138,9 +139,9 @@
 
         <!-- Alertas de Calificaciones Bajas Mejoradas -->
         <div class="col-lg-6 mb-4">
-            <div class="card shadow-sm border-0">
-                <div class="card-header bg-danger text-white">
-                    <h5 class="card-title mb-0">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0 text-red">
                         <i class="bi bi-exclamation-triangle-fill me-2"></i>
                         Alertas de Calificaciones Bajas
                     </h5>
@@ -149,7 +150,7 @@
                     @if($lowRatingsAlerts->count() > 0)
                         <div class="table-responsive">
                             <table class="table table-hover table-sm mb-0">
-                                <thead class="bg-light">
+                                <thead class="table-light">
                                     <tr>
                                         <th><i class="bi bi-person me-1"></i> Driver</th>
                                         <th><i class="bi bi-star me-1"></i> Calificación</th>
@@ -181,12 +182,12 @@
                                                 </div>
                                             </td>
                                             <td>
-                                                <span class="badge bg-danger rounded-pill">
+                                                <span class="badge bg-red text-white rounded-pill">
                                                     <i class="bi bi-star-fill me-1"></i>{{ number_format($alert->avg_rating, 1) }}
                                                 </span>
                                             </td>
                                             <td>
-                                                <span class="badge bg-warning text-dark rounded-pill">
+                                                <span class="badge bg-yellow text-dark rounded-pill">
                                                     {{ $alert->low_ratings }}
                                                 </span>
                                             </td>
@@ -208,7 +209,7 @@
                         </div>
                     @else
                         <div class="text-center p-5">
-                            <i class="bi bi-check-circle text-success display-4 mb-3"></i>
+                            <i class="bi bi-check-circle text-green display-4 mb-3"></i>
                             <p class="text-muted mb-0">No hay alertas de calificaciones bajas</p>
                         </div>
                     @endif
@@ -220,9 +221,9 @@
     <!-- Top Drivers Mejorado -->
     <div class="row mt-4">
         <div class="col-12">
-            <div class="card shadow-sm border-0">
-                <div class="card-header bg-success text-white">
-                    <h5 class="card-title mb-0">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0 text-green">
                         <i class="bi bi-trophy-fill me-2"></i>
                         Top Drivers Mejor Calificados
                     </h5>
@@ -230,7 +231,7 @@
                 <div class="card-body p-0">
                     <div class="table-responsive">
                         <table class="table table-hover mb-0">
-                            <thead class="bg-light">
+                            <thead class="table-light">
                                 <tr>
                                     <th><i class="bi bi-person me-1"></i> Driver</th>
                                     <th><i class="bi bi-telephone me-1"></i> Contacto</th>
@@ -254,7 +255,7 @@
                                                          class="rounded-circle me-2" 
                                                          style="width: 40px; height: 40px; object-fit: cover;">
                                                 @else
-                                                    <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center me-2" 
+                                                    <div class="bg-blue rounded-circle d-flex align-items-center justify-content-center me-2" 
                                                          style="width: 40px; height: 40px;">
                                                         <i class="bi bi-person text-white"></i>
                                                     </div>
@@ -271,49 +272,49 @@
                                         <td>
                                             <div class="d-flex align-items-center">
                                                 @for($i = 1; $i <= 5; $i++)
-                                                    <i class="bi bi-star-fill {{ $i <= $driver->avg_rating ? 'text-warning' : 'text-muted' }} me-1"></i>
+                                                    <i class="bi bi-star-fill {{ $i <= $driver->avg_rating ? 'text-yellow' : 'text-muted' }} me-1"></i>
                                                 @endfor
                                                 <small class="ms-2 fw-bold">{{ number_format($driver->avg_rating, 1) }}</small>
                                             </div>
                                         </td>
                                         <td>
-                                            <span class="badge bg-primary rounded-pill">
+                                            <span class="badge bg-blue text-white rounded-pill">
                                                 <i class="bi bi-car-front me-1"></i>{{ $driver->total_rides ?? 0 }}
                                             </span>
                                         </td>
                                         <td>
-                                            <span class="badge bg-success rounded-pill">
+                                            <span class="badge bg-green text-white rounded-pill">
                                                 <i class="bi bi-check-circle me-1"></i>{{ $driver->completed_rides ?? 0 }}
                                             </span>
                                         </td>
                                         <td>
                                             <div class="d-flex flex-wrap gap-1">
-                                                <span class="badge bg-info" title="Puntualidad">
+                                                <span class="badge bg-azure" title="Puntualidad">
                                                     P:{{ number_format($driver->avg_punctuality, 1) }}
                                                 </span>
-                                                <span class="badge bg-success" title="Cortesía">
+                                                <span class="badge bg-teal" title="Cortesía">
                                                     C:{{ number_format($driver->avg_courtesy, 1) }}
                                                 </span>
-                                                <span class="badge bg-warning" title="Vehículo">
+                                                <span class="badge bg-yellow text-dark" title="Vehículo">
                                                     V:{{ number_format($driver->avg_vehicle_condition, 1) }}
                                                 </span>
-                                                <span class="badge bg-primary" title="Conducción">
+                                                <span class="badge bg-blue text-white" title="Conducción">
                                                     CD:{{ number_format($driver->avg_driving_skills, 1) }}
                                                 </span>
                                             </div>
                                         </td>
                                         <td>
-                                            <span class="badge bg-success rounded-pill">
+                                            <span class="badge bg-green text-white rounded-pill">
                                                 <i class="bi bi-star-fill me-1"></i>{{ $driver->five_stars }}
                                             </span>
                                         </td>
                                         <td>
                                             @php
                                                 $statusColors = [
-                                                    'idle' => 'success',
-                                                    'busy' => 'warning', 
+                                                    'idle' => 'green',
+                                                    'busy' => 'yellow', 
                                                     'offline' => 'secondary',
-                                                    'on_ride' => 'primary'
+                                                    'on_ride' => 'blue'
                                                 ];
                                             @endphp
                                             <span class="badge bg-{{ $statusColors[$driver->driver_status] ?? 'secondary' }} rounded-pill">
@@ -347,10 +348,10 @@
     @if($monthlyTrends->count() > 0)
     <div class="row mt-4">
         <div class="col-12">
-            <div class="card shadow-sm border-0">
-                <div class="card-header bg-light">
+            <div class="card">
+                <div class="card-header">
                     <h5 class="card-title mb-0">
-                        <i class="bi bi-graph-up text-primary me-2"></i>
+                        <i class="bi bi-graph-up text-blue me-2"></i>
                         Tendencias Mensuales
                     </h5>
                 </div>
@@ -379,16 +380,16 @@
                 datasets: [{
                     label: 'Calificación Promedio',
                     data: {!! json_encode($monthlyTrends->pluck('avg_rating')) !!},
-                    borderColor: '#007bff',
-                    backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                    borderColor: '#206bc4', // Azul Tabler
+                    backgroundColor: 'rgba(32, 107, 196, 0.1)',
                     borderWidth: 3,
                     fill: true,
                     tension: 0.4
                 }, {
                     label: 'Total Calificaciones',
                     data: {!! json_encode($monthlyTrends->pluck('total_ratings')) !!},
-                    borderColor: '#28a745',
-                    backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                    borderColor: '#2fb344', // Verde Tabler
+                    backgroundColor: 'rgba(47, 179, 68, 0.1)',
                     borderWidth: 2,
                     fill: true,
                     tension: 0.4
@@ -420,23 +421,36 @@
 
 @push('styles')
 <style>
-.bg-gradient-purple {
-    background: linear-gradient(135deg, #6f42c1, #e83e8c) !important;
-}
+/* Eliminé la clase bg-purple personalizada ya que Tabler tiene sus propios colores */
+
 .card {
-    border-radius: 12px;
+    border: 1px solid var(--tblr-border-color);
+    border-radius: 8px;
 }
+
+.card-header {
+    background-color: var(--tblr-card-cap-bg);
+    border-bottom: 1px solid var(--tblr-border-color);
+    padding: 1rem 1.25rem;
+}
+
 .progress {
     border-radius: 10px;
+    background-color: var(--tblr-bg-surface-secondary);
 }
+
 .badge {
     font-size: 0.75em;
+    padding: 0.35em 0.65em;
 }
+
 .table th {
     border-top: none;
     font-weight: 600;
-    color: #495057;
+    color: var(--tblr-body-color);
+    background-color: var(--tblr-bg-surface-tertiary);
 }
+
 .avatar-placeholder {
     width: 40px;
     height: 40px;
@@ -446,5 +460,22 @@
     justify-content: center;
     font-size: 1.2rem;
 }
+
+/* Colores de Tabler para mejor compatibilidad */
+.text-blue { color: #206bc4 !important; }
+.text-teal { color: #18a997 !important; }
+.text-green { color: #2fb344 !important; }
+.text-yellow { color: #f59f00 !important; }
+.text-red { color: #d63939 !important; }
+.text-orange { color: #f76707 !important; }
+.text-azure { color: #4299e1 !important; }
+
+.bg-blue { background-color: #206bc4 !important; }
+.bg-teal { background-color: #18a997 !important; }
+.bg-green { background-color: #2fb344 !important; }
+.bg-yellow { background-color: #f59f00 !important; }
+.bg-red { background-color: #d63939 !important; }
+.bg-orange { background-color: #f76707 !important; }
+.bg-azure { background-color: #4299e1 !important; }
 </style>
 @endpush

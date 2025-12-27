@@ -247,9 +247,12 @@ const IconDest   = L.icon({ iconUrl:TENANT_ICONS.dest,   iconSize:[30,30], iconA
 const IconStand  = L.icon({ iconUrl:TENANT_ICONS.stand,  iconSize:[28,28], iconAnchor:[14,28], popupAnchor:[0,-24] });
 const IconStop   = L.icon({ iconUrl:TENANT_ICONS.stop,  iconSize:[28,28], iconAnchor:[14,28], popupAnchor:[0,-24] }); // NUEVO
 
+
+
+
 const routeStyle = () => (isDarkMode()
-  ? { color:'#943DD4', weight:5, opacity:.95 }
-  : { color:'#0717F0', weight:4, opacity:.95 }
+  ? { color:'#17C8E7', weight:3, opacity:.95 }
+  : { color:'#000CFF', weight:3, opacity:.95 }
 );
 const sectorStyle = () => (isDarkMode()
   ? { color:'#FF6B6B', fillColor:'#FF6B6B', fillOpacity:.12, weight:2 }
@@ -604,12 +607,28 @@ async function refreshDispatch(){
     renderRightScheduledCards(rides);
     renderDockActive(rides);
     renderDrivers(driverList);
+
+
     await updateSuggestedRoutes(rides);
 
   } catch(e) {
     console.warn('refreshDispatch error', e);
   }
 }
+// En dispatch.js (al final o donde tengas acceso a tu función real):
+window.refreshDriversLive = async function(force = false) {
+  try {
+    // llama a tu función real que refresca markers/estado
+    // ejemplo: await driversLiveRefresh();
+    if (typeof refreshDriversLiveInternal === 'function') {
+      await refreshDriversLiveInternal(force);
+    } else if (typeof window.dispatchRefreshDrivers === 'function') {
+      await window.dispatchRefreshDrivers(force);
+    }
+  } catch (e) {
+    console.warn('[Dispatch] refreshDriversLive failed', e);
+  }
+};
 
 function normalizeStops(ride){
   if (Array.isArray(ride.stops)) return ride.stops;
@@ -627,6 +646,7 @@ function startPolling(){
   clearInterval(pollTimer);
   pollTimer = setInterval(refreshDispatch, 3000);
   refreshDispatch();
+
 }
 
 
@@ -1694,21 +1714,36 @@ function deriveRideUi(ride) {
 
   let label = status;
   let colorClass = 'secondary';
-  let showAssign = false;
+
+  // botones base
+  let showAssign  = false;
   let showReoffer = false;
   let showRelease = false;
-  let showCancel = false;
+  let showCancel  = false;
+
+  // orden (menor = más arriba). Esto te sirve para ordenar en el panel.
+  // NOTA: en tu caso "en curso" se va al dock, pero aun así dejamos rank consistente.
+  let sortRank = 50;
 
   switch (status) {
     case 'requested':
     case 'pending':
-    case 'queued':
     case 'new':
       label = 'Pendiente';
       colorClass = 'warning';
       showAssign = true;
       showReoffer = true;
       showCancel = true;
+      sortRank = 10;
+      break;
+
+    case 'queued':
+      label = 'En cola';
+      colorClass = 'warning';
+      showAssign = true;
+      showReoffer = true;
+      showCancel = true;
+      sortRank = 15;
       break;
 
     case 'offered':
@@ -1718,6 +1753,9 @@ function deriveRideUi(ride) {
       showAssign = true;
       showReoffer = true;
       showCancel = true;
+
+      // CLAVE: offered debe quedarse en activos, pero “más abajo”
+      sortRank = 30;
       break;
 
     case 'accepted':
@@ -1726,6 +1764,7 @@ function deriveRideUi(ride) {
       colorClass = 'primary';
       showRelease = true;
       showCancel = true;
+      sortRank = 5;
       break;
 
     case 'en_route':
@@ -1733,6 +1772,7 @@ function deriveRideUi(ride) {
       colorClass = 'primary';
       showRelease = true;
       showCancel = true;
+      sortRank = 4;
       break;
 
     case 'arrived':
@@ -1740,6 +1780,7 @@ function deriveRideUi(ride) {
       colorClass = 'warning';
       showRelease = true;
       showCancel = true;
+      sortRank = 3;
       break;
 
     case 'on_board':
@@ -1747,16 +1788,19 @@ function deriveRideUi(ride) {
       colorClass = 'success';
       showRelease = false;
       showCancel = true;
+      sortRank = 2;
       break;
 
     case 'finished':
       label = 'Finalizado';
       colorClass = 'success';
+      sortRank = 99;
       break;
 
     case 'canceled':
       label = 'Cancelado';
       colorClass = 'secondary';
+      sortRank = 100;
       break;
 
     case 'no_driver':
@@ -1764,18 +1808,31 @@ function deriveRideUi(ride) {
       colorClass = 'danger';
       showAssign = true;
       showReoffer = true;
+      // (cancel opcional aquí; lo dejo apagado como venías)
+      sortRank = 20;
       break;
 
     default:
       label = status || 'desconocido';
       colorClass = 'secondary';
+      sortRank = 50;
   }
 
-  // 🚫 Para rides que vienen de Passenger:
-  //   - NO mostramos Asignar ni Re-ofertar (lo maneja el flujo de bidding/autodespacho)
+  // ==============================
+  // REGLA: Passenger App
+  // ==============================
+  // No se edita / no se cancela desde panel.
+  // Solo: Re-ofertar. Reasignar solo si ya estaba asignado (para “moverlo” a otro driver).
   if (isPassengerApp) {
-    showAssign = false;
-    showReoffer = false;
+    const canReassign = ['accepted','assigned','en_route','arrived'].includes(status);
+    const canReoffer  = !['finished','canceled','on_board'].includes(status);
+
+    showCancel  = false;
+    showRelease = false;
+
+    // "Asignar" aquí significa "Reasignar" (mismo handler/modal)
+    showAssign  = !!canReassign;
+    showReoffer = !!canReoffer;
   }
 
   const badge = `<span class="badge bg-${colorClass} badge-pill">${label}</span>`;
@@ -1789,7 +1846,9 @@ function deriveRideUi(ride) {
     showRelease,
     showCancel,
     isPassengerApp,
-    channel: ch
+    channel: ch,
+    sortRank,
+    isOffered: (status === 'offered' || status === 'offering')
   };
 }
 
@@ -1838,13 +1897,13 @@ function fmtWhen_db(s) {
 
 
 
+
 // === Ride Card: estilos pro (se insertan una sola vez) ======================
 (function injectRideCardStyles(){
   if (window.__RIDE_CARD_STYLES__) return;
   window.__RIDE_CARD_STYLES__ = true;
 
   const css = `
-  /* ===== Theme-aware tokens (toman los de Bootstrap 5.3) ===== */
   :root{
     --cc-card-bg: var(--bs-card-bg, var(--bs-body-bg));
     --cc-text: var(--bs-body-color);
@@ -1853,7 +1912,6 @@ function fmtWhen_db(s) {
     --cc-soft-bg: var(--bs-tertiary-bg);
   }
 
-  /* ===== Card ===== */
   .cc-ride-card{
     background: var(--cc-card-bg);
     color: var(--cc-text);
@@ -1867,7 +1925,6 @@ function fmtWhen_db(s) {
 
   .cc-ride-header{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
   .cc-ride-title{ font-weight:700; font-size:14px; letter-spacing:.2px; }
-
   .cc-ride-badge .badge{ font-weight:600; padding:.35rem .5rem; border-radius:8px; }
 
   .cc-stats{ text-align:right; }
@@ -1875,7 +1932,6 @@ function fmtWhen_db(s) {
   .cc-meta{ font-size:12px; color: var(--cc-muted); margin-top:4px; }
   .cc-divider{ height:1px; background: var(--cc-border); margin:10px 0; }
 
-  /* ===== Itinerario (línea vertical + pines) ===== */
   .cc-legs{ position:relative; margin:0; padding-left:22px; list-style:none; }
   .cc-legs::before{
     content:""; position:absolute; left:7px; top:10px; bottom:10px;
@@ -1905,10 +1961,25 @@ function fmtWhen_db(s) {
     background: transparent;
   }
 
-  /* ===== Light mode override: forzar fondo blanco en modo claro ===== */
+  /* ===== Offered: no desaparece, solo cambia estilo ===== */
+  .cc-ride-card.is-offered{
+    border-left: 4px solid rgba(13,110,253,.45); /* azul bootstrap suave */
+  }
+  html[data-theme="dark"] .cc-ride-card.is-offered{
+    border-left-color: rgba(13,110,253,.65);
+  }
+  .cc-ride-card.is-offered .cc-ride-title{
+    opacity: .92;
+  }
+
+  /* ===== Passenger app: marca visual (opcional) ===== */
+  .cc-ride-card.is-passenger .cc-passenger-info{
+    border: 1px dashed var(--cc-border);
+  }
+
   html:not([data-theme="dark"]) .cc-ride-card{
-    background: #ffffff !important;          /* <- blanco real */
-    border-color: #e9eef5;                   /* borde suave */
+    background: #ffffff !important;
+    border-color: #e9eef5;
   }
   html:not([data-theme="dark"]) .cc-divider{ background: #eef2f7; }
   html:not([data-theme="dark"]) .cc-chip{
@@ -1916,13 +1987,11 @@ function fmtWhen_db(s) {
     border-color: #e9eef5;
   }
 
-  /* ===== Dark mode overrides ===== */
   html[data-theme="dark"] .cc-ride-card{ box-shadow: 0 10px 24px rgba(0,0,0,.45); }
   html[data-theme="dark"] .cc-legs::before{ background: var(--cc-border); }
   html[data-theme="dark"] .cc-divider{ background: var(--cc-border); }
   html[data-theme="dark"] .cc-chip{ background: var(--cc-soft-bg); border-color: var(--cc-border); }
 
-  /* Fallback si usas prefers-color-scheme sin data-theme */
   @media (prefers-color-scheme: dark){
     html:not([data-theme]) .cc-ride-card{ box-shadow: 0 10px 24px rgba(0,0,0,.45); }
     html:not([data-theme]) .cc-legs::before{ background: var(--cc-border); }
@@ -1945,45 +2014,48 @@ function renderRideCard(ride) {
   const ui = deriveRideUi(ride);
   const ch = ui.channel || deriveRideChannel(ride);
 
-  // --- helpers ---
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => (
     {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
   ));
   const fmtC = (v) => Number.isFinite(+v) ? (+v).toFixed(5) : '—';
+
   const parseStops = () => {
     if (Array.isArray(ride.stops)) return ride.stops;
-    if (Array.isArray(ride.stops_json)) return ride.stops_json; // cast Eloquent
+    if (Array.isArray(ride.stops_json)) return ride.stops_json;
     if (typeof ride.stops_json === 'string' && ride.stops_json.trim()!=='') {
       try { const a = JSON.parse(ride.stops_json); return Array.isArray(a) ? a : []; } catch {}
     }
     return [];
   };
 
-  // --- números/top-right ---
   const km  = (ride.km != null && !isNaN(ride.km)) ? Number(ride.km).toFixed(1)
             : (ride.distance_m ? (ride.distance_m/1000).toFixed(1) : '-');
   const min = (ride.min != null) ? ride.min
             : (ride.duration_s ? Math.round(ride.duration_s/60) : '-');
+
   const amt = (ride.quoted_amount != null) ? Number(ride.quoted_amount) : Number(ride.amount ?? NaN);
   const amtTxt = Number.isFinite(amt) ? `$${amt.toFixed(2)}` : '—';
 
   const stops = parseStops();
   const stopsCount = stops.length || (ride.stops_count ? Number(ride.stops_count) : 0);
 
-  // --- labels O/D ---
   const passName  = ride.passenger_name || '—';
   const passPhone = ride.passenger_phone || '';
+
   const originLbl = ride.origin_label
                  || (Number.isFinite(ride.origin_lat) ? `${fmtC(ride.origin_lat)}, ${fmtC(ride.origin_lng)}` : '—');
+
   const destLbl   = ride.dest_label
                  || (Number.isFinite(ride.dest_lat)   ? `${fmtC(ride.dest_lat)}, ${fmtC(ride.dest_lng)}`     : '—');
-const channelBadge = ch
-  ? `<span class="badge bg-light text-secondary border ms-2">${esc(ch.label)}</span>`
-  : '';  // 👈 parte “false” del ternario + termina la expresión
+
+  const channelBadge = ch
+    ? `<span class="badge bg-light text-secondary border ms-2">${esc(ch.label)}</span>`
+    : '';
 
   const scheduled    = isScheduledStatus(ride);
   const schedRaw     = scheduled ? (ride.scheduled_for || ride.scheduled_for_fmt) : null;
   const requestedRaw = (ride.requested_at || ride.created_at) || null;
+
   const schedTxt     = scheduled ? fmtWhen_db(schedRaw) : '';
   const requestedTxt = requestedRaw ? fmtWhen_db(requestedRaw) : '—';
 
@@ -1991,9 +2063,10 @@ const channelBadge = ch
     ? `<span class="badge bg-danger-subtle text-danger border border-danger">PROGRAMADO</span>`
     : ui.badge;
 
+  const stopsTitle = stopsCount
+    ? `<div class="cc-stops-title small text-muted fw-semibold mt-2 mb-1">Paradas (${stopsCount})</div>`
+    : '';
 
-  // --- itinerary (O -> stops -> D) ---
-  const stopsTitle = stopsCount ? `<div class="cc-stops-title small text-muted fw-semibold mt-2 mb-1">Paradas (${stopsCount})</div>` : '';
   const stopItems = stops.map((s,i) => {
     const txt = (s && typeof s.label === 'string' && s.label.trim()!=='')
       ? esc(s.label.trim())
@@ -2005,13 +2078,15 @@ const channelBadge = ch
             </li>`;
   }).join('');
 
-  // --- debug toggle (apagado por default) ---
   const showDebug = !!window.__DISPATCH_DEBUG__;
   const debugBlock = showDebug ? `
     <details class="mt-2"><summary class="text-muted small">debug</summary>
       <pre class="small text-muted" style="white-space:pre-wrap;max-height:180px;overflow:auto">${
         esc(JSON.stringify({
           id: ride.id,
+          status: ride.status,
+          requested_channel: ride.requested_channel,
+          sortRank: ui.sortRank,
           stops_count: ride.stops_count,
           stop_index: ride.stop_index,
           stops: ride.stops,
@@ -2021,9 +2096,17 @@ const channelBadge = ch
     </details>
   ` : '';
 
-  // --- render ---
+  // Clases extra
+  const offeredCls   = ui.isOffered ? 'is-offered' : '';
+  const passengerCls = ui.isPassengerApp ? 'is-passenger' : '';
+
+  // Etiqueta del botón cuando viene de passenger y showAssign=true (reasignar)
+  const assignLabel = ui.isPassengerApp ? 'Reasignar' : 'Asignar';
+
   return `
-  <div class="card cc-ride-card ${scheduled ? 'is-scheduled' : ''} mb-2 border-0 shadow-sm" data-ride-id="${ride.id}">
+  <div class="card cc-ride-card ${scheduled ? 'is-scheduled' : ''} ${offeredCls} ${passengerCls} mb-2 border-0 shadow-sm"
+       data-ride-id="${ride.id}"
+       data-sort="${ui.sortRank}">
     <div class="card-body p-3">
       <div class="cc-ride-header d-flex justify-content-between align-items-start mb-2">
         <div class="d-flex align-items-center gap-2">
@@ -2036,10 +2119,9 @@ const channelBadge = ch
         </div>
       </div>
 
-         <!-- Información del pasajero + canal de origen -->
       <div class="cc-passenger-info mb-2 p-2 bg-light rounded small d-flex justify-content-between align-items-center">
         <div>
-          <i class="bi bi-person me-1"></i> 
+          <i class="bi bi-person me-1"></i>
           <span class="fw-semibold">${esc(passName)}</span>
           ${passPhone ? `<span class="text-muted ms-2"><i class="bi bi-telephone me-1"></i>${esc(passPhone)}</span>` : ''}
         </div>
@@ -2082,7 +2164,7 @@ const channelBadge = ch
 
       <div class="d-flex justify-content-end cc-actions mt-3">
         <div class="btn-group btn-group-sm">
-          ${ui.showAssign  ? `<button class="btn btn-primary" data-act="assign">Asignar</button>` : ''}
+          ${ui.showAssign  ? `<button class="btn btn-primary" data-act="assign">${assignLabel}</button>` : ''}
           ${ui.showReoffer ? `<button class="btn btn-outline-primary" data-act="reoffer">Re-ofertar</button>` : ''}
           ${ui.showRelease ? `<button class="btn btn-warning" data-act="release">Liberar</button>` : ''}
           ${ui.showCancel  ? `<button class="btn btn-outline-danger btn-cancel" data-ride-id="${ride.id}">Cancelar</button>` : ''}
@@ -2092,7 +2174,6 @@ const channelBadge = ch
     </div>
   </div>`;
 }
-
 
 
 async function postJSON(url, body) {
@@ -3664,7 +3745,168 @@ function applyRidePreset(preset){
 }
 
 
-// MANTIENE la firma original
+// BASES ACORDEON QUEUES 
+function enrichQueuesWithDrivers(queues, driversLive){
+  const q = Array.isArray(queues) ? queues : [];
+  const d = Array.isArray(driversLive) ? driversLive : [];
+
+  // agrupa drivers por stand_id
+  const byStand = new Map();
+  for (const dr of d) {
+    const sid = dr?.stand_id ?? null;
+    if (!sid) continue;
+
+    const key = String(sid);
+    if (!byStand.has(key)) byStand.set(key, []);
+    byStand.get(key).push(dr);
+  }
+
+  // devuelve queues con drivers[]
+  return q.map(s => {
+    const standId = s?.id ?? s?.stand_id ?? null;
+    const drivers = standId ? (byStand.get(String(standId)) || []) : [];
+
+    // orden opcional: por posición de cola, luego por económico
+    drivers.sort((a,b) => {
+      const pa = Number(a?.stand_position ?? 999999);
+      const pb = Number(b?.stand_position ?? 999999);
+      if (pa !== pb) return pa - pb;
+      const ea = String(a?.vehicle_economico ?? '');
+      const eb = String(b?.vehicle_economico ?? '');
+      return ea.localeCompare(eb);
+    });
+
+    return { ...s, drivers };
+  });
+}
+function setTextIfChanged(el, text){
+  if (!el) return;
+  const t = String(text ?? '');
+  if (el.textContent === t) return;
+  el.textContent = t;
+}
+
+function setInnerHTMLIfChanged(el, html){
+  if (!el) return;
+  const next = String(html ?? '');
+  const prev = el.getAttribute('data-html') || '';
+  if (prev === next) return;
+  el.innerHTML = next;
+  el.setAttribute('data-html', next);
+}
+
+/**
+ * Crea o actualiza items del acordeón SIN destruir todo el HTML.
+ * Evita duplicados usando data-stand-id.
+ */
+function upsertQueuesAccordion(acc, list, driversByStand, opts = {}){
+  const esc = opts.esc || (s => String(s ?? '').replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m])));
+
+  const standName = opts.standName || ((s, idx) => (s?.nombre || s?.name || ('Base ' + (s?.id || s?.stand_id || idx))));
+  const standId   = opts.standId   || ((s, idx) => Number(s?.id || s?.stand_id || idx) || idx);
+
+  // indexa existentes
+  const existing = new Map();
+  acc.querySelectorAll('.accordion-item[data-stand-id]').forEach(it => {
+    existing.set(String(it.getAttribute('data-stand-id')), it);
+  });
+
+  const seen = new Set();
+
+  list.forEach((s, idx) => {
+    const sidNum = standId(s, idx);
+    const sid    = String(sidNum);
+    seen.add(sid);
+
+    const name  = standName(s, idx);
+    const arrIn = driversByStand.get(sidNum) || [];
+    const count = arrIn.length || Number(s?.queue_count) || 0;
+
+    let item = existing.get(sid);
+
+    // crear si no existe
+    if (!item){
+      const headId = `qhead-${sid}`;
+      const colId  = `qcol-${sid}`;
+
+      item = document.createElement('div');
+      item.className = 'accordion-item';
+      item.setAttribute('data-stand-id', sid);
+
+      item.innerHTML = `
+        <h2 class="accordion-header" id="${headId}">
+          <button class="accordion-button collapsed" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#${colId}"
+                  aria-expanded="false" aria-controls="${colId}">
+            <div class="d-flex w-100 justify-content-between align-items-center">
+              <div class="min-w-0">
+                <div class="fw-semibold text-truncate q-name"></div>
+                <div class="small text-muted text-truncate q-coords"></div>
+              </div>
+              <span class="badge bg-secondary q-count"></span>
+            </div>
+          </button>
+        </h2>
+
+        <div id="${colId}" class="accordion-collapse collapse">
+          <div class="accordion-body">
+            <div class="queue-eco-grid q-chips"></div>
+          </div>
+        </div>
+      `;
+
+      acc.appendChild(item);
+
+      // persistir "último abierto" solo una vez
+      const col = item.querySelector('.accordion-collapse');
+      col.addEventListener('shown.bs.collapse', () => {
+        const m = (col.id || '').match(/^qcol-(.+)$/);
+        if (m && m[1]) {
+          window._queuesUI = window._queuesUI || {};
+          window._queuesUI.lastOpenStandId = String(m[1]);
+        }
+      });
+    }
+
+    // update textos
+    setTextIfChanged(item.querySelector('.q-name'), esc(name));
+    const coords = [s.latitud||s.lat, s.longitud||s.lng].filter(Boolean).join(', ');
+    setTextIfChanged(item.querySelector('.q-coords'), coords);
+    setTextIfChanged(item.querySelector('.q-count'), count);
+
+    // chips
+    const chipsEl = item.querySelector('.q-chips');
+    const chipsHtml = arrIn.length
+      ? arrIn.map(d => {
+          const did = Number(d.driver_id || d.id);
+          const eco = esc(d.vehicle_economico || d.eco || d.callsign || did || '?');
+          return `<button type="button" class="eco eco-btn" data-driver-id="${did}" title="Ver conductor">${eco}</button>`;
+        }).join('')
+      : `<div class="text-muted">Sin unidades en cola.</div>`;
+
+    setInnerHTMLIfChanged(chipsEl, chipsHtml);
+
+    // bind clicks SOLO a botones nuevos (marcados con dataset)
+    chipsEl.querySelectorAll('.eco-btn').forEach(btn => {
+      if (btn.dataset.bound === '1') return;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const did = Number(btn.getAttribute('data-driver-id') || 0);
+        if (did) window.focusDriverById?.(did);
+      });
+    });
+  });
+
+  // eliminar stands que ya no existen
+  for (const [sid, el] of existing.entries()){
+    if (!seen.has(sid)) el.remove();
+  }
+}
+
+
 function renderQueues(queues){
   const acc        = document.getElementById('panel-queue');
   const compact    = document.getElementById('panel-queue-compact');
@@ -3673,96 +3915,132 @@ function renderQueues(queues){
 
   const list = Array.isArray(queues) ? queues : [];
 
-  // Badges
+  // Badges = número de bases
   if (badge)     badge.textContent     = list.length;
   if (badgeFull) badgeFull.textContent = list.length;
 
-  // === Overlay grande: acordeón completo ===
-  if (acc) {
-    acc.innerHTML = '';
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
 
-    if (!list.length){
-      acc.innerHTML = `<div class="text-muted small p-2">Sin información de colas.</div>`;
-    } else {
-      (list || []).forEach((s, idx) => {
-        const drivers = Array.isArray(s.drivers) ? s.drivers : [];
-        const toEco = d => (d.eco || d.callsign || d.number || d.id || '?');
+  const standName = (s, idx) => (s?.nombre || s?.name || ('Base ' + (s?.id || s?.stand_id || idx)));
+  const standId   = (s, idx) => Number(s?.id || s?.stand_id || idx) || idx;
 
-        const item   = document.createElement('div'); 
-        item.className = 'accordion-item';
-        const standId = s.id || s.stand_id || idx;
-        const headId  = `qhead-${standId}`;
-        const colId   = `qcol-${standId}`;
+  // --- 1) Agrupar drivers por stand desde driversLive ---
+  const drivers = Array.isArray(window._lastDrivers) ? window._lastDrivers : [];
+  const driversByStand = new Map();
 
-        item.innerHTML = `
-          <h2 class="accordion-header" id="${headId}">
-            <button class="accordion-button collapsed" type="button"
-                    data-bs-toggle="collapse" data-bs-target="#${colId}"
-                    aria-expanded="false" aria-controls="${colId}">
-              <div class="d-flex w-100 justify-content-between align-items-center">
-                <div>
-                  <div class="fw-semibold">${s.nombre || s.name || ('Base '+(s.id||''))}</div>
-                  <div class="small text-muted">${
-                    [s.latitud||s.lat, s.longitud||s.lng].filter(Boolean).join(', ')
-                  }</div>
-                </div>
-                <span class="badge bg-secondary">${drivers.length}</span>
-              </div>
-            </button>
-          </h2>
-          <div id="${colId}" class="accordion-collapse collapse" data-bs-parent="#panel-queue">
-            <div class="accordion-body">
-              ${
-                drivers.length
-                  ? `<div class="queue-eco-grid">${
-                      drivers.map(d => `<span class="eco">${toEco(d)}</span>`).join('')
-                    }</div>`
-                  : `<div class="text-muted">Sin unidades en cola.</div>`
-              }
-            </div>
-          </div>
-        `;
-        acc.appendChild(item);
-      });
-    }
+  for (const d of drivers) {
+    const sid = Number(d.stand_id || 0);
+    const did = Number(d.driver_id || d.id || 0);
+    if (!sid || !did) continue;
+
+    if (!driversByStand.has(sid)) driversByStand.set(sid, []);
+    driversByStand.get(sid).push(d);
   }
 
-  // === Vista compacta: chips ===
+  // Orden dentro de base
+  for (const [sid, arr] of driversByStand.entries()) {
+    arr.sort((a,b) =>
+      (Number(a.stand_position ?? 999999) - Number(b.stand_position ?? 999999)) ||
+      String(a.vehicle_economico ?? '').localeCompare(String(b.vehicle_economico ?? '')) ||
+      (Number(a.driver_id || a.id) - Number(b.driver_id || b.id))
+    );
+  }
+
+  const countForStand = (sid, sObj) => {
+    const fromDrivers = driversByStand.get(sid);
+    if (fromDrivers) return fromDrivers.length;
+    return Number(sObj?.queue_count) || 0; // fallback
+  };
+
+  // --- Logs útiles ---
+  console.debug('[renderQueues] stands=', list.length, 'drivers=', drivers.length, 'standsWithDrivers=', driversByStand.size);
+
+  // ============================================================
+  // Overlay grande: acordeón (PERSISTE abiertos)
+  // ============================================================
+  if (acc) {
+    // 0) capturar stands actualmente abiertos ANTES de destruir HTML
+    const prevOpen = new Set();
+    acc.querySelectorAll('.accordion-collapse.show').forEach(el => {
+      const id = el.id || '';
+      const m = id.match(/^qcol-(.+)$/);
+      if (m && m[1]) prevOpen.add(String(m[1]));
+    });
+
+    // también guarda el último stand abierto por chip (si existe)
+    if (!window._queuesUI) window._queuesUI = {};
+    const lastOpen = window._queuesUI.lastOpenStandId;
+    if (lastOpen) prevOpen.add(String(lastOpen));
+
+   // NO borrar todo el HTML: evitamos parpadeo
+if (!list.length){
+  // si no hay stands, sí podemos limpiar
+  acc.innerHTML = `<div class="text-muted small p-2">Sin información de colas.</div>`;
+} else {
+  // 1) guardar abiertos actuales
+  const prevOpen = new Set();
+  acc.querySelectorAll('.accordion-collapse.show').forEach(el => {
+    const m = (el.id || '').match(/^qcol-(.+)$/);
+    if (m && m[1]) prevOpen.add(String(m[1]));
+  });
+
+  window._queuesUI = window._queuesUI || {};
+  if (window._queuesUI.lastOpenStandId) prevOpen.add(String(window._queuesUI.lastOpenStandId));
+
+  // 2) upsert sin duplicar ni parpadear
+  upsertQueuesAccordion(acc, list, driversByStand, { esc, standName, standId });
+
+  // 3) reabrir los que estaban abiertos
+  requestAnimationFrame(() => {
+    prevOpen.forEach((sid) => {
+      const col = document.getElementById(`qcol-${sid}`);
+      if (!col) return;
+      const inst = bootstrap.Collapse.getOrCreateInstance(col, { toggle: false });
+      inst.show();
+    });
+  });
+}
+
+  }
+
+  // ============================================================
+  // Vista compacta: chips (abre overlay + abre stand)
+  // ============================================================
   if (compact){
     if (!list.length){
       compact.innerHTML = `<span class="text-muted small">Sin información de colas.</span>`;
     } else {
-      const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({
-        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-      }[m]));
-
       compact.innerHTML = list.map((s, idx) => {
-        const standId = s.id || s.stand_id || idx;
-        const name    = s.nombre || s.name || ('Base '+(s.id||'')); 
-        const count   = Array.isArray(s.drivers) ? s.drivers.length : 0;
+        const sid   = standId(s, idx);
+        const name  = standName(s, idx);
+        const count = countForStand(sid, s);
 
         return `
           <button type="button"
                   class="queues-compact-chip"
-                  data-stand-id="${standId}">
+                  data-stand-id="${sid}">
             <strong>${esc(name)}</strong>
             <span class="badge bg-light text-secondary border ms-1">${count}</span>
           </button>
         `;
       }).join('');
 
-      // Click en chip → abre overlay y despliega ese paradero
       compact.querySelectorAll('.queues-compact-chip').forEach(btn => {
         btn.addEventListener('click', () => {
-          const standId = btn.getAttribute('data-stand-id');
-          if (window.openQueuesOverlay) window.openQueuesOverlay();
-          if (!standId) return;
+          const sid = btn.getAttribute('data-stand-id');
+          if (!sid) return;
 
-          const col = document.getElementById(`qcol-${standId}`);
+          if (!window._queuesUI) window._queuesUI = {};
+          window._queuesUI.lastOpenStandId = String(sid);
+
+          if (window.openQueuesOverlay) window.openQueuesOverlay();
+
+          const col = document.getElementById(`qcol-${sid}`);
           if (col) {
-            const bsCollapse = bootstrap.Collapse.getOrCreateInstance(col, { toggle: false });
-            bsCollapse.show();
-            // scroll suave dentro del overlay
+            const inst = bootstrap.Collapse.getOrCreateInstance(col, { toggle: false });
+            inst.show();
             col.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }
         });
@@ -3770,7 +4048,6 @@ function renderQueues(queues){
     }
   }
 }
-
 
 
 function resetWhenNow(){
@@ -4211,7 +4488,10 @@ function normalizeScheduledValue(v){
 
 let isCreatingRide = false;
 
-qs('#btnCreate')?.addEventListener('click', async () => {
+qs('#btnCreate')?.addEventListener('click', async (e) => {
+  // ✅ Evitar submit del form (importantísimo)
+  try { e.preventDefault(); e.stopPropagation(); } catch {}
+
   // 🔒 Evitar doble click mientras está en proceso
   if (isCreatingRide) {
     console.debug('⏳ Ya hay un create en curso, ignorando click doble');
@@ -4226,6 +4506,19 @@ qs('#btnCreate')?.addEventListener('click', async () => {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creando...';
   }
 
+  // helper: avisos consistentes
+  const warn = (msg) => {
+    try {
+      if (window.Swal?.fire) {
+        Swal.fire({ icon: 'warning', title: 'Falta tarifa', text: msg });
+      } else {
+        alert(msg);
+      }
+    } catch {
+      alert(msg);
+    }
+  };
+
   // ¿programado?
   let scheduled_for = null;
   if (qs('#when-later')?.checked) {
@@ -4235,9 +4528,46 @@ qs('#btnCreate')?.addEventListener('click', async () => {
     }
   }
 
-  // tarifa tomada del input (permitimos override manual)
-  const fareInput = Number(qs('#fareAmount')?.value);
-  const quoted_amount = Number.isFinite(fareInput) ? Math.round(fareInput) : null;
+  // ========= TARIFA / QUOTE =========
+  // 1) intentar leer del input
+  const fareRaw = (qs('#fareAmount')?.value ?? '').toString().trim();
+  const fareInput = fareRaw !== '' ? Number(fareRaw) : NaN;
+
+  // 2) fallback a __lastQuote si existe
+  const q = (typeof __lastQuote !== 'undefined') ? (__lastQuote || null) : null;
+  const qAmt = q && (q.quoted_amount ?? q.amount ?? q.total ?? q.fare ?? null);
+
+  // 3) escoger
+  let quoted_amount = null;
+  if (Number.isFinite(fareInput)) {
+    quoted_amount = Math.round(fareInput);
+  } else if (Number.isFinite(Number(qAmt))) {
+    quoted_amount = Math.round(Number(qAmt));
+    // opcional: reflejar sugerido en UI para que se vea qué se enviará
+    try {
+      const el = qs('#fareAmount');
+      if (el && (!el.value || String(el.value).trim() === '')) {
+        el.value = String(quoted_amount);
+      }
+    } catch {}
+  }
+
+  // ✅ VALIDACIÓN: no permitir rides en 0 o sin tarifa
+  if (!Number.isFinite(quoted_amount) || quoted_amount <= 0) {
+    // dispara quote si aplica (no bloquea UI, solo intenta)
+    try { if (typeof autoQuoteIfReady === 'function') autoQuoteIfReady(); } catch {}
+
+    warn('Calcula o captura una tarifa antes de crear el viaje (no se permiten $0).');
+
+    // 🔓 Rehabilitar botón y salir
+    if (btn) {
+      btn.disabled = false;
+      if (originalHtml !== null) btn.innerHTML = originalHtml;
+    }
+    isCreatingRide = false;
+    return;
+  }
+  // =================================
 
   // si tienes un checkbox para fijar tarifa manual (#fareFixed o #fareLock), lo usamos
   const userfixed = !!(qs('#fareFixed')?.checked || qs('#fareLock')?.checked);
@@ -4263,9 +4593,10 @@ qs('#btnCreate')?.addEventListener('click', async () => {
     quoted_amount,
     ...(userfixed ? { userfixed: true } : {}),
 
-    distance_m:     (typeof __lastQuote !== 'undefined' ? (__lastQuote?.distance_m ?? null) : null),
-    duration_s:     (typeof __lastQuote !== 'undefined' ? (__lastQuote?.duration_s ?? null) : null),
-    route_polyline: (typeof __lastQuote !== 'undefined' ? (__lastQuote?.polyline   ?? null) : null),
+    // ✅ snapshot de quote (si existe)
+    distance_m:     q ? (q.distance_m ?? null) : null,
+    duration_s:     q ? (q.duration_s ?? null) : null,
+    route_polyline: q ? (q.polyline   ?? null) : null,
 
     requested_channel: 'dispatch',
   };
@@ -4290,8 +4621,7 @@ qs('#btnCreate')?.addEventListener('click', async () => {
 
   // Validación mínima de origen
   if (!Number.isFinite(payload.origin_lat) || !Number.isFinite(payload.origin_lng)) {
-    alert('Indica un origen válido.');
-    // 🔓 Rehabilitar botón si falla validación
+    warn('Indica un origen válido.');
     if (btn) {
       btn.disabled = false;
       if (originalHtml !== null) btn.innerHTML = originalHtml;
@@ -4322,7 +4652,7 @@ qs('#btnCreate')?.addEventListener('click', async () => {
 
     // ===== Limpiar UI (incluye stops) =====
     try {
-      ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount','pax',].forEach(id=>{
+      ['inFrom','inTo','pass-name','pass-phone','pass-account','ride-notes','fareAmount','pax'].forEach(id=>{
         const el = qs('#'+id); if (el) el.value='';
       });
       ['fromLat','fromLng','toLat','toLng'].forEach(id=>{
@@ -4333,6 +4663,7 @@ qs('#btnCreate')?.addEventListener('click', async () => {
       if (toMarker){   toMarker.remove();   toMarker=null;  }
       if (stop1Marker) { stop1Marker.remove(); stop1Marker = null; }
       if (stop2Marker) { stop2Marker.remove(); stop2Marker = null; }
+
       const s1Lat = qs('#stop1Lat'), s1Lng = qs('#stop1Lng'), s2Lat = qs('#stop2Lat'), s2Lng = qs('#stop2Lng');
       const inS1 = qs('#inStop1'), inS2 = qs('#inStop2');
       const row1 = qs('#stop1Row'), row2 = qs('#stop2Row');
@@ -4341,10 +4672,10 @@ qs('#btnCreate')?.addEventListener('click', async () => {
       if (inS1) inS1.value='';   if (inS2) inS2.value='';
       if (row1) row1.style.display='none';
       if (row2) row2.style.display='none';
+
       const rs = document.getElementById('routeSummary');
       if (rs) rs.innerText = 'Ruta: — · Zona: — · Cuando: ahora';
       resetWhenNow?.();
-
     } catch {}
 
     try {
@@ -4371,7 +4702,6 @@ qs('#btnCreate')?.addEventListener('click', async () => {
     console.error(e);
     alert('No se pudo crear el viaje: ' + (e?.message || e));
   } finally {
-    // 🔓 Siempre reactivamos el botón, haya éxito o error
     isCreatingRide = false;
     if (btn) {
       btn.disabled = false;
@@ -4552,6 +4882,49 @@ window.getCandidatesFor ||= function _noopGetCandidatesFor() { return []; };
 // driverPins: Map<driver_id, { marker, type, vstate }>
 const driverPins = new Map();
 
+// ============================================================
+// Focus driver (Leaflet) - GLOBAL, NO depende de _ctxMap()
+// ============================================================
+window.focusDriverById = function focusDriverById(driverId){
+  const id = Number(driverId);
+  if (!id) {
+    console.warn('[focusDriverById] invalid id:', driverId);
+    return;
+  }
+
+  // Leaflet map (variable del módulo)
+  if (!map || typeof map.flyTo !== 'function') {
+    console.warn('[focusDriverById] map not ready yet', { map });
+    return;
+  }
+
+  // 1) Pin (driverPins guarda { marker, ... })
+  const pin = driverPins.get(id) || driverPins.get(String(id));
+  const marker = pin?.marker || pin;
+
+  if (marker && typeof marker.getLatLng === 'function') {
+    const ll = marker.getLatLng();
+    console.debug('[focusDriverById] via marker', { id, ll });
+
+    map.flyTo(ll, Math.max(map.getZoom(), 16), { animate: true, duration: 0.6 });
+
+    try { marker.openTooltip?.(); } catch {}
+    try { marker.openPopup?.(); } catch {}
+    return;
+  }
+
+  // 2) Fallback: cache
+  const d = (window._lastDrivers || []).find(x => Number(x.id) === id || Number(x.driver_id) === id);
+  if (d && Number.isFinite(Number(d.lat)) && Number.isFinite(Number(d.lng))) {
+    console.debug('[focusDriverById] via cache', { id, lat: d.lat, lng: d.lng });
+    map.flyTo([Number(d.lat), Number(d.lng)], Math.max(map.getZoom(), 16), { animate: true, duration: 0.6 });
+    return;
+  }
+
+  console.warn('[focusDriverById] driver not found in pins/cache', { id, pin });
+};
+
+
 function upsertDriver(d) {
   const id  = d.id || d.driver_id;
   const lat = Number(d.lat ?? d.last_lat);
@@ -4566,7 +4939,7 @@ function upsertDriver(d) {
 
   const icon    = makeCarIcon(type, vstate);
   const zScale  = scaleForZoom(map ? map.getZoom() : DEFAULT_ZOOM);
-  const bearing = Number(d.bearing ?? d.heading_deg ?? 0);
+  const bearing = 0;
 
   const econ  = d.vehicle_economico || '';
   const plate = d.vehicle_plate || '';
@@ -4666,35 +5039,336 @@ function removeDriverById(id) {
 function onSelfLogout(driverId) {
   removeDriverById(driverId);
 }
-
-function renderDrivers(list){
+function renderDrivers(list) {
+  // capas / caches
   layerDrivers.clearLayers();
   driverPins.clear();
 
+  const el = document.getElementById('driversList');
+  if (!el) return;
+
   const now = Date.now();
   const FRESH_MS = 120 * 1000;
+  const arr = Array.isArray(list) ? list : [];
 
-  (Array.isArray(list) ? list : []).forEach(d=>{
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
+
+  // Determinar si el conductor es "activo" para poder enfocarlo
+  const isDriverFocusable = (d) => {
+    const drvSt = String(d.driver_status || '').toLowerCase();
+    const rideSt = String(d.ride_status || '').toLowerCase();
+    
+    // Solo conductores activos y con ubicación válida pueden ser enfocados
+    if (drvSt === 'offline') return false;
+    
+    const hasValidLocation = Number.isFinite(Number(d.lat)) && Number.isFinite(Number(d.lng));
+    if (!hasValidLocation) return false;
+    
+    // Verificar que las coordenadas sean razonables (no en medio del océano)
+    const lat = Number(d.lat);
+    const lng = Number(d.lng);
+    
+    // Coordenadas válidas deberían estar dentro de rangos razonables
+    // Esto previene que nos mande a África (coordenadas 0,0 o fuera de rango)
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return false;
+    
+    // Opcional: Verificar que esté dentro del área de cobertura del tenant
+    const tenantLat = window.ccTenant?.map?.lat || 19.1738;
+    const tenantLng = window.ccTenant?.map?.lng || -96.1342;
+    const radiusKm = window.ccTenant?.map?.radius_km || 50;
+    
+    // Calcular distancia (simplificado)
+    const distance = Math.sqrt(
+      Math.pow(lat - tenantLat, 2) + Math.pow(lng - tenantLng, 2)
+    ) * 111; // Aproximadamente 111km por grado
+    
+    if (distance > (radiusKm * 2)) return false; // Duplicar radio para margen
+    
+    return true;
+  };
+
+  const rideLabel = (rideSt) => {
+    switch ((rideSt || '').toLowerCase()) {
+      case 'on_board':
+      case 'onboard': return 'Viaje';
+      case 'boarding': return 'Abordando';
+      case 'en_route':
+      case 'enroute': return 'En ruta';
+      case 'arrived': return 'Llegó';
+      case 'accepted': return 'Aceptado';
+      case 'assigned': return 'Asignado';
+      case 'offered': return 'Oferta';
+      case 'requested': return 'Solicitado';
+      case 'scheduled': return 'Programado';
+      default: return 'Libre';
+    }
+  };
+
+  // Procesar conductores
+  const visible = [];
+  for (const d of arr) {
     const hasLL = Number.isFinite(Number(d.lat)) && Number.isFinite(Number(d.lng));
-    if (!hasLL) return; // sin ubicación, no se puede dibujar
+    if (!hasLL) continue;
 
     const t = d.reported_at ? new Date(d.reported_at).getTime() : 0;
-    const isFresh = t && (now - t) <= FRESH_MS;
+    const isFresh = !!(t && (now - t) <= FRESH_MS);
 
-    const drvSt  = String(d.driver_status || '').toLowerCase();
-    const rideSt = String(d.ride_status   || '').toLowerCase();
+    const drvSt = String(d.driver_status || '').toLowerCase();
+    const rideSt = String(d.ride_status || '').toLowerCase();
+const standStatus = String(d.stand_status || '').toLowerCase();
+const isStandActive = (standStatus === 'en_cola' || standStatus === 'saltado');
+    const hasActiveRide = [
+      'requested', 'scheduled', 'offered', 'accepted', 'assigned',
+      'en_route', 'enroute', 'arrived', 'onboard', 'on_board', 'boarding'
+    ].includes(rideSt);
 
-    const hasActiveRide = ['requested','scheduled','offered','accepted','assigned','en_route','arrived','onboard','on_board','boarding'].includes(rideSt);
-
-    // Regla: pintamos si es fresh, o si está offline (para mostrar gris),
-    // o si tiene ride activo (no perderlo por ping “viejo”)
     if (isFresh || drvSt === 'offline' || hasActiveRide) {
       upsertDriver(d);
+      visible.push({
+        ...d,
+        _isFresh: isFresh,
+        _drvSt: drvSt,
+        _rideSt: rideSt,
+        _hasActiveRide: hasActiveRide,
+        _isInStand: isStandActive && Number(d.stand_id || 0) > 0,
+        _isFocusable: isDriverFocusable(d)
+      });
     }
-    // Si quieres que los NO fresh/NO offline/NO ride activo se oculten, no hagas nada aquí.
+  }
+
+  // Actualizar badge del acordeón
+  const badge = document.getElementById('driversCountBadge');
+  if (badge) {
+    badge.textContent = visible.length;
+  }
+
+  // Separar en grupos
+  const inStand = visible.filter(d => d._isInStand);
+  const outStand = visible.filter(d => !d._isInStand);
+
+  // Ordenar
+  inStand.sort((a, b) => (Number(a.stand_id) - Number(b.stand_id)) || (a.vehicle_economico || '').localeCompare(b.vehicle_economico || ''));
+  outStand.sort((a, b) => (a.vehicle_economico || '').localeCompare(b.vehicle_economico || ''));
+
+  // Función para crear tarjeta compacta
+  const createCompactCard = (d, inBase) => {
+    const id = Number(d.driver_id || d.id);
+    const eco = d.vehicle_economico || '-';
+    const name = d.name ? (d.name.split(' ')[0] || 'Driver') : 'Driver';
+    const ride = rideLabel(d._rideSt);
+    
+    // Determinar estado visual
+    let statusDot = 'status-offline';
+    let statusText = 'Offline';
+    let indicatorClass = '';
+    let indicatorText = '';
+    
+    if (d._drvSt === 'offline') {
+      statusDot = 'status-offline';
+      statusText = 'Offline';
+    } else if (!d._isFresh) {
+      statusDot = 'status-inactive';
+      statusText = 'Inactivo';
+    } else if (d._hasActiveRide) {
+      statusDot = 'status-busy';
+      statusText = ride;
+      indicatorClass = 'on-trip';
+      indicatorText = ride;
+    } else if (d.shift_open) {
+      statusDot = 'status-online';
+      statusText = 'Disponible';
+      indicatorClass = 'available';
+      indicatorText = 'Disp';
+    } else {
+      statusDot = 'status-inactive';
+      statusText = 'Sin turno';
+    }
+    
+    // Indicador de base
+    if (inBase) {
+      indicatorClass = 'in-base';
+      indicatorText = 'Base';
+    }
+
+    // Determinar si el botón debe estar habilitado
+    const isFocusable = d._isFocusable && d._drvSt !== 'offline' && d._isFresh;
+    const btnClass = isFocusable ? 'btn btn-sm btn-outline-primary btn-focus-driver-compact' : 'btn btn-sm btn-outline-secondary btn-focus-driver-compact';
+    const btnDisabled = !isFocusable ? 'disabled' : '';
+    const btnText = isFocusable ? 'Ver' : 'N/A';
+
+    return `
+      <div class="driver-card-compact" data-driver-id="${id}">
+        <div class="driver-info-compact">
+          <div class="driver-economico">${esc(eco)}</div>
+          <div class="driver-meta">
+            <span class="driver-status-dot ${statusDot}"></span>
+            <span>${esc(name)}</span>
+            ${indicatorText ? `<span class="indicator-badge ${indicatorClass}">${indicatorText}</span>` : ''}
+          </div>
+        </div>
+        <button class="${btnClass} ${btnDisabled}" ${btnDisabled} data-driver-id="${id}">
+          ${btnText}
+        </button>
+      </div>
+    `;
+    if (window.__applyDriversAccordionState) {
+    window.__applyDriversAccordionState();
+  }
+  };
+
+  // Construir HTML
+  let html = '';
+  
+  if (inStand.length > 0) {
+    html += `<div class="drivers-group-title">En Base (${inStand.length})</div>`;
+    html += inStand.map(d => createCompactCard(d, true)).join('');
+  }
+  
+  if (outStand.length > 0) {
+    if (inStand.length > 0) {
+      html += `<div class="drivers-group-title">En Ruta (${outStand.length})</div>`;
+    }
+    html += outStand.map(d => createCompactCard(d, false)).join('');
+  }
+  
+  if (visible.length === 0) {
+    html = '<div class="text-center text-muted py-3 small">No hay conductores activos</div>';
+  }
+
+  el.innerHTML = html;
+
+  // Adjuntar eventos a los botones
+  el.querySelectorAll('.btn-focus-driver-compact:not([disabled])').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const driverId = Number(btn.getAttribute('data-driver-id') || 0);
+      if (!driverId) return;
+      
+      // Buscar el conductor en la lista
+      const driver = visible.find(d => Number(d.driver_id || d.id) === driverId);
+      if (!driver || !driver._isFocusable) return;
+      
+      // LIMITAR EL ZOOM DEL MAPA para evitar que se vaya lejos
+      focusDriverByIdSafe(driverId);
+    });
   });
+
+  // También hacer clickeable toda la tarjeta (solo si es focusable)
+  el.querySelectorAll('.driver-card-compact').forEach(card => {
+    const driverId = Number(card.getAttribute('data-driver-id') || 0);
+    const driver = visible.find(d => Number(d.driver_id || d.id) === driverId);
+    
+    if (driver && driver._isFocusable) {
+      card.style.cursor = 'pointer';
+      card.addEventListener('click', (e) => {
+        if (!e.target.closest('.btn-focus-driver-compact')) {
+          focusDriverByIdSafe(driverId);
+        }
+      });
+    } else {
+      card.style.cursor = 'default';
+    }
+  });
+
+  console.debug('[renderDrivers] total=', arr.length, 'visible=', visible.length);
 }
 
+// ===== FUNCIÓN SEGURA PARA ENFOCAR CONDUCTORES =====
+function focusDriverByIdSafe(driverId) {
+  if (!window.focusDriverById) {
+    console.error('focusDriverById no está definido');
+    return;
+  }
+
+  if (window.map) {
+    // límites de zoom
+    map.setMaxZoom(18);
+    map.setMinZoom(10);
+
+    // Si tienes bounds globales, úsalos; si no, NO llames setMaxBounds con vars inexistentes
+    const b = window.__MAP_MAX_BOUNDS__; // e.g. [[latMin,lngMin],[latMax,lngMax]]
+    if (Array.isArray(b) && b.length === 2) {
+      map.setMaxBounds(b);
+    } else {
+      // fallback: no limitar por bounds (o usa el bounds actual)
+      // map.setMaxBounds(map.getBounds()); // esto puede ser mala idea si el bounds actual es pequeño
+      map.setMaxBounds(null); // Leaflet soporta "null" en algunas versiones; si no, omite la línea
+    }
+  }
+
+  window.focusDriverById(driverId);
+
+  setTimeout(() => {
+    if (!window.map) return;
+    const z = map.getZoom();
+    if (z > 18) map.setZoom(18);
+    else if (z < 12) map.setZoom(12);
+  }, 500);
+}
+// Exponer para otros módulos (chat_inbox.js)
+window.focusDriverByIdSafe = focusDriverByIdSafe;
+// si existe como function focusDriverById(...) dentro del módulo:
+window.focusDriverById = window.focusDriverById || focusDriverById;
+
+
+
+// ===== CONTROL DEL ACORDEÓN =====
+(function() {
+  const header = document.getElementById('driversAccordionHeader');
+  const body = document.getElementById('driversAccordionBody');
+  const chevron = document.getElementById('driversChevron');
+  
+  if (!header || !body || !chevron) return;
+  
+  // Estado inicial
+  const isOpen = localStorage.getItem('driversAccordionOpen') === 'true';
+  if (isOpen) {
+    body.style.display = 'block';
+    chevron.setAttribute('data-feather', 'chevron-up');
+    body.classList.add('show');
+    
+    // Forzar actualización de iconos
+    setTimeout(() => {
+      if (typeof feather !== 'undefined') {
+        feather.replace();
+      }
+    }, 100);
+  }
+  
+  header.addEventListener('click', function() {
+    const isHidden = body.style.display === 'none';
+    
+    if (isHidden) {
+      body.style.display = 'block';
+      setTimeout(() => body.classList.add('show'), 10);
+      chevron.setAttribute('data-feather', 'chevron-up');
+      localStorage.setItem('driversAccordionOpen', 'true');
+      
+      // Cargar conductores cuando se abre
+      if (typeof refreshDrivers === 'function') {
+        setTimeout(() => refreshDrivers(), 200);
+      }
+    } else {
+      body.classList.remove('show');
+      setTimeout(() => {
+        body.style.display = 'none';
+      }, 150);
+      chevron.setAttribute('data-feather', 'chevron-down');
+      localStorage.setItem('driversAccordionOpen', 'false');
+    }
+    
+    // Actualizar iconos
+    setTimeout(() => {
+      if (typeof feather !== 'undefined') {
+        feather.replace();
+      }
+    }, 50);
+  });
+})();
 
 
 

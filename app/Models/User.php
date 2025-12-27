@@ -27,6 +27,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'password',
         'tenant_id',
         'is_admin',
+        'is_dispatcher',
         'is_sysadmin',
     ];
 
@@ -50,6 +51,7 @@ class User extends Authenticatable implements MustVerifyEmail
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+             'is_dispatcher' => 'boolean',
             'is_admin' => 'boolean',
             'is_sysadmin'       => 'boolean',
         ];
@@ -58,6 +60,16 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return $this->belongsTo(Tenant::class);
     }
+
+
+    // App\Models\User.php
+
+public function getIsadminAttribute()
+{
+    // compatibilidad hacia atrás: $user->isadmin
+    return (int) ($this->attributes['is_admin'] ?? 0);
+}
+
 
      public function driver() { return $this->hasOne(\App\Models\Driver::class); }
 }

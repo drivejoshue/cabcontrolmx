@@ -20,10 +20,12 @@ class TaxiStandService
                 $q->on('s.id', '=', 'ts.sector_id')
                   ->where('s.tenant_id', '=', $tenantId);
             })
-            ->leftJoin('taxi_stand_queue as q', function ($q) use ($tenantId) {
-                $q->on('q.stand_id', '=', 'ts.id')
-                  ->where('q.tenant_id', '=', $tenantId)
-                  ->where('q.status', '=', 'en_cola');
+         ->leftJoin('taxi_stand_queue as q', function ($join) use ($tenantId) {
+    $join->on('q.stand_id', '=', 'ts.id')
+         ->where('q.tenant_id', '=', $tenantId)
+         ->whereIn('q.status', ['en_cola','saltado']); // si quieres contar ambos
+
+
             })
             ->where('ts.tenant_id', $tenantId)
             ->where('ts.activo', 1)
@@ -136,18 +138,19 @@ class TaxiStandService
     }
 
     // 🔴 IMPORTANTE: Eliminar registros 'salio' antes de intentar unirse
-    DB::table('taxi_stand_queue')
-        ->where('tenant_id', $tenantId)
-        ->where('stand_id', $standId)
-        ->where('driver_id', $driverId)
-        ->where('status', 'salio')
-        ->delete();
+ DB::table('taxi_stand_queue')
+  ->where('tenant_id', $tenantId)
+  ->where('stand_id', $standId)
+  ->where('driver_id', $driverId)
+  ->whereIn('status', ['salio','asignado'])
+  ->delete();
 
     // Sales de cualquier otra cola donde estuvieras
     DB::table('taxi_stand_queue')
         ->where('tenant_id', $tenantId)
         ->where('driver_id', $driverId)
-        ->where('status', 'en_cola')
+      ->whereIn('q.status', ['en_cola','saltado'])     // <-- aquí
+
         ->update(['status' => 'salio']);
 
     // Entrar a esta base (SP)
@@ -230,12 +233,13 @@ public static function leaveStand(int $tenantId, int $driverId, int $standId, st
     ): ?array {
         // Detectar stand actual si no viene
         if (!$standId) {
-            $standId = DB::table('taxi_stand_queue')
-                ->where('tenant_id', $tenantId)
-                ->where('driver_id', $driverId)
-                ->where('status', 'en_cola')
-                ->orderByDesc('id')
-                ->value('stand_id');
+           $standId = DB::table('taxi_stand_queue')
+    ->where('tenant_id', $tenantId)
+    ->where('driver_id', $driverId)
+    ->whereIn('status', ['en_cola','saltado'])   // <-- aquí
+    ->orderByDesc('id')
+    ->value('stand_id');
+
         }
 
         if (!$standId) {
@@ -316,12 +320,11 @@ public static function leaveStand(int $tenantId, int $driverId, int $standId, st
         $autoLeave = self::autoLeaveIfFar($tenantId, $driverId, $standId);
 
         if ($autoLeave && $autoLeave['reason'] === 'out_of_radius') {
-            $queueCount = DB::table('taxi_stand_queue')
-                ->where('tenant_id', $tenantId)
-                ->where('stand_id', $autoLeave['stand_id'])
-                ->where('status', 'en_cola')
-                ->count();
-
+           $queueCount = DB::table('taxi_stand_queue')
+    ->where('tenant_id', $tenantId)
+    ->where('stand_id', $autoLeave['stand_id'])
+    ->whereIn('status', ['en_cola','saltado'])   // <-- aquí
+    ->count();
             return [
                 'ok'          => true,
                 'auto_left'   => true,
@@ -340,12 +343,13 @@ public static function leaveStand(int $tenantId, int $driverId, int $standId, st
 
         // 2) Si no nos salimos, usamos standId detectado (puede venir de la cola)
         if (!$standId) {
-            $standId = DB::table('taxi_stand_queue')
-                ->where('tenant_id', $tenantId)
-                ->where('driver_id', $driverId)
-                ->where('status', 'en_cola')
-                ->orderByDesc('id')
-                ->value('stand_id');
+           $standId = DB::table('taxi_stand_queue')
+    ->where('tenant_id', $tenantId)
+    ->where('driver_id', $driverId)
+    ->whereIn('status', ['en_cola','saltado'])   // <-- aquí
+    ->orderByDesc('id')
+    ->value('stand_id');
+
         }
 
         if (!$standId) {
@@ -397,7 +401,8 @@ public static function leaveStand(int $tenantId, int $driverId, int $standId, st
             })
             ->where('q.tenant_id', $tenantId)
             ->where('q.stand_id', $standId)
-            ->where('q.status', 'en_cola')
+           ->whereIn('q.status', ['en_cola','saltado'])     // <-- aquí
+
             ->orderBy('q.position')
             ->get([
                 'q.driver_id',

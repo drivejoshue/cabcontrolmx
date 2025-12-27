@@ -1,4 +1,4 @@
-@extends('layouts.dispatch')
+ @extends('layouts.dispatch')
 @section('title','Dispatch')
 
 @section('content')
@@ -156,7 +156,7 @@
       <button class="btn btn-outline-primary btn-square" id="btnQuote"><i data-feather="dollar-sign"></i> Cotizar</button>
     </div>
     <div class="col-4 d-grid">
-      <button class="btn btn-success btn-square" id="btnCreate"><i data-feather="check-circle"></i> Crear</button>
+      <button type="button" class="btn btn-success btn-square" id="btnCreate"><i data-feather="check-circle"></i> Crear</button>
     </div>
   </div>
 
@@ -276,6 +276,21 @@
 
   </div>
 
+{{-- Acordeón compacto para conductores --}}
+<div class="drivers-accordion mb-3">
+  <div class="drivers-accordion-header" id="driversAccordionHeader">
+    <div class="d-flex align-items-center gap-2">
+      <i data-feather="users" class="feather-sm"></i>
+      <h6 class="mb-0">Conductores</h6>
+      <span class="badge bg-primary" id="driversCountBadge">0</span>
+    </div>
+    <i data-feather="chevron-down" id="driversChevron" class="feather-sm"></i>
+  </div>
+  <div class="drivers-accordion-body" id="driversAccordionBody" style="display: none;">
+    <div id="driversList" class="compact-drivers-list"></div>
+  </div>
+</div>
+
   {{-- VIAJES ACTIVOS con pestañas (igual que ya lo tienes) --}}
   <div class="d-flex align-items-center justify-content-between mb-2 mt-3">
     <h6 class="mb-0">Viajes activos</h6>
@@ -328,7 +343,7 @@
 
 </div>
 @endsection
-
+@vite('resources/js/app.js')
 @push('styles')
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
@@ -336,6 +351,345 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/plugins/confirmDate/confirmDate.min.css">
 
 <style>
+
+  .queue-eco-grid{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+}
+
+.eco-btn{
+  appearance:none;
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06);
+  color: inherit;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  user-select:none;
+}
+
+.eco-btn:hover{
+  background: rgba(255,255,255,.10);
+}
+
+[data-theme="light"] .eco-btn{
+  border-color: rgba(0,0,0,.12);
+  background: rgba(0,0,0,.04);
+}
+[data-theme="light"] .eco-btn:hover{
+  background: rgba(0,0,0,.06);
+}
+
+/* ===== ACORDEÓN COMPACTO ===== */
+.drivers-accordion {
+  border-radius: 8px;
+  border: 1px solid var(--bs-border-color);
+  overflow: hidden;
+  background: var(--bs-body-bg);
+  transition: border-color 0.2s ease;
+}
+
+.drivers-accordion-header {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bs-tertiary-bg);
+  border-bottom: 1px solid transparent;
+  transition: background-color 0.2s ease;
+}
+
+.drivers-accordion-header:hover {
+  background: var(--bs-secondary-bg);
+}
+
+.drivers-accordion-header h6 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--bs-heading-color);
+}
+
+.drivers-accordion-body {
+  padding: 0.5rem;
+  background: var(--bs-body-bg);
+  max-height: 400px;
+  overflow-y: auto;
+  border-top: 1px solid var(--bs-border-color);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* ===== LISTA COMPACTA DE CONDUCTORES ===== */
+.compact-drivers-list {
+  font-size: 0.8rem;
+}
+
+.driver-card-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--bs-border-color);
+  margin-bottom: 0.3rem;
+  background: var(--bs-card-bg, var(--bs-body-bg));
+  transition: all 0.15s ease;
+}
+
+.driver-card-compact:hover {
+  border-color: var(--bs-border-color-translucent);
+  background: var(--bs-secondary-bg);
+}
+
+.driver-card-compact:last-child {
+  margin-bottom: 0;
+}
+
+.driver-info-compact {
+  flex: 1;
+  min-width: 0;
+}
+
+.driver-economico {
+  font-weight: 600;
+  color: var(--bs-emphasis-color);
+  font-size: 0.85rem;
+  margin-bottom: 0.1rem;
+}
+
+.driver-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--bs-secondary-color);
+  font-size: 0.75rem;
+}
+
+/* ===== STATUS DOTS ===== */
+.driver-status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 0.25rem;
+}
+
+/* Light theme status dots */
+.status-online { background-color: #28a745; }
+.status-busy { background-color: #fd7e14; }
+.status-offline { background-color: #6c757d; }
+.status-inactive { background-color: #ffc107; }
+
+/* Dark theme status dots */
+html[data-theme="dark"] .status-online { background-color: #20c997; }
+html[data-theme="dark"] .status-busy { background-color: #ff922b; }
+html[data-theme="dark"] .status-offline { background-color: #adb5bd; }
+html[data-theme="dark"] .status-inactive { background-color: #ffd43b; }
+
+/* ===== INDICATOR BADGES ===== */
+.indicator-badge {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+/* Light theme badges */
+.indicator-badge.in-base {
+  background: #e7f5ff;
+  color: #0d6efd;
+  border: 1px solid #cfe2ff;
+}
+
+.indicator-badge.on-trip {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeaa7;
+}
+
+.indicator-badge.available {
+  background: #d1e7dd;
+  color: #0f5132;
+  border: 1px solid #badbcc;
+}
+
+/* Dark theme badges */
+html[data-theme="dark"] .indicator-badge.in-base {
+  background: rgba(13, 110, 253, 0.2);
+  color: #6ea8fe;
+  border: 1px solid rgba(13, 110, 253, 0.3);
+}
+
+html[data-theme="dark"] .indicator-badge.on-trip {
+  background: rgba(255, 193, 7, 0.2);
+  color: #ffda6a;
+  border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+html[data-theme="dark"] .indicator-badge.available {
+  background: rgba(25, 135, 84, 0.2);
+  color: #75b798;
+  border: 1px solid rgba(25, 135, 84, 0.3);
+}
+
+/* ===== BOTONES ===== */
+.btn-focus-driver-compact {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.7rem;
+  border-radius: 4px;
+  min-width: 50px;
+  transition: all 0.2s ease;
+}
+
+.btn-focus-driver-compact:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Light theme buttons */
+.btn-focus-driver-compact.btn-outline-primary {
+  border-color: #0d6efd;
+  color: #0d6efd;
+}
+
+.btn-focus-driver-compact.btn-outline-primary:hover:not(:disabled) {
+  background: #0d6efd;
+  color: white;
+}
+
+.btn-focus-driver-compact.btn-outline-secondary {
+  border-color: #6c757d;
+  color: #6c757d;
+}
+
+/* Dark theme buttons */
+html[data-theme="dark"] .btn-focus-driver-compact.btn-outline-primary {
+  border-color: #6ea8fe;
+  color: #6ea8fe;
+}
+
+html[data-theme="dark"] .btn-focus-driver-compact.btn-outline-primary:hover:not(:disabled) {
+  background: #6ea8fe;
+  color: #212529;
+}
+
+html[data-theme="dark"] .btn-focus-driver-compact.btn-outline-secondary {
+  border-color: #adb5bd;
+  color: #adb5bd;
+}
+
+/* ===== GRUPOS DE CONDUCTORES ===== */
+.drivers-group-title {
+  font-size: 0.75rem;
+  color: var(--bs-secondary-color);
+  text-transform: uppercase;
+  font-weight: 600;
+  margin: 0.5rem 0 0.25rem 0;
+  padding-left: 0.25rem;
+  transition: color 0.2s ease;
+}
+
+.drivers-group-title:first-child {
+  margin-top: 0;
+}
+
+/* ===== ESTADO SIN CONDUCTORES ===== */
+.compact-drivers-list .text-center {
+  color: var(--bs-secondary-color);
+}
+
+/* ===== SCROLLBAR ===== */
+.drivers-accordion-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.drivers-accordion-body::-webkit-scrollbar-track {
+  background: var(--bs-secondary-bg);
+  border-radius: 3px;
+}
+
+.drivers-accordion-body::-webkit-scrollbar-thumb {
+  background: var(--bs-border-color);
+  border-radius: 3px;
+}
+
+.drivers-accordion-body::-webkit-scrollbar-thumb:hover {
+  background: var(--bs-border-color-translucent);
+}
+
+/* ===== BADGE DEL HEADER ===== */
+.drivers-accordion-header .badge {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.4rem;
+}
+
+/* ===== ICONOS ===== */
+.drivers-accordion-header i[data-feather] {
+  color: var(--bs-secondary-color);
+  transition: color 0.2s ease;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 768px) {
+  .drivers-accordion {
+    border-radius: 6px;
+  }
+  
+  .driver-card-compact {
+    padding: 0.35rem 0.4rem;
+  }
+  
+  .driver-economico {
+    font-size: 0.8rem;
+  }
+  
+  .driver-meta {
+    font-size: 0.7rem;
+  }
+}
+</style>
+
+<style>
+
+
+body {
+    overflow: hidden !important;
+    height: 100vh;
+}
+
+.dispatch-grid {
+    height: 100vh;
+    overflow: hidden;
+}
+
+.dispatch-left, .dispatch-right {
+    height: 100vh;
+    overflow-y: auto;
+}
+
+.dispatch-map {
+    height: 100vh;
+    overflow: hidden;
+}
+  .queue-eco-grid .eco-btn{
+  border: 1px solid rgba(255,255,255,.15);
+  background: rgba(255,255,255,.06);
+  color: inherit;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1;
+}
+.queue-eco-grid .eco-btn:hover{
+  background: rgba(255,255,255,.12);
+}
+
+
 .driver-bubble {
     display: inline-block;
     padding: 8px 12px;
@@ -740,27 +1094,15 @@ window.__CHAT_SEND_URL__     = "{{ route('api.dispatch.chats.send', ['driverId' 
 console.log('TENANT(view) id=', @json($tenant->id ?? null), 'name=', @json($tenant->name ?? null));
 </script>
 
-<meta name="tenant-id" content="{{ auth()->user()->tenant_id }}">
-
 <script>
-  window.ccTenant = {
-    id:   {{ (int)($tenant->id ?? (auth()->user()->tenant_id ?? 0)) }},
-    name: @json($tenant->name ?? ''),
-    map: {
-      lat: {{ (float)($tenant->latitud ?? 0) }},
-      lng: {{ (float)($tenant->longitud ?? 0) }},
-      zoom: {{ (int)($tenant->map_zoom ?? 14) }},
-      radius_km: {{ (float)($tenant->coverage_radius_km ?? 8) }},
-    },
-    map_icons: {
-      origin:  '/images/origen.png',
-      dest:    '/images/destino.png',
-      stand:   '/images/marker-parqueo5.png',
-      stop:    '/images/stopride.png',
-    }
+  window.ccTenant = window.ccTenant || {};
+  window.ccTenant.map = {
+    lat: {{ (float)($tenant->latitud ?? 19.1738) }},
+    lng: {{ (float)($tenant->longitud ?? -96.1342) }},
+    zoom: {{ (int)($tenant->map_zoom ?? 14) }}, // si no existe, deja 14 fijo
+    radius_km: {{ (float)($tenant->coverage_radius_km ?? 8) }},
   };
 </script>
-
 
 
 
@@ -897,6 +1239,58 @@ window.ccDispatchSettings = {
   auto_dispatch_preview_n: @json($settings->auto_dispatch_preview_n ?? 8),
   auto_dispatch_preview_radius_km: @json($settings->auto_dispatch_preview_radius_km ?? 5)
 };
+// ===== CONTROL CON BOOTSTRAP COLLAPSE =====
+(function() {
+  const accordionBody = document.getElementById('driversAccordionBody');
+  const chevron = document.getElementById('driversChevron');
+  
+  if (!accordionBody || !chevron) return;
+  
+  // Estado inicial desde localStorage
+  const isOpen = localStorage.getItem('driversAccordionOpen') === 'true';
+  
+  // Crear instancia de Collapse de Bootstrap
+  const collapse = new bootstrap.Collapse(accordionBody, {
+    toggle: false
+  });
+  
+  // Aplicar estado inicial
+  if (isOpen) {
+    collapse.show();
+    chevron.setAttribute('data-feather', 'chevron-up');
+    
+    // Cargar conductores
+    if (typeof refreshDrivers === 'function') {
+      setTimeout(() => refreshDrivers(), 200);
+    }
+  }
+  
+  // Actualizar icono cuando cambia el estado
+  accordionBody.addEventListener('shown.bs.collapse', function() {
+    chevron.setAttribute('data-feather', 'chevron-up');
+    feather.replace();
+    localStorage.setItem('driversAccordionOpen', 'true');
+    
+    // Cargar conductores al abrir
+    if (typeof refreshDrivers === 'function') {
+      setTimeout(() => refreshDrivers(), 100);
+    }
+  });
+  
+  accordionBody.addEventListener('hidden.bs.collapse', function() {
+    chevron.setAttribute('data-feather', 'chevron-down');
+    feather.replace();
+    localStorage.setItem('driversAccordionOpen', 'false');
+  });
+  
+  // Actualizar iconos iniciales
+  setTimeout(() => {
+    if (typeof feather !== 'undefined') {
+      feather.replace();
+    }
+  }, 100);
+})();
+
 </script>
 <script>
 (function(){
@@ -943,5 +1337,7 @@ window.ccDispatchSettings = {
 </script>
 
 {{-- Tu JS de la página (carga todo, incluido Google dinámico) --}}
+
 @vite(['resources/js/pages/dispatch.js'])
+
 @endpush

@@ -25,8 +25,27 @@ class AuthenticatedSessionController extends Controller
     public function store(LoginRequest $request): RedirectResponse
     {
         $request->authenticate();
-
         $request->session()->regenerate();
+
+        // Endurecimiento: este login WEB es solo para staff (Admin/Dispatcher/SysAdmin).
+        $u = $request->user();
+
+        $isStaff = !empty($u?->is_sysadmin) || !empty($u?->is_admin) || !empty($u?->is_dispatcher);
+
+        // Opcional pero recomendado: staff debe pertenecer a tenant (excepto sysadmin).
+        $hasTenant = !empty($u?->tenant_id);
+
+        if (!$isStaff || (empty($u?->is_sysadmin) && !$hasTenant)) {
+            Auth::guard('web')->logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return back()
+                ->withErrors([
+                    'email' => 'Este acceso es solo para personal (Admin / Dispatcher).',
+                ])
+                ->onlyInput('email');
+        }
 
         return redirect()->intended(route('dashboard', absolute: false));
     }
@@ -39,9 +58,9 @@ class AuthenticatedSessionController extends Controller
         Auth::guard('web')->logout();
 
         $request->session()->invalidate();
-
         $request->session()->regenerateToken();
 
-        return redirect('/');
+        // Que no mande a landing; se queda en login
+        return redirect()->route('login');
     }
 }

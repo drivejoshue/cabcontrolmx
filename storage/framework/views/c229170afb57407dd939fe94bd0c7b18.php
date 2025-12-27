@@ -1,16 +1,18 @@
 
+
 <?php $__env->startSection('title','Dashboard'); ?>
+<?php $__env->startSection('page-id','dashboard'); ?>
 
 <?php $__env->startSection('content'); ?>
-<div class="row g-3">
+<div class="row row-cards">
 
   
   <div class="col-12">
-    <div class="card shadow-sm border-0">
+    <div class="card">
       <div class="card-body d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2">
         <div>
           <h3 class="card-title mb-1">Dashboard de Operaciones</h3>
-          <p class="text-muted mb-0">Monitorea el rendimiento de tu flota en tiempo real.</p>
+          <div class="text-muted">Monitorea el rendimiento de tu flota en tiempo real.</div>
         </div>
 
         <div class="d-flex align-items-center gap-2 flex-wrap justify-content-md-end">
@@ -21,13 +23,13 @@
 
           <?php if(Route::has('admin.dispatch.index')): ?>
             <a class="btn btn-primary btn-sm" href="<?php echo e(route('admin.dispatch.index')); ?>">
-              <i class="fas fa-broadcast-tower me-1"></i> Abrir despacho
+              <i class="ti ti-broadcast me-1"></i> Abrir despacho
             </a>
           <?php endif; ?>
 
           <?php if(Route::has('admin.tenant.edit')): ?>
             <a class="btn btn-outline-secondary btn-sm" href="<?php echo e(route('admin.tenant.edit')); ?>">
-              <i class="fas fa-cog me-1"></i> Mi central
+              <i class="ti ti-settings me-1"></i> Mi central
             </a>
           <?php endif; ?>
         </div>
@@ -36,8 +38,8 @@
   </div>
 
   
-  <div class="col-xl-3 col-md-6">
-    <div class="card border-0 shadow-sm h-100 kpi-card">
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card h-100 kpi-card">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
           <div>
@@ -48,42 +50,42 @@
               <span class="float-end"><?php echo e($metrics['cancellation_rate'] ?? 0); ?>% canceladas</span>
             </div>
           </div>
-          <div class="icon-wrap bg-primary-subtle text-primary">
-            <i class="fas fa-taxi"></i>
-          </div>
+          <span class="avatar bg-blue-lt text-blue">
+            <i class="ti ti-taxi"></i>
+          </span>
         </div>
 
         <div class="mt-3">
           <div class="progress progress-sm">
-            <div class="progress-bar bg-primary" style="width: <?php echo e(min(($metrics['completion_rate'] ?? 0), 100)); ?>%"></div>
+            <div class="progress-bar" style="width: <?php echo e(min(($metrics['completion_rate'] ?? 0), 100)); ?>%"></div>
           </div>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="col-xl-3 col-md-6">
-    <div class="card border-0 shadow-sm h-100 kpi-card">
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card h-100 kpi-card">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
           <div>
             <div class="text-muted fw-semibold">Conductores activos</div>
             <div class="kpi-value"><?php echo e($metrics['active_drivers'] ?? 0); ?></div>
             <div class="small text-muted mt-1">
-              <i class="fas fa-star text-warning me-1"></i>
+              <i class="ti ti-star text-yellow me-1"></i>
               Rating promedio: <strong><?php echo e($metrics['average_rating'] ?? 0); ?>/5</strong>
             </div>
           </div>
-          <div class="icon-wrap bg-success-subtle text-success">
-            <i class="fas fa-user-circle"></i>
-          </div>
+          <span class="avatar bg-green-lt text-green">
+            <i class="ti ti-user-check"></i>
+          </span>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="col-xl-3 col-md-6">
-    <div class="card border-0 shadow-sm h-100 kpi-card">
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card h-100 kpi-card">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
           <div>
@@ -93,39 +95,39 @@
               <?php echo e($metrics['total_passengers'] ?? 0); ?> pasajeros registrados
             </div>
           </div>
-          <div class="icon-wrap bg-info-subtle text-info">
-            <i class="fas fa-car"></i>
-          </div>
+          <span class="avatar bg-azure-lt text-azure">
+            <i class="ti ti-car"></i>
+          </span>
         </div>
       </div>
     </div>
   </div>
 
-  <div class="col-xl-3 col-md-6">
-    <div class="card border-0 shadow-sm h-100 kpi-card">
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card h-100 kpi-card">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
           <div>
             <div class="text-muted fw-semibold">Ingresos hoy</div>
             <div class="kpi-value">$<?php echo e(number_format($metrics['total_revenue_today'] ?? 0, 2)); ?></div>
             <div class="small text-muted mt-1">
-              <i class="fas fa-chart-line text-success me-1"></i> Ventana 30 días
+              <i class="ti ti-trending-up text-green me-1"></i> Ventana 30 días
             </div>
           </div>
-          <div class="icon-wrap bg-warning-subtle text-warning">
-            <i class="fas fa-money-bill-wave"></i>
-          </div>
+          <span class="avatar bg-yellow-lt text-yellow">
+            <i class="ti ti-cash"></i>
+          </span>
         </div>
       </div>
     </div>
   </div>
 
   
-  <div class="col-xl-8">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white border-0 d-flex align-items-center justify-content-between">
-        <h5 class="card-title mb-0">Tendencia de corridas (7 días)</h5>
-        <span class="badge bg-light text-muted">Actualizado</span>
+  <div class="col-12 col-xl-8">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Tendencia de corridas (7 días)</h3>
+        <span class="badge bg-secondary-lt ms-auto">Actualizado</span>
       </div>
       <div class="card-body">
         <div class="chart-wrap chart-lg">
@@ -135,10 +137,10 @@
     </div>
   </div>
 
-  <div class="col-xl-4">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white border-0">
-        <h5 class="card-title mb-0">Estado actual</h5>
+  <div class="col-12 col-xl-4">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Estado actual</h3>
       </div>
       <div class="card-body">
         <div class="chart-wrap chart-lg">
@@ -148,10 +150,10 @@
     </div>
   </div>
 
-  <div class="col-xl-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white border-0">
-        <h5 class="card-title mb-0">Distribución por horas (hoy)</h5>
+  <div class="col-12 col-xl-6">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Distribución por horas (hoy)</h3>
       </div>
       <div class="card-body">
         <div class="chart-wrap chart-md">
@@ -161,10 +163,10 @@
     </div>
   </div>
 
-  <div class="col-xl-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white border-0">
-        <h5 class="card-title mb-0">Métodos de pago (30 días)</h5>
+  <div class="col-12 col-xl-6">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Métodos de pago (30 días)</h3>
       </div>
       <div class="card-body">
         <div class="chart-wrap chart-md">
@@ -175,13 +177,12 @@
   </div>
 
   
-  <div class="col-xl-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
-        <h5 class="card-title mb-0">Top conductores (30 días)</h5>
-
+  <div class="col-12 col-xl-6">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Top conductores (30 días)</h3>
         <?php if(Route::has('admin.drivers.index')): ?>
-          <a href="<?php echo e(route('admin.drivers.index')); ?>" class="btn btn-sm btn-outline-primary">
+          <a href="<?php echo e(route('admin.drivers.index')); ?>" class="btn btn-sm btn-outline-primary ms-auto">
             Ver todos
           </a>
         <?php endif; ?>
@@ -189,8 +190,8 @@
 
       <div class="card-body p-0">
         <div class="table-responsive">
-          <table class="table table-hover mb-0 align-middle">
-            <thead class="table-light">
+          <table class="table table-vcenter mb-0">
+            <thead>
               <tr>
                 <th>Conductor</th>
                 <th class="text-end">Corridas</th>
@@ -203,19 +204,19 @@
                 <tr>
                   <td>
                     <div class="d-flex align-items-center gap-2">
-                      <div class="icon-wrap icon-sm bg-primary-subtle text-primary">
-                        <i class="fas fa-user"></i>
-                      </div>
+                      <span class="avatar avatar-sm bg-blue-lt text-blue">
+                        <i class="ti ti-user"></i>
+                      </span>
                       <div class="fw-semibold"><?php echo e($driver->name); ?></div>
                     </div>
                   </td>
                   <td class="text-end"><?php echo e($driver->total_rides); ?></td>
                   <td class="text-end">$<?php echo e(number_format($driver->total_revenue ?? 0, 2)); ?></td>
                   <td class="text-end">
-                    <span class="badge bg-warning-subtle text-warning">
+                    <span class="badge bg-yellow-lt text-yellow">
                       <?php echo e(number_format($driver->avg_rating ?? 0, 1)); ?>
 
-                      <i class="fas fa-star ms-1"></i>
+                      <i class="ti ti-star ms-1"></i>
                     </span>
                   </td>
                 </tr>
@@ -229,17 +230,18 @@
     </div>
   </div>
 
-  <div class="col-xl-6">
-    <div class="card border-0 shadow-sm h-100">
-      <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
-        <h5 class="card-title mb-0">Programadas próximas</h5>
-        <span class="badge bg-secondary">Opcional</span>
+  
+  <div class="col-12 col-xl-6">
+    <div class="card h-100">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Programadas próximas</h3>
+        <span class="badge bg-secondary-lt ms-auto">Opcional</span>
       </div>
 
       <div class="card-body p-0">
         <div class="table-responsive">
-          <table class="table table-hover mb-0 align-middle">
-            <thead class="table-light">
+          <table class="table table-vcenter mb-0">
+            <thead>
               <tr>
                 <th>Pasajero</th>
                 <th>Origen</th>
@@ -254,7 +256,7 @@
                   <td><span class="text-truncate d-inline-block" style="max-width: 180px;"><?php echo e($ride->origin_label ?? 'Sin origen'); ?></span></td>
                   <td><span class="text-truncate d-inline-block" style="max-width: 180px;"><?php echo e($ride->dest_label ?? 'Sin destino'); ?></span></td>
                   <td class="text-end">
-                    <span class="badge bg-info-subtle text-info">
+                    <span class="badge bg-azure-lt text-azure">
                       <?php echo e(\Carbon\Carbon::parse($ride->scheduled_for)->format('H:i')); ?>
 
                     </span>
@@ -273,20 +275,19 @@
 
   
   <div class="col-12">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
-        <h5 class="card-title mb-0">Últimas corridas</h5>
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Últimas corridas</h3>
 
-        
         <?php if(Route::has('admin.rides.index')): ?>
-          <a class="btn btn-sm btn-outline-primary" href="<?php echo e(route('admin.rides.index')); ?>">Ver todas</a>
+          <a class="btn btn-sm btn-outline-primary ms-auto" href="<?php echo e(route('admin.rides.index')); ?>">Ver todas</a>
         <?php endif; ?>
       </div>
 
       <div class="card-body p-0">
         <div class="table-responsive">
-          <table class="table table-hover mb-0 align-middle">
-            <thead class="table-light">
+          <table class="table table-vcenter mb-0">
+            <thead>
               <tr>
                 <th>#</th>
                 <th>Pasajero</th>
@@ -302,14 +303,14 @@
                 <?php
                   $st = $r->status ?? 'unknown';
                   $badge = match($st) {
-                    'requested' => 'bg-secondary',
-                    'accepted'  => 'bg-info',
-                    'en_route'  => 'bg-warning text-dark',
-                    'arrived'   => 'bg-warning text-dark',
-                    'on_board'  => 'bg-primary',
-                    'finished'  => 'bg-success',
-                    'canceled'  => 'bg-danger',
-                    default     => 'bg-light text-dark',
+                    'requested' => 'bg-secondary-lt text-secondary',
+                    'accepted'  => 'bg-azure-lt text-azure',
+                    'en_route'  => 'bg-yellow-lt text-yellow',
+                    'arrived'   => 'bg-yellow-lt text-yellow',
+                    'on_board'  => 'bg-blue-lt text-blue',
+                    'finished'  => 'bg-green-lt text-green',
+                    'canceled'  => 'bg-red-lt text-red',
+                    default     => 'bg-secondary-lt text-secondary',
                   };
                 ?>
                 <tr>
@@ -320,7 +321,6 @@
                   <td class="text-end">$<?php echo e(number_format($r->total_amount ?? 0, 2)); ?></td>
                   <td class="text-end text-muted"><?php echo e(\Carbon\Carbon::parse($r->created_at)->format('d M H:i')); ?></td>
                   <td class="text-end">
-                    
                     <?php if(Route::has('admin.rides.show')): ?>
                       <a class="btn btn-sm btn-outline-secondary" href="<?php echo e(route('admin.rides.show', $r->id)); ?>">
                         Ver
@@ -341,84 +341,52 @@
 
   
   <div class="col-12">
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white border-0">
-        <h5 class="card-title mb-0">Acciones rápidas</h5>
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title mb-0">Acciones rápidas</h3>
       </div>
 
       <div class="card-body">
-        <div class="row g-3">
+        <div class="row row-cards">
 
-          <div class="col-md-3">
-            <?php if(Route::has('admin.dispatch_settings.edit')): ?>
-              <a class="text-decoration-none" href="<?php echo e(route('admin.dispatch_settings.edit')); ?>">
-            <?php else: ?>
-              <a class="text-decoration-none" href="javascript:void(0)">
-            <?php endif; ?>
-                <div class="card shadow-sm border-0 h-100 action-card">
-                  <div class="card-body text-center">
-                    <div class="icon-wrap icon-lg bg-success-subtle text-success mx-auto mb-3">
-                      <i class="fas fa-broadcast-tower"></i>
-                    </div>
-                    <div class="fw-semibold">Despacho</div>
-                    <div class="text-muted small">Radio, olas, auto-assign</div>
-                  </div>
-                </div>
-              </a>
+          <div class="col-12 col-md-6 col-lg-3">
+            <a class="card card-link" href="<?php echo e(Route::has('admin.dispatch_settings.edit') ? route('admin.dispatch_settings.edit') : 'javascript:void(0)'); ?>">
+              <div class="card-body text-center">
+                <span class="avatar avatar-lg bg-green-lt text-green mb-3"><i class="ti ti-adjustments"></i></span>
+                <div class="fw-semibold">Despacho</div>
+                <div class="text-muted small">Radio, olas, auto-assign</div>
+              </div>
+            </a>
           </div>
 
-          <div class="col-md-3">
-            <?php if(Route::has('admin.fare_policies.index')): ?>
-              <a class="text-decoration-none" href="<?php echo e(route('admin.fare_policies.index')); ?>">
-            <?php else: ?>
-              <a class="text-decoration-none" href="javascript:void(0)">
-            <?php endif; ?>
-                <div class="card shadow-sm border-0 h-100 action-card">
-                  <div class="card-body text-center">
-                    <div class="icon-wrap icon-lg bg-warning-subtle text-warning mx-auto mb-3">
-                      <i class="fas fa-money-bill-wave"></i>
-                    </div>
-                    <div class="fw-semibold">Tarifas</div>
-                    <div class="text-muted small">Base, por km/min, nocturno</div>
-                  </div>
-                </div>
-              </a>
+          <div class="col-12 col-md-6 col-lg-3">
+            <a class="card card-link" href="<?php echo e(Route::has('admin.fare_policies.index') ? route('admin.fare_policies.index') : 'javascript:void(0)'); ?>">
+              <div class="card-body text-center">
+                <span class="avatar avatar-lg bg-yellow-lt text-yellow mb-3"><i class="ti ti-cash"></i></span>
+                <div class="fw-semibold">Tarifas</div>
+                <div class="text-muted small">Base, por km/min, nocturno</div>
+              </div>
+            </a>
           </div>
 
-          <div class="col-md-3">
-            <?php if(Route::has('admin.drivers.index')): ?>
-              <a class="text-decoration-none" href="<?php echo e(route('admin.drivers.index')); ?>">
-            <?php else: ?>
-              <a class="text-decoration-none" href="javascript:void(0)">
-            <?php endif; ?>
-                <div class="card shadow-sm border-0 h-100 action-card">
-                  <div class="card-body text-center">
-                    <div class="icon-wrap icon-lg bg-info-subtle text-info mx-auto mb-3">
-                      <i class="fas fa-users"></i>
-                    </div>
-                    <div class="fw-semibold">Conductores</div>
-                    <div class="text-muted small">Gestionar flota activa</div>
-                  </div>
-                </div>
-              </a>
+          <div class="col-12 col-md-6 col-lg-3">
+            <a class="card card-link" href="<?php echo e(Route::has('admin.drivers.index') ? route('admin.drivers.index') : 'javascript:void(0)'); ?>">
+              <div class="card-body text-center">
+                <span class="avatar avatar-lg bg-azure-lt text-azure mb-3"><i class="ti ti-users"></i></span>
+                <div class="fw-semibold">Conductores</div>
+                <div class="text-muted small">Gestionar flota activa</div>
+              </div>
+            </a>
           </div>
 
-          <div class="col-md-3">
-            <?php if(Route::has('admin.vehicles.index')): ?>
-              <a class="text-decoration-none" href="<?php echo e(route('admin.vehicles.index')); ?>">
-            <?php else: ?>
-              <a class="text-decoration-none" href="javascript:void(0)">
-            <?php endif; ?>
-                <div class="card shadow-sm border-0 h-100 action-card">
-                  <div class="card-body text-center">
-                    <div class="icon-wrap icon-lg bg-primary-subtle text-primary mx-auto mb-3">
-                      <i class="fas fa-car"></i>
-                    </div>
-                    <div class="fw-semibold">Vehículos</div>
-                    <div class="text-muted small">Altas, verificación y docs</div>
-                  </div>
-                </div>
-              </a>
+          <div class="col-12 col-md-6 col-lg-3">
+            <a class="card card-link" href="<?php echo e(Route::has('admin.vehicles.index') ? route('admin.vehicles.index') : 'javascript:void(0)'); ?>">
+              <div class="card-body text-center">
+                <span class="avatar avatar-lg bg-blue-lt text-blue mb-3"><i class="ti ti-car"></i></span>
+                <div class="fw-semibold">Vehículos</div>
+                <div class="text-muted small">Altas, verificación y docs</div>
+              </div>
+            </a>
           </div>
 
         </div>
@@ -440,31 +408,10 @@
   }
   .progress-sm { height: 6px; }
 
-  .icon-wrap{
-    width: 44px; height: 44px;
-    border-radius: 999px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-  }
-  .icon-sm{ width: 34px; height: 34px; font-size: 14px; }
-  .icon-lg{ width: 56px; height: 56px; font-size: 22px; }
-
-  .chart-wrap{
-    position: relative;
-    width: 100%;
-  }
+  .chart-wrap{ position: relative; width: 100%; }
   .chart-lg{ height: 300px; }
   .chart-md{ height: 260px; }
-
-  .chart-wrap canvas{
-    width: 100% !important;
-    height: 100% !important;
-  }
-
-  .action-card{ transition: transform .15s ease, box-shadow .15s ease; }
-  .action-card:hover{ transform: translateY(-2px); }
+  .chart-wrap canvas{ width: 100% !important; height: 100% !important; }
 
   .table td, .table th{ vertical-align: middle; }
 </style>
@@ -475,9 +422,7 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
 
-  // Helper: labels legibles sin depender de parseo raro
   function fmtDateLabel(ymd){
-    // ymd esperado: "YYYY-MM-DD"
     try{
       const [y,m,d] = (ymd || '').split('-').map(Number);
       if(!y || !m || !d) return ymd;
@@ -488,10 +433,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  // Tendencia (line)
   const ridesTrendEl = document.getElementById('ridesTrendChart');
   const ridesTrendData = <?php echo json_encode($charts['rides_trend'] ?? [], 15, 512) ?>;
-
   if (ridesTrendEl) {
     new Chart(ridesTrendEl.getContext('2d'), {
       type: 'line',
@@ -514,12 +457,10 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  // Status (doughnut)
   const ridesStatusEl = document.getElementById('ridesStatusChart');
   const ridesStatusData = <?php echo json_encode($charts['rides_by_status'] ?? [], 15, 512) ?>;
   const statusLabels = Object.keys(ridesStatusData || {});
   const statusCounts = Object.values(ridesStatusData || {});
-
   if (ridesStatusEl) {
     new Chart(ridesStatusEl.getContext('2d'), {
       type: 'doughnut',
@@ -536,7 +477,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  // Hours (bar)
   const hoursEl = document.getElementById('hoursDistributionChart');
   const hoursData = <?php echo json_encode($charts['ride_hours_distribution'] ?? [], 15, 512) ?>;
   if (hoursEl) {
@@ -561,7 +501,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  // Payment (pie)
   const payEl = document.getElementById('paymentMethodsChart');
   const paymentData = <?php echo json_encode($charts['payment_methods_distribution'] ?? [], 15, 512) ?>;
   if (payEl) {

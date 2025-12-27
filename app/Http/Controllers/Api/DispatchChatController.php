@@ -98,7 +98,11 @@ class DispatchChatController extends Controller
         $threads = $rows->map(function ($row) use ($lastMessages, $driversById) {
             $lastMsg = $lastMessages->get($row->last_message_id);
             $driver  = $driversById->get($row->driver_id);
-
+// AJUSTA estos nombres a tu DB real:
+    $econ = $driver?->economico
+         ?? $driver?->econ
+         ?? $driver?->vehicle_number
+         ?? null;
             return [
                 'driver_id'     => (int) $row->driver_id,
                 'driver_name'   => $driver?->name
@@ -106,6 +110,8 @@ class DispatchChatController extends Controller
                     ?? ('Conductor #' . $row->driver_id),
                 'vehicle_label' => $driver->vehicle_label ?? null,
                 'plate'         => $driver->plate ?? null,
+                 // ✅ nuevo
+                'econ'          => $econ ? (string)$econ : null,
                 'last_text'     => $lastMsg?->message ?? '',
                 'last_at'       => $row->last_at,
                 'unread_count'  => (int) ($row->unread_count ?? 0),
@@ -129,44 +135,47 @@ class DispatchChatController extends Controller
      *    ...
      *  ]
      */
-    public function messages(Request $request, int $driverId)
-    {
-        $tenantId = $this->resolveTenantId($request);
+   public function messages(Request $request, int $driverId)
+{
+    $tenantId = $this->resolveTenantId($request);
+    $afterId = (int) $request->query('after_id', 0);
 
-        $afterId = (int) $request->query('after_id', 0);
+    $query = DriverMessage::query()
+        ->where('tenant_id', $tenantId)
+        ->where('driver_id', $driverId)
+        ->orderBy('id', 'asc');
 
-        $query = DriverMessage::query()
-            ->where('tenant_id', $tenantId)
-            ->where('driver_id', $driverId)
-            ->orderBy('id', 'asc');
-
-        if ($afterId > 0) {
-            $query->where('id', '>', $afterId);
-        }
-
-        $messages = $query
-            ->limit(200)
-            ->get()
-            ->map(function (DriverMessage $m) {
-                return [
-                    'id'          => $m->id,
-                    'text'        => $m->message,     // 👈 alias para el JS
-                    'created_at'  => $m->created_at,
-                    'sender_type' => $m->sender_type,
-                ];
-            });
-
-        // Marcar como vistos por el dispatch todos los mensajes del driver
-        DriverMessage::where('tenant_id', $tenantId)
-            ->where('driver_id', $driverId)
-            ->where('sender_type', 'driver')
-            ->whereNull('seen_by_dispatch_at')
-            ->update(['seen_by_dispatch_at' => now()]);
-
-        return response()->json([
-            'messages' => $messages,
-        ]);
+    if ($afterId > 0) {
+        $query->where('id', '>', $afterId);
     }
+
+    $messages = $query
+        ->limit(200)
+        ->get()
+        ->map(function (DriverMessage $m) {
+            $meta = is_array($m->meta) ? $m->meta : (json_decode($m->meta ?? 'null', true) ?: null);
+
+            return [
+                'id'          => (int) $m->id,
+                'driver_id'   => (int) $m->driver_id,            // <-- IMPORTANTE
+                'text'        => (string) $m->message,
+                'created_at'  => optional($m->created_at)->format('Y-m-d H:i:s'),
+                'sender_type' => (string) ($m->sender_type ?? 'dispatch'),
+                'kind'        => (string) ($m->kind ?? 'chat'),   // <-- IMPORTANTE
+                'meta'        => $meta,
+                'is_help_request' => ($m->kind === 'help') || (($meta['is_help_request'] ?? false) === true),
+            ];
+        });
+
+    DriverMessage::where('tenant_id', $tenantId)
+        ->where('driver_id', $driverId)
+        ->where('sender_type', 'driver')
+        ->whereNull('seen_by_dispatch_at')
+        ->update(['seen_by_dispatch_at' => now()]);
+
+    return response()->json(['messages' => $messages]);
+}
+
 
     /**
      * Enviar mensaje desde Dispatch → driver.

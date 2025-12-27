@@ -67,7 +67,25 @@ class TenantBillingController extends Controller
         }
     }
 
-    return view('admin.billing.plan', [
+    
+
+        // Vehículos
+        $activeVehicles = Vehicle::where('tenant_id', $tenant->id)
+            ->where('active', 1)
+            ->count();
+
+        $totalVehicles = Vehicle::where('tenant_id', $tenant->id)->count();
+
+        // Puede / no puede registrar nuevos vehículos
+        [$canRegisterNewVehicle, $canRegisterReason] = $billingService->canRegisterNewVehicle($tenant);
+
+        // Facturas del tenant (solo lectura, ordenadas)
+        $invoices = TenantInvoice::where('tenant_id', $tenant->id)
+            ->orderByDesc('issue_date')
+            ->orderByDesc('id')
+            ->paginate(20);
+
+       return view('admin.billing.plan', [
         'tenant'                => $tenant,
         'profile'               => $profile,
         'activeVehicles'        => $activeVehicles,
@@ -86,32 +104,6 @@ class TenantBillingController extends Controller
         'trialDaysLeft'        => $trialDaysLeft,
     ]);
 
-
-        // Vehículos
-        $activeVehicles = Vehicle::where('tenant_id', $tenant->id)
-            ->where('active', 1)
-            ->count();
-
-        $totalVehicles = Vehicle::where('tenant_id', $tenant->id)->count();
-
-        // Puede / no puede registrar nuevos vehículos
-        [$canRegisterNewVehicle, $canRegisterReason] = $billingService->canRegisterNewVehicle($tenant);
-
-        // Facturas del tenant (solo lectura, ordenadas)
-        $invoices = TenantInvoice::where('tenant_id', $tenant->id)
-            ->orderByDesc('issue_date')
-            ->orderByDesc('id')
-            ->paginate(20);
-
-        return view('admin.billing.plan', [
-            'tenant'                => $tenant,
-            'profile'               => $profile,
-            'activeVehicles'        => $activeVehicles,
-            'totalVehicles'         => $totalVehicles,
-            'canRegisterNewVehicle' => $canRegisterNewVehicle,
-            'canRegisterReason'     => $canRegisterReason,
-            'invoices'              => $invoices,
-        ]);
     }
 
     /**

@@ -34,7 +34,7 @@ use App\Http\Controllers\Api\PassengerSuggestionsController;
 use App\Http\Controllers\Api\PassengerPlacesController;
 
 use App\Events\DriverEvent;
-
+use App\Http\Controllers\Webhooks\MercadoPagoWebhookController;
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -45,6 +45,9 @@ use App\Events\DriverEvent;
 */
 
 /* ===================== DEBUG / TEST ===================== */
+
+Route::match(['GET','POST'], '/webhooks/mercadopago', [MercadoPagoWebhookController::class, 'handle'])
+    ->name('api.webhooks.mercadopago');
 
 Route::post('/test-driver-event', function (Request $request) {
     $user = \App\Models\User::where('email', 'driver@test.com')->first();

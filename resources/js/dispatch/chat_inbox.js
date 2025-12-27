@@ -190,10 +190,10 @@
       startPolling();
     }
 
-    // ==========================
-    // Realtime (si hay Echo)
-    // ==========================
-   async function waitForEcho(maxMs = 8000, stepMs = 250) {
+  // ==========================
+// Realtime (si hay Echo)
+// ==========================
+async function waitForEcho(maxMs = 8000, stepMs = 250) {
   const t0 = Date.now();
   while (Date.now() - t0 < maxMs) {
     if (window.Echo) return true;
@@ -202,70 +202,109 @@
   return !!window.Echo;
 }
 
+function safeStopListening(ch, eventName) {
+  if (!ch) return;
+  try { ch.stopListening(eventName); } catch (_) {}
+}
+
+function safeLeave(channelBaseName) {
+  // Echo.leave espera el nombre base SIN prefijo private-/presence-
+  // y se encarga de limpiar suscripciones.
+  if (!window.Echo || !channelBaseName) return;
+  try { window.Echo.leave(channelBaseName); } catch (_) {}
+}
+
 async function setupTenantRealtimeIfAvailable() {
   tenantId = window.getTenantId ? window.getTenantId() : tenantId;
+  if (!tenantId) return;
 
-  if (!tenantId) {
-    console.warn('[ChatInbox] Sin tenantId, no se puede suscribir.');
-    return;
-  }
-
-  // ✅ esperar a que bootstrap inicialice Echo
   const ok = await waitForEcho(8000, 250);
-  if (!ok) {
-    console.warn('[ChatInbox] Echo no disponible (timeout), seguimos con polling.');
-    return;
-  }
+  if (!ok) return;
 
-  const channelName = `private-tenant.${tenantId}.dispatch`;
+  const channelName = `tenant.${tenantId}.dispatch`; // SIN "private-" aquí
   console.log('📡 [ChatInbox] Suscribiéndose a canal inbox:', channelName);
 
   try {
-    tenantChannel = window.Echo.private(channelName);
+    if (tenantChannel) window.Echo.leave(`private-${channelName}`); // opcional
+  } catch {}
 
-    tenantChannel.listen('.driver.message.new', (e) => {
-      const driverIdFromEvent = e.driver_id || e.sender_driver_id || null;
+  tenantChannel = window.Echo.private(channelName);
 
-      if (driverIdFromEvent && activeDriverId && Number(driverIdFromEvent) === Number(activeDriverId)) {
-        appendRealtimeMessage(e);
+tenantChannel.listen('.driver.message.new', (e) => {
+  const driverIdFromEvent = e.driver_id || e.sender_driver_id || null;
+  if (!driverIdFromEvent) {
+    refreshThreads().catch(console.error);
+    return;
+  }
+
+  const isHelp = String(e.kind || '').toLowerCase() === 'help';
+  const msgId = e.id || null;
+
+  if (isHelp) {
+    playHelpAlert3x(msgId);
+
+    // auto-focus discreto (opcional)
+    focusDriverFromHelp(driverIdFromEvent);
+
+    // auto-abrir chat (si no está abierto)
+    if (!chatPanelOpen && offcanvasInstance) {
+      openChatWithDriver(driverIdFromEvent).catch(console.error);
+    }
+  } else {
+    // Mensaje normal: si quieres auto-abrir, hazlo con cuidado:
+    // solo cuando no hay panel abierto ni dropdown abierto
+    if (!chatPanelOpen && !dropdownOpen && offcanvasInstance) {
+      // opcional: auto-abrir solo si no hay chat activo
+      if (!activeDriverId) {
+        openChatWithDriver(driverIdFromEvent).catch(console.error);
       }
+    }
+  }
 
+  // Si el panel está abierto y coincide con driver activo, agrega bubble en vivo
+  if (activeDriverId && Number(driverIdFromEvent) === Number(activeDriverId) && chatPanelOpen) {
+    appendRealtimeMessage(e);
+  }
+
+  refreshThreads().catch(console.error);
+});
+
+
+}
+
+
+function subscribeDriverChannelForChat(driverId) {
+  tenantId = window.getTenantId ? window.getTenantId() : tenantId;
+
+  if (!tenantId || !window.Echo) {
+    console.warn('[ChatInbox] Echo no disponible para canal driver, seguimos con polling.');
+    return;
+  }
+
+  // Si ya existía un canal driver, lo limpiamos
+  if (driverChannel) {
+    safeStopListening(driverChannel, '.driver.message.new');
+    safeLeave(`tenant.${tenantId}.driver.${activeDriverId || driverId}`);
+    driverChannel = null;
+  }
+
+  // Canal driver específico
+  const baseName = `tenant.${tenantId}.driver.${driverId}`;
+  console.log('📡 [ChatInbox] Suscribiéndose a canal driver:', baseName);
+
+  try {
+    driverChannel = window.Echo.private(baseName);
+
+    driverChannel.listen('.driver.message.new', (e) => {
+      console.log('💬 [ChatInbox] mensaje realtime en canal driver:', e);
+      appendRealtimeMessage(e);
       refreshThreads().catch(console.error);
     });
 
   } catch (err) {
-    console.warn('[ChatInbox] Falló suscripción Echo, seguimos con polling.', err);
+    console.warn('[ChatInbox] Falló suscripción Echo driver channel, seguimos con polling.', err);
   }
 }
-
-
-    function subscribeDriverChannelForChat(driverId) {
-      tenantId = window.getTenantId ? window.getTenantId() : tenantId;
-
-      if (!tenantId || !window.Echo) {
-        console.warn('[ChatInbox] Echo no disponible para canal driver, seguimos con polling.');
-        return;
-      }
-
-      if (driverChannel) {
-        try {
-          driverChannel.stopListening('.driver.message.new');
-        } catch (e) {
-          console.warn('[ChatInbox] No se pudo desuscribir del canal anterior', e);
-        }
-      }
-
-      const channelName = `private-tenant.${tenantId}.driver.${driverId}`;
-      console.log('📡 [ChatInbox] Suscribiéndose a canal driver:', channelName);
-
-      driverChannel = window.Echo.private(channelName);
-
-      driverChannel.listen('.driver.message.new', (e) => {
-        console.log('💬 [ChatInbox] mensaje realtime en canal driver:', e);
-        appendRealtimeMessage(e);
-        refreshThreads().catch(console.error);
-      });
-    }
 
     // ==========================
     // Polling con AJAX
@@ -300,110 +339,188 @@ async function setupTenantRealtimeIfAvailable() {
     // ==========================
     // Hilos (lista + badge)
     // ==========================
-    async function refreshThreads() {
-      if (!isInitialized) return;
-      if (!window.__CHAT_THREADS_URL__) return;
+async function refreshThreads() {
+  if (!isInitialized) return;
+  if (!window.__CHAT_THREADS_URL__) return;
 
-      const urlObj = new URL(window.__CHAT_THREADS_URL__, window.location.origin);
-      if (tenantId) urlObj.searchParams.set('tenant_id', String(tenantId));
+  const urlObj = new URL(window.__CHAT_THREADS_URL__, window.location.origin);
+  if (tenantId) urlObj.searchParams.set('tenant_id', String(tenantId));
 
-      const resp = await fetch(urlObj.toString(), {
-        headers: { Accept: 'application/json' },
+  const resp = await fetch(urlObj.toString(), { headers: { Accept: 'application/json' } });
+  if (!resp.ok) {
+    console.error('[ChatInbox] error cargando threads', resp.status);
+    return;
+  }
+
+  const data = await resp.json();
+  const threads = data.threads || [];
+
+  let serverUnread = 0;
+  listEl.innerHTML = '';
+
+  if (!threads.length) {
+    listEl.innerHTML = '<div class="text-muted small p-2">Sin mensajes.</div>';
+  } else {
+    threads.forEach((t) => {
+      serverUnread += t.unread_count || 0;
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className =
+        'list-group-item list-group-item-action d-flex justify-content-between align-items-start';
+      btn.dataset.driverId = String(t.driver_id);
+
+      const lastText = t.last_text || 'Sin mensajes aún';
+
+      // ✅ viene del backend (threads()) como 'econ'
+      const econ  = t.econ || t.economic_number || t.vehicle_number || null;
+      const plate = t.plate || null;
+      const vehicleLabel = t.vehicle_label || '';
+
+      const metaParts = [];
+      if (econ)  metaParts.push(`Eco ${econ}`);
+      if (plate) metaParts.push(plate);
+
+      // Prioridad: "Eco 23 · ABC-123" (si no, vehicle_label)
+      const metaLine = metaParts.join(' · ') || vehicleLabel;
+
+      const driverName = t.driver_name || ('Conductor #' + t.driver_id);
+
+      btn.innerHTML = `
+        <div class="me-2" style="min-width:0">
+          <div class="d-flex align-items-center gap-2">
+            <div class="fw-semibold text-truncate">${escapeHtml(driverName)}</div>
+            ${econ ? `<span class="badge bg-secondary rounded-pill">Eco ${escapeHtml(econ)}</span>` : ''}
+          </div>
+
+          ${metaLine ? `<div class="small text-muted">${escapeHtml(metaLine)}</div>` : ''}
+          <div class="small text-muted text-truncate">${escapeHtml(lastText)}</div>
+        </div>
+
+        <div class="text-end">
+          <div class="small text-muted">${t.last_at ? fmtTime(t.last_at) : ''}</div>
+          ${
+            t.unread_count
+              ? `<span class="badge bg-danger rounded-pill">${t.unread_count}</span>`
+              : ''
+          }
+        </div>
+      `;
+
+      btn.addEventListener('click', () => {
+        openChatWithDriver(t.driver_id, t).catch(console.error);
       });
 
-      if (!resp.ok) {
-        console.error('[ChatInbox] error cargando threads', resp.status);
-        return;
-      }
+      listEl.appendChild(btn);
+    });
+  }
 
-      const data = await resp.json();
-      const threads = data.threads || [];
-
-      let serverUnread = 0;
-
-      listEl.innerHTML = '';
-
-      if (!threads.length) {
-        listEl.innerHTML = '<div class="text-muted small p-2">Sin mensajes.</div>';
-      } else {
-        threads.forEach((t) => {
-          serverUnread += t.unread_count || 0;
-
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className =
-            'list-group-item list-group-item-action d-flex justify-content-between align-items-start';
-          btn.dataset.driverId = String(t.driver_id);
-
-          const lastText = t.last_text || 'Sin mensajes aún';
-          const vehicle = t.vehicle_label || t.plate || '';
-
-          btn.innerHTML = `
-            <div class="me-2">
-              <div class="fw-semibold">${
-                escapeHtml(t.driver_name || ('Conductor #' + t.driver_id))
-              }</div>
-              <div class="small text-muted">${escapeHtml(lastText)}</div>
-              ${vehicle ? `<div class="small text-muted">${escapeHtml(vehicle)}</div>` : ''}
-            </div>
-            <div class="text-end">
-              <div class="small text-muted">${t.last_at ? fmtTime(t.last_at) : ''}</div>
-              ${
-                t.unread_count
-                  ? `<span class="badge bg-danger rounded-pill">${t.unread_count}</span>`
-                  : ''
-              }
-            </div>
-          `;
-
-          btn.addEventListener('click', () => {
-            openChatWithDriver(t.driver_id, t).catch(console.error);
-          });
-
-          listEl.appendChild(btn);
-        });
-      }
-
-      // === Lógica de “sticky unread” ========================
-      if (firstThreadsLoad) {
-        // primera carga: no sonar, solo tomar el valor del servidor
-        stickyUnread = serverUnread;
-        firstThreadsLoad = false;
-      } else if (dropdownOpen || chatPanelOpen) {
-        // el usuario está interactuando con mensajes → confiamos en servidor
-        stickyUnread = serverUnread;
-      } else {
-        // panel cerrado → no dejamos que baje solo
-        if (serverUnread > stickyUnread) {
-          // hay MÁS mensajes pendientes que antes → actualizar y sonar
-          stickyUnread = serverUnread;
-          playWaveIfPossible();
-        }
-        // si serverUnread < stickyUnread, dejamos stickyUnread como estaba
-      }
-
-      // Render del badge usando stickyUnread
-      badgeEl.textContent = String(stickyUnread);
-      badgeEl.classList.toggle('bg-danger', stickyUnread > 0);
-      badgeEl.classList.toggle('bg-secondary', stickyUnread === 0);
+  // Sticky unread
+  if (firstThreadsLoad) {
+    stickyUnread = serverUnread;
+    firstThreadsLoad = false;
+  } else if (dropdownOpen || chatPanelOpen) {
+    stickyUnread = serverUnread;
+  } else {
+    if (serverUnread > stickyUnread) {
+      stickyUnread = serverUnread;
+      playWaveIfPossible();
     }
+  }
+
+  badgeEl.textContent = String(stickyUnread);
+  badgeEl.classList.toggle('bg-danger', stickyUnread > 0);
+  badgeEl.classList.toggle('bg-secondary', stickyUnread === 0);
+}
+
 
     // ==========================
     // Abrir chat
     // ==========================
-    async function openChatWithDriver(driverId, threadData = null) {
-      activeDriverId = driverId;
 
-      if (subtitleEl) {
-        const name = threadData?.driver_name || ('Conductor #' + driverId);
-        subtitleEl.textContent = name;
-      }
 
-      await loadMessagesForDriver(driverId);
-      subscribeDriverChannelForChat(driverId);
 
-      if (offcanvasInstance) offcanvasInstance.show();
+    // ======= HELP ALERT (dedupe + 3 beeps) =======
+const helpAlertedIds = new Set();
+
+function focusDriverFromHelp(driverId) {
+  const id = Number(driverId || 0);
+  if (!id) return;
+
+  const doFocus = () => {
+    if (typeof window.focusDriverByIdSafe === 'function') {
+      window.focusDriverByIdSafe(id);
+      return true;
     }
+    if (typeof window.focusDriverById === 'function') {
+      window.focusDriverById(id);
+      return true;
+    }
+    return false;
+  };
+
+  // 1) Intento inmediato
+  if (doFocus()) return;
+
+  // 2) Si dispatch.js aún no expuso funciones, reintenta breve
+  let tries = 0;
+  const t = setInterval(() => {
+    tries++;
+    if (doFocus() || tries >= 10) clearInterval(t); // ~1s
+  }, 100);
+
+  // 3) Si el marker no existe todavía, fuerza refresh driversLive y enfoca después
+  // Necesitas exponer window.refreshDriversLive en dispatch.js (ver abajo).
+  if (typeof window.refreshDriversLive === 'function') {
+    window.refreshDriversLive(true);
+    setTimeout(() => { doFocus(); }, 600);
+    setTimeout(() => { doFocus(); }, 1200);
+  }
+}
+
+
+
+
+async function playHelpAlert3x(messageId) {
+  if (messageId != null && helpAlertedIds.has(messageId)) return;
+  if (messageId != null) helpAlertedIds.add(messageId);
+
+  if (!waveAudio) return;
+
+  const playOnce = () => {
+    try {
+      const a = waveAudio.cloneNode(true);
+      a.currentTime = 0;
+      a.play().catch(() => {});
+    } catch (_) {}
+  };
+
+  playOnce();
+  setTimeout(playOnce, 900);
+  setTimeout(playOnce, 1800);
+}
+
+
+
+
+
+   async function openChatWithDriver(driverId, threadData = null) {
+  activeDriverId = driverId;
+
+  const econ =
+    threadData?.economico ?? threadData?.econ ?? threadData?.driver_number ?? null;
+
+  if (subtitleEl) {
+    const name = threadData?.driver_name || ('Conductor #' + driverId);
+    subtitleEl.textContent = econ ? `Eco ${econ} · ${name}` : name;
+  }
+
+  await loadMessagesForDriver(driverId);
+  subscribeDriverChannelForChat(driverId);
+
+  if (offcanvasInstance) offcanvasInstance.show();
+}
+
 
     async function loadMessagesForDriver(driverId) {
       if (!messagesEl || !window.__CHAT_MESSAGES_URL__) return;
@@ -433,102 +550,137 @@ async function setupTenantRealtimeIfAvailable() {
       refreshThreads().catch(console.error);
     }
 
-      function renderMessages(messages) {
-      if (!messagesEl) return;
+  function renderMessages(messages) {
+  if (!messagesEl) return;
 
-      messagesEl.innerHTML = '';
+  messagesEl.innerHTML = '';
 
-      if (!messages.length) {
-        messagesEl.innerHTML =
-          '<div class="text-muted small">Sin mensajes en este chat.</div>';
-        messagesEl.dataset.lastDateKey = '';
-        return;
-      }
+  if (!messages.length) {
+    messagesEl.innerHTML = '<div class="text-muted small">Sin mensajes en este chat.</div>';
+    messagesEl.dataset.lastDateKey = '';
+    return;
+  }
 
-      // Ordenamos por fecha por seguridad (ASC)
-      const sorted = [...messages].sort((a, b) => {
-        const da = new Date(String(a.created_at || '').replace(' ', 'T')).getTime();
-        const db = new Date(String(b.created_at || '').replace(' ', 'T')).getTime();
-        return da - db;
-      });
+  const sorted = [...messages].sort((a, b) => {
+    const da = new Date(String(a.created_at || '').replace(' ', 'T')).getTime();
+    const db = new Date(String(b.created_at || '').replace(' ', 'T')).getTime();
+    return da - db;
+  });
 
-      let lastDateKey = null;
+  let lastDateKey = null;
 
-      sorted.forEach((m) => {
-        const isDispatch = m.sender_type === 'dispatch';
-        const dateKey = dateKeyFromTs(m.created_at);
-        const dateLabel = fmtDateLabel(m.created_at);
+  sorted.forEach((m) => {
+    const isDispatch = m.sender_type === 'dispatch';
+    const isHelp = String(m.kind || '').toLowerCase() === 'help';
+    const driverId = m.driver_id;
 
-        // Si cambia el día → header
-        if (dateKey && dateKey !== lastDateKey) {
-          appendDateHeaderElement(messagesEl, dateKey, dateLabel);
-          lastDateKey = dateKey;
-        }
+    const dateKey = dateKeyFromTs(m.created_at);
+    const dateLabel = fmtDateLabel(m.created_at);
 
-        const wrapper = document.createElement('div');
-        wrapper.className = 'mb-1';
-
-        wrapper.innerHTML = `
-          <div class="d-flex ${isDispatch ? 'justify-content-end' : 'justify-content-start'}">
-            <div class="p-2 rounded-3 ${
-              isDispatch ? 'bg-primary text-white' : 'bg-light'
-            }" style="max-width: 80%;">
-              <div class="small mb-1">
-                ${isDispatch ? 'Tú' : 'Conductor'}
-                <span class="text-muted ms-2 small">${fmtTime(m.created_at)}</span>
-              </div>
-              <div class="small">${escapeHtml(m.text || '')}</div>
-            </div>
-          </div>
-        `;
-
-        messagesEl.appendChild(wrapper);
-      });
-
-      // Guardamos el último día para el realtime
-      messagesEl.dataset.lastDateKey = lastDateKey || '';
-
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (dateKey && dateKey !== lastDateKey) {
+      appendDateHeaderElement(messagesEl, dateKey, dateLabel);
+      lastDateKey = dateKey;
     }
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mb-1';
+
+    // HELP: clickable + estilo
+    if (isHelp && driverId) {
+      wrapper.style.cursor = 'pointer';
+      wrapper.title = 'Clic para ubicar al conductor';
+      wrapper.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        focusDriverFromHelp(driverId);
+      });
+    }
+
+   
+
+  const bubbleClass = isDispatch
+  ? 'bg-primary text-white'
+  : (isHelp ? 'bg-light border border-warning-subtle' : 'bg-light');
+
+wrapper.innerHTML = `
+  <div class="d-flex ${isDispatch ? 'justify-content-end' : 'justify-content-start'}">
+    <div class="msg-bubble ${bubbleClass}">
+      <div class="msg-meta mb-1">
+        ${isDispatch ? 'Tú' : 'Conductor'}
+        <span class="ms-2">${fmtTime(m.created_at)}</span>
+        ${isHelp ? `<span class="ms-2 badge bg-warning text-dark">Soporte</span>` : ''}
+      </div>
+      <div class="msg-text">${escapeHtml(m.text || '')}</div>
+      ${isHelp && driverId ? `<div class="msg-meta mt-1">Clic para ubicar</div>` : ''}
+    </div>
+  </div>
+`;
+
+    messagesEl.appendChild(wrapper);
+  });
+
+  messagesEl.dataset.lastDateKey = lastDateKey || '';
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 
     // ==========================
     // Append realtime (cuando sí hay Echo)
     // ==========================
-       function appendRealtimeMessage(e) {
-      if (!messagesEl) return;
+   function appendRealtimeMessage(e) {
+  if (!messagesEl) return;
 
-      const isDispatch = e.sender_type === 'dispatch';
+  const isDispatch = e.sender_type === 'dispatch';
+  const isHelp = String(e.kind || '').toLowerCase() === 'help';
+  const driverId = e.driver_id;
+  const msgId = e.id; // si viene en payload
 
-      const dateKey = dateKeyFromTs(e.created_at);
-      const dateLabel = fmtDateLabel(e.created_at);
-      const lastKey = messagesEl.dataset.lastDateKey || '';
+  const dateKey = dateKeyFromTs(e.created_at);
+  const dateLabel = fmtDateLabel(e.created_at);
+  const lastKey = messagesEl.dataset.lastDateKey || '';
 
-      // Si cambia de día respecto al último mensaje pintado → header
-      if (dateKey && dateKey !== lastKey) {
-        appendDateHeaderElement(messagesEl, dateKey, dateLabel);
-        messagesEl.dataset.lastDateKey = dateKey;
-      }
+  if (dateKey && dateKey !== lastKey) {
+    appendDateHeaderElement(messagesEl, dateKey, dateLabel);
+    messagesEl.dataset.lastDateKey = dateKey;
+  }
 
-      const wrapper = document.createElement('div');
-      wrapper.className = 'mb-1';
+  const wrapper = document.createElement('div');
+  wrapper.className = 'mb-1';
 
-      wrapper.innerHTML = `
-        <div class="d-flex ${isDispatch ? 'justify-content-end' : 'justify-content-start'}">
-          <div class="p-2 rounded-3 ${
-            isDispatch ? 'bg-primary text-white' : 'bg-light'
-          }" style="max-width: 80%;">
-            <div class="small mb-1">
-              ${isDispatch ? 'Tú' : 'Conductor'}
-              <span class="text-muted ms-2 small">${fmtTime(e.created_at)}</span>
-            </div>
-            <div class="small">${escapeHtml(e.text || '')}</div>
-          </div>
+  if (isHelp && driverId) {
+    wrapper.style.cursor = 'pointer';
+    wrapper.title = 'Clic para ubicar al conductor';
+    wrapper.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      focusDriverFromHelp(driverId);
+    });
+
+    // 🔊 ALERTA HELP: 3 veces
+    playHelpAlert3x(msgId);
+  }
+
+  const bubbleClass = isDispatch
+    ? 'bg-primary text-white'
+    : (isHelp ? 'bg-danger text-white' : 'bg-light');
+
+  wrapper.innerHTML = `
+    <div class="d-flex ${isDispatch ? 'justify-content-end' : 'justify-content-start'}">
+      <div class="p-2 rounded-3 ${bubbleClass}" style="max-width: 80%;">
+        <div class="small mb-1">
+          ${isDispatch ? 'Tú' : (isHelp ? 'AYUDA' : 'Conductor')}
+          <span class="text-muted ms-2 small">${fmtTime(e.created_at)}</span>
         </div>
-      `;
+        <div class="small">${escapeHtml(e.text || '')}</div>
+        ${isHelp && driverId ? `<div class="small mt-1 opacity-75">Ver conductor #${Number(driverId)}</div>` : ''}
+      </div>
+    </div>
+  `;
 
-      messagesEl.appendChild(wrapper);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
+  messagesEl.appendChild(wrapper);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 
 
     // ==========================

@@ -1,5 +1,7 @@
-@extends('layouts.admin')
-@section('title','Vehículos')
+@extends('layouts.admin_tabler')
+
+@section('title','Vehiculos')
+@section('page-id','vehicles')
 
 @section('content')
 <div class="d-flex justify-content-between align-items-center mb-3">

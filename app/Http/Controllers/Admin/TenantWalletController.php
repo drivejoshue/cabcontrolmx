@@ -56,35 +56,5 @@ class TenantWalletController extends Controller
     /**
      * Recarga manual (simulación). Temporal para pruebas.
      */
-    public function topupManual(Request $r, TenantWalletService $wallet)
-    {
-        $tenantId = (int)(Auth::user()->tenant_id ?? 0);
-        abort_if($tenantId <= 0, 403);
-
-        $data = $r->validate([
-            'amount' => 'required|numeric|min:10|max:200000',
-            'notes'  => 'nullable|string|max:255',
-        ]);
-
-        // Usa el método que ya dejaste funcionando (ajústalo al real):
-        // topupConfirmed() o creditTopup() según tu implementación final.
-        if (method_exists($wallet, 'topupConfirmed')) {
-            $wallet->topupConfirmed(
-                $tenantId,
-                (float)$data['amount'],
-                'manual:'.now()->format('YmdHis'),
-                $data['notes'] ?? 'Recarga manual (simulación)'
-            );
-        } else {
-            // fallback si tu service usa creditTopup()
-            $wallet->creditTopup(
-                $tenantId,
-                (float)$data['amount'],
-                'MANUAL-'.now()->format('YmdHis'),
-                $data['notes'] ?? 'Recarga manual (simulación)'
-            );
-        }
-
-        return back()->with('ok', 'Recarga aplicada.');
-    }
+    
 }

@@ -95,6 +95,9 @@ return [
     |
     */
 
+
+
+
     'cipher' => 'AES-256-CBC',
 
     'key' => env('APP_KEY'),
@@ -126,5 +129,9 @@ return [
         'driver' => env('APP_MAINTENANCE_DRIVER', 'file'),
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
+
+    'mercadopago' => [
+    'token' => env('MERCADOPAGO_ACCESS_TOKEN'),
+],
 
 ];
