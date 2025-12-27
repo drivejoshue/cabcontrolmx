@@ -19,6 +19,8 @@ return [
         'http://localhost:5173',
         'https://localhost',
         'https://localhost:5173',
+         'https://orbana.mx',
+        'https://www.orbana.mx',
     ],
 
     // Cualquier subdominio *.trycloudflare.com (túneles “quick”)

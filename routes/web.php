@@ -474,6 +474,17 @@ Route::prefix('sysadmin')
 
         Route::post('/verifications/{document}/review', [VerificationQueueController::class, 'review'])
             ->name('sysadmin.verifications.review');
+
+             Route::get('/leads', [ContactLeadController::class,'index'])
+      ->name('sysadmin.leads.index');
+
+    Route::get('/leads/{lead}', [ContactLeadController::class,'show'])
+      ->name('sysadmin.leads.show');
+
+    Route::post('/leads/{lead}/status', [ContactLeadController::class,'updateStatus'])
+      ->name('sysadmin.leads.status');
+
+      
     });
 
 /*

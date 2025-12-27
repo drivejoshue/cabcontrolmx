@@ -56,4 +56,11 @@ return [
     'public_url'     => env('MERCADOPAGO_PUBLIC_URL', env('APP_URL')),
 ],
 
+
+'public_contact' => [
+  'key' => env('PUBLIC_CONTACT_KEY', ''),
+  'to'  => env('CONTACT_TO_EMAIL', 'contacto@orbana.mx'),
+],
+
+
 ];

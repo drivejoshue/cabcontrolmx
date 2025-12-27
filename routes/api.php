@@ -32,7 +32,7 @@ use App\Http\Controllers\Api\DriverProfileController;
 use App\Http\Controllers\Api\DriverWalletController;
 use App\Http\Controllers\Api\PassengerSuggestionsController;
 use App\Http\Controllers\Api\PassengerPlacesController;
-
+use App\Http\Controllers\Api\PublicContactController;
 use App\Events\DriverEvent;
 use App\Http\Controllers\Webhooks\MercadoPagoWebhookController;
 /*
@@ -48,7 +48,8 @@ use App\Http\Controllers\Webhooks\MercadoPagoWebhookController;
 
 Route::match(['GET','POST'], '/webhooks/mercadopago', [MercadoPagoWebhookController::class, 'handle'])
     ->name('api.webhooks.mercadopago');
-
+Route::post('/public/contact', [PublicContactController::class, 'store'])
+  ->middleware(['throttle:10,1']);
 Route::post('/test-driver-event', function (Request $request) {
     $user = \App\Models\User::where('email', 'driver@test.com')->first();
 
