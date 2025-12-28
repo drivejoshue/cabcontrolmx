@@ -35,10 +35,14 @@ window.Echo = new Echo({
 
   // Importante para private/presence
   authEndpoint: '/broadcasting/auth',
-  auth: {
-    headers: csrf ? { 'X-CSRF-TOKEN': csrf } : {}
-  },
   withCredentials: true,
+  auth: {
+    headers: {
+      ...(csrf ? { 'X-CSRF-TOKEN': csrf } : {}),
+      'X-Requested-With': 'XMLHttpRequest',
+      'Accept': 'application/json',
+    }
+  },
 });
 
 

@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\DB;
 
 // Panel (sesión web)
-Broadcast::routes(['middleware' => ['web', 'auth']]); // /broadcasting/auth
+Broadcast::routes(['middleware' => ['web', 'auth','staff']]); // /broadcasting/auth
 
 // API (Driver App con Sanctum) → la app usará /api/broadcasting/auth
 Broadcast::routes([

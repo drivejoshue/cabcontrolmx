@@ -30,6 +30,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant.billing_ok_api' => \App\Http\Middleware\TenantBillingOkApi::class,
                'dispatch'  => \App\Http\Middleware\EnsureUserCanDispatch::class,
                     'tenant.balance' => \App\Http\Middleware\EnsureTenantSufficientBalance::class,
+                     'staff' => \App\Http\Middleware\EnsureStaff::class,
 
 
 
