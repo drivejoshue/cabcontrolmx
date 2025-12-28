@@ -9,6 +9,7 @@ export default defineConfig({
         'resources/css/adminkit/dark.css',
         'resources/js/app.js',
          'resources/css/app.css',
+         'resources/js/adminkit.js',
         'resources/js/pages/dispatch.js',
       ],
       refresh: true,
