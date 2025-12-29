@@ -133,6 +133,10 @@ Route::prefix('passenger')->group(function () {
       Route::post('/devices/sync', [PassengerDeviceController::class, 'sync']);
     Route::post('/devices/delete', [PassengerDeviceController::class, 'deleteToken']); // o
     Route::post('profile', [PassengerAuthController::class, 'profile']);
+  Route::post('devices/logout-all',  [PassengerDeviceController::class, 'logoutAll']);
+
+  Route::post('account/deactivate',  [PassengerDeviceController::class, 'deactivateAccount']);
+    
     Route::post('test-push', [PassengerTestPushController::class, 'sendTest']);
     // Calcular tarifa recomendada para el pasajero (quote)
     Route::post('/quote', [PassengerAppQuoteController::class, 'quote']);

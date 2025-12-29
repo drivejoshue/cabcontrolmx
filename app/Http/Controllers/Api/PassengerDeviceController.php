@@ -112,4 +112,62 @@ class PassengerDeviceController extends Controller
             'msg' => 'device desactivado',
         ]);
     }
+
+    public function logoutAll(Request $request)
+{
+  $data = $request->validate([
+    'firebase_uid' => 'required|string|max:128',
+  ]);
+
+  [$passenger, $err] = \App\Support\PassengerGuard::findActiveByUid($data['firebase_uid']);
+  if ($err) return $err;
+
+  \App\Models\PassengerDevice::where('passenger_id', $passenger->id)->update([
+    'is_active' => false,
+    'fcm_token' => null,
+    'last_seen_at' => Carbon::now(),
+  ]);
+
+  return response()->json([
+    'ok' => true,
+    'msg' => 'Sesiones cerradas en todos los dispositivos (backend).',
+  ]);
+}
+
+
+
+public function deactivateAccount(Request $request)
+{
+  $data = $request->validate([
+    'firebase_uid' => 'required|string|max:128',
+    'reason'       => 'nullable|string|max:190',
+  ]);
+
+  $p = \App\Models\Passenger::where('firebase_uid', $data['firebase_uid'])->first();
+  if (! $p) {
+    return response()->json(['ok'=>false,'msg'=>'Pasajero no encontrado.'], 404);
+  }
+
+  // Marcar deshabilitado
+  $p->is_disabled = true;
+  $p->disabled_at = Carbon::now();
+  $p->disabled_reason = $data['reason'] ?? 'user_request';
+  $p->save();
+
+  // Invalidar dispositivos
+  \App\Models\PassengerDevice::where('passenger_id', $p->id)->update([
+    'is_active' => false,
+    'fcm_token' => null,
+    'last_seen_at' => Carbon::now(),
+  ]);
+
+  return response()->json([
+    'ok' => true,
+    'msg' => 'Cuenta deshabilitada.',
+  ]);
+}
+
+
+
+
 }
