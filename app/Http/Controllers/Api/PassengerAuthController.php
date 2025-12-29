@@ -98,31 +98,23 @@ class PassengerAuthController extends Controller
 }
 
 
-    public function ping(Request $request)
-    {
-        $data = $request->validate([
-            'firebase_uid' => 'required|string|max:128',
-            'platform'     => 'nullable|string|max:20',
-            'app_version'  => 'nullable|string|max:20',
-        ]);
+   public function ping(Request $request)
+{
+    $data = $request->validate([
+        'firebase_uid' => 'required|string|max:128',
+        'platform'     => 'nullable|string|max:20',
+        'app_version'  => 'nullable|string|max:20',
+    ]);
 
-        $firebaseUid = $data['firebase_uid'];
+    [$passenger, $err] = PassengerGuard::findActiveByUid($data['firebase_uid']);
+    if ($err) return $err;
 
-        // Buscar pasajero solo por firebase_uid (global, sin tenant)
-        $passenger = Passenger::where('firebase_uid', $firebaseUid)->first();
+    return response()->json([
+        'ok'  => true,
+        'msg' => 'pong',
+    ]);
+}
 
-        if (! $passenger) {
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'Pasajero no encontrado, sincroniza primero /passenger/auth-sync.',
-            ], 422);
-        }
-
-        return response()->json([
-            'ok'  => true,
-            'msg' => 'pong',
-        ]);
-    }
 
 
     // app/Http/Controllers/Api/PassengerAuthController.php
@@ -133,14 +125,8 @@ public function profile(Request $request)
         'firebase_uid' => 'required|string|max:128',
     ]);
 
-    $passenger = \App\Models\Passenger::where('firebase_uid', $data['firebase_uid'])->first();
-
-    if (! $passenger) {
-        return response()->json([
-            'ok'  => false,
-            'msg' => 'Pasajero no encontrado, llama primero a /passenger/auth-sync.',
-        ], 404);
-    }
+    [$passenger, $err] = PassengerGuard::findActiveByUid($data['firebase_uid']);
+    if ($err) return $err;
 
     return response()->json([
         'ok'   => true,
@@ -155,6 +141,7 @@ public function profile(Request $request)
         ],
     ]);
 }
+
 
 
 
