@@ -49,41 +49,42 @@ class ContactLeadController extends Controller
         return back()->with('status','Estado actualizado.');
     }
 
-    public function store(Request $r)
-    {
-        // 1) Honeypot
-        if (trim((string) $r->input('website')) !== '') {
-            return response()->json(['ok' => true]);
-        }
-
-        // 2) Gate por header
-        $provided = $r->header('X-PUBLIC-KEY', '');
-        $expected = config('orbana.public_contact_key');
-        if (!$expected || $provided !== $expected) {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
-
-        // 3) Validación
-        $data = $r->validate([
-            'contact_name'  => 'required|string|max:120',
-            'contact_email' => 'required|email|max:160',
-            'contact_phone' => 'nullable|string|max:40',
-            'central_name'  => 'nullable|string|max:160',
-            'city'          => 'nullable|string|max:120',
-            'state'         => 'nullable|string|max:120',
-            'message'       => 'nullable|string|max:4000',
-        ]);
-
-        // 4) Persistir (si aplica)
-        // ContactLead::create([...$data, 'status' => 'new']);
-
-        // 5) Log
-        Log::info('Landing contact', [
-            'from' => $r->ip(),
-            'ua'   => $r->userAgent(),
-            'data' => $data,
-        ]);
-
+   public function store(Request $r)
+{
+    if (trim((string) $r->input('website')) !== '') {
         return response()->json(['ok' => true]);
     }
+
+    $provided = $r->header('X-PUBLIC-KEY', '');
+    $expected = config('orbana.public_contact_key');
+    if (!$expected || $provided !== $expected) {
+        return response()->json(['message' => 'Forbidden'], 403);
+    }
+
+    $data = $r->validate([
+        'contact_name'  => 'required|string|max:120',
+        'contact_email' => 'required|email|max:160',
+        'contact_phone' => 'nullable|string|max:40',
+        'central_name'  => 'nullable|string|max:160',
+        'city'          => 'nullable|string|max:120',
+        'state'         => 'nullable|string|max:120',
+        'message'       => 'nullable|string|max:4000',
+    ]);
+
+    // Guardar lead
+    ContactLead::create([
+        'contact_name'  => $data['contact_name'],
+        'contact_email' => $data['contact_email'],
+        'contact_phone' => $data['contact_phone'] ?? null,
+        'central_name'  => $data['central_name'] ?? null,
+        'city'          => $data['city'] ?? null,
+        'state'         => $data['state'] ?? null,
+        'message'       => $data['message'] ?? null,
+        'status'        => 'new',
+    ]);
+
+    Log::info('Landing contact', ['from'=>$r->ip(), 'ua'=>$r->userAgent(), 'data'=>$data]);
+
+    return response()->json(['ok' => true]);
+}
 }
