@@ -3,17 +3,15 @@
 namespace App\Http\Controllers\SysAdmin;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;                 // ← FALTA
+use Illuminate\Support\Facades\Log;         // ← FALTA
 use App\Models\ContactLead;
-use Illuminate\Http\Request;              // ✅ FALTA
-use Illuminate\Support\Facades\Log;   
 
-
-   class ContactLeadController extends Controller
+class ContactLeadController extends Controller
 {
     public function index()
     {
-        // filtros opcionales (coinciden con los del blade index)
-        $q = trim((string)request('q',''));
+        $q = trim((string) request('q',''));
         $status = request('status');
 
         $leads = ContactLead::query()
@@ -51,22 +49,21 @@ use Illuminate\Support\Facades\Log;
         return back()->with('status','Estado actualizado.');
     }
 
-
-   public function store(Request $r)
+    public function store(Request $r)
     {
-        // 1) Honeypot simple (campo oculto "website")
+        // 1) Honeypot
         if (trim((string) $r->input('website')) !== '') {
-            return response()->json(['ok' => true]); // silenciar bots
+            return response()->json(['ok' => true]);
         }
 
-        // 2) Gate por header (clave pública, NO es secreto)
+        // 2) Gate por header
         $provided = $r->header('X-PUBLIC-KEY', '');
-        $expected = config('orbana.public_contact_key'); // ver config abajo
+        $expected = config('orbana.public_contact_key');
         if (!$expected || $provided !== $expected) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
 
-        // 3) Validación payload
+        // 3) Validación
         $data = $r->validate([
             'contact_name'  => 'required|string|max:120',
             'contact_email' => 'required|email|max:160',
@@ -77,13 +74,10 @@ use Illuminate\Support\Facades\Log;
             'message'       => 'nullable|string|max:4000',
         ]);
 
-        // 4) (Opcional) Persistir
-        // DB::table('contact_messages')->insert([...$data, 'created_at'=>now()]);
+        // 4) Persistir (si aplica)
+        // ContactLead::create([...$data, 'status' => 'new']);
 
-        // 5) Notificar por correo (opcional)
-        // Mail::to(config('orbana.sales_email'))->send(new ContactMessageMail($data));
-
-        // 6) Log operativo
+        // 5) Log
         Log::info('Landing contact', [
             'from' => $r->ip(),
             'ua'   => $r->userAgent(),
