@@ -4,6 +4,8 @@ namespace App\Http\Controllers\SysAdmin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ContactLead;
+use Illuminate\Http\Request;              // ✅ FALTA
+use Illuminate\Support\Facades\Log;   
 
 
    class ContactLeadController extends Controller
