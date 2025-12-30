@@ -62,7 +62,8 @@ use App\Http\Controllers\SysAdmin\SysDriverDocumentController;
 use App\Http\Controllers\SysAdmin\TenantCommissionReportController;
 use App\Http\Controllers\SysAdmin\VerificationQueueController;
 use App\Http\Controllers\SysAdmin\ContactLeadController;
-
+use App\Http\Controllers\SysAdmin\CityController;
+use App\Http\Controllers\SysAdmin\CityPlaceController;
 // Debug/events
 use App\Events\TestEvent;
 
@@ -474,6 +475,32 @@ Route::prefix('sysadmin')->middleware(['auth','sysadmin'])->group(function () {
     // Reporte (placeholder habilitado si ya existe controller)
     Route::get('/tenants/{tenant}/reports/commissions', [TenantCommissionReportController::class, 'index'])
         ->name('sysadmin.tenants.reports.commissions');
+
+    // =====================================
+    // Cities (SysAdmin)
+    // =====================================
+    Route::get('/cities', [CityController::class, 'index'])->name('sysadmin.cities.index');
+    Route::get('/cities/create', [CityController::class, 'create'])->name('sysadmin.cities.create');
+    Route::post('/cities', [CityController::class, 'store'])->name('sysadmin.cities.store');
+    Route::get('/cities/{city}', [CityController::class, 'show'])->name('sysadmin.cities.show');
+    Route::get('/cities/{city}/edit', [CityController::class, 'edit'])->name('sysadmin.cities.edit');
+    Route::put('/cities/{city}', [CityController::class, 'update'])->name('sysadmin.cities.update');
+    Route::delete('/cities/{city}', [CityController::class, 'destroy'])->name('sysadmin.cities.destroy');
+
+
+    // =====================================
+    // City Places (SysAdmin)
+    // =====================================
+    Route::get('/city-places', [CityPlaceController::class, 'index'])->name('sysadmin.city-places.index');
+    Route::get('/city-places/create', [CityPlaceController::class, 'create'])->name('sysadmin.city-places.create');
+    Route::post('/city-places', [CityPlaceController::class, 'store'])->name('sysadmin.city-places.store');
+    Route::get('/city-places/{city_place}', [CityPlaceController::class, 'show'])->name('sysadmin.city-places.show');
+    Route::get('/city-places/{city_place}/edit', [CityPlaceController::class, 'edit'])->name('sysadmin.city-places.edit');
+    Route::put('/city-places/{city_place}', [CityPlaceController::class, 'update'])->name('sysadmin.city-places.update');
+    Route::delete('/city-places/{city_place}', [CityPlaceController::class, 'destroy'])->name('sysadmin.city-places.destroy');
+
+
+
 });
 /*
 |--------------------------------------------------------------------------

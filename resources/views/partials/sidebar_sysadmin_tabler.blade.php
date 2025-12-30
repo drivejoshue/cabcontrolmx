@@ -106,7 +106,24 @@ $isActive = function ($patterns): bool {
           </a>
         </li>
 
-       
+       {{-- UBICACIONES (SYSADMIN) --}}
+<li class="nav-item mt-3">
+  <div class="nav-link text-uppercase text-muted fw-semibold small">Ubicaciones</div>
+</li>
+
+<li class="nav-item">
+  <a class="nav-link" href="{{ route('sysadmin.cities.index') }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-building-community"></i></span>
+    <span class="nav-link-title">Ciudades</span>
+  </a>
+</li>
+
+<li class="nav-item">
+  <a class="nav-link" href="{{ route('sysadmin.city-places.index') }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-map-pin"></i></span>
+    <span class="nav-link-title">Lugares sugeridos</span>
+  </a>
+</li>
        
       </ul>
     </div>
