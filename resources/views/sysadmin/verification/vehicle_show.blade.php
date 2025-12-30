@@ -1,175 +1,141 @@
+{{-- resources/views/sysadmin/verification/vehicle_show.blade.php --}}
 @extends('layouts.sysadmin')
 @section('title','Verificación de vehículo')
 
 @push('styles')
 <style>
-  .doc-preview-img {
-    max-width: 200px;
-    max-height: 140px;
-    object-fit: cover;
-    border-radius: 4px;
-  }
-  .doc-preview-frame {
-    width: 100%;
-    height: 320px;
-    border: 1px solid #dee2e6;
-    border-radius: 4px;
-  }
+  .doc-preview-img{max-width:200px;max-height:140px;object-fit:cover;border-radius:6px}
+  .doc-preview-frame{width:100%;height:320px;border:1px solid #e9ecef;border-radius:6px}
+  .pill{border-radius:999px;padding:.25rem .6rem;font-size:.75rem}
 </style>
 @endpush
 
 @section('content')
 <div class="container-fluid">
 
-  {{-- Header --}}
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-      <h3 class="mb-0">
-        Verificación de vehículo
+  {{-- Encabezado / Toolbar superior --}}
+  <div class="page-header d-print-none mb-3">
+    <div class="row align-items-center">
+      <div class="col">
         @php
           $status = $v->verification_status ?? 'pending';
           $statusLower = strtolower($status);
-          $badge = match($statusLower) {
-            'verified' => 'success',
-            'rejected' => 'danger',
-            default    => 'warning',
-          };
+          $badge = match($statusLower){ 'verified'=>'success','rejected'=>'danger', default=>'warning' };
         @endphp
-        <span class="badge bg-{{ $badge }}">{{ $statusLower }}</span>
-      </h3>
-      <div class="text-muted small">
-        Tenant #{{ $v->tenant_id }} · Vehículo #{{ $v->id }}
-      </div>
-      <div class="text-muted mt-1">
-        Eco: <strong>{{ $v->economico }}</strong> · Placa: <strong>{{ $v->plate }}</strong><br>
-        {{ $v->brand ?: '—' }} {{ $v->model ?: '' }} {{ $v->year ? '('.$v->year.')' : '' }}
-      </div>
-      @if(!empty($v->verification_notes))
-        <div class="mt-1 text-danger">
-          <strong>Notas actuales:</strong> {{ $v->verification_notes }}
+        <h2 class="page-title mb-1">
+          Verificación de vehículo
+          <span class="badge bg-{{ $badge }} pill align-middle">{{ $statusLower }}</span>
+        </h2>
+        <div class="text-muted small">
+          Tenant #{{ $v->tenant_id }} · Vehículo #{{ $v->id }}
         </div>
-      @endif
-    </div>
-
-    <div class="d-flex gap-2">
-      <a href="{{ route('sysadmin.verifications.index') }}" class="btn btn-outline-secondary">
-        Volver a la cola
-      </a>
-      {{-- Opcional: link directo a documentos del tenant/vehículo --}}
-      <a href="{{ route('sysadmin.vehicles.documents.index', ['tenant'=>$v->tenant_id, 'vehicle'=>$v->id]) }}"
-         class="btn btn-outline-primary">
-        Ver documentos (vista completa)
-      </a>
+      </div>
+      <div class="col-auto ms-auto">
+        <div class="btn-list">
+          <a href="{{ route('sysadmin.verifications.index') }}" class="btn btn-outline-secondary">
+            Volver a la cola
+          </a>
+          <a href="{{ route('sysadmin.vehicles.documents.index', ['tenant'=>$v->tenant_id,'vehicle'=>$v->id]) }}"
+             class="btn btn-outline-primary">
+            Ver documentos (vista completa)
+          </a>
+        </div>
+      </div>
     </div>
   </div>
 
-  @if(session('ok'))
-    <div class="alert alert-success">{{ session('ok') }}</div>
-  @endif
-  @if(session('status'))
-    <div class="alert alert-success">{{ session('status') }}</div>
-  @endif
+  {{-- Flash --}}
+  @if(session('ok')) <div class="alert alert-success">{{ session('ok') }}</div>@endif
+  @if(session('status')) <div class="alert alert-success">{{ session('status') }}</div>@endif
   @if($errors->any())
     <div class="alert alert-danger">
-      <ul class="mb-0">
-        @foreach($errors->all() as $e)
-          <li>{{ $e }}</li>
-        @endforeach
-      </ul>
+      <ul class="mb-0">@foreach($errors->all() as $e)<li>{{ $e }}</li>@endforeach</ul>
     </div>
   @endif
 
   @php
-    // Mapeo de tipos (igual que en Admin)
     $typeLabels = [
-      'foto_vehiculo'              => 'Foto del vehículo',
-      'placas'                     => 'Foto de placas',
-      'cedula_transporte_publico'  => 'Cédula / Transporte público (Taxi)',
-      'tarjeta_circulacion'        => 'Tarjeta de circulación',
-      'seguro'                     => 'Póliza (opcional)',
+      'foto_vehiculo'             => 'Foto del vehículo',
+      'placas'                    => 'Foto de placas',
+      'cedula_transporte_publico' => 'Cédula / Transporte público (Taxi)',
+      'tarjeta_circulacion'       => 'Tarjeta de circulación',
+      'seguro'                    => 'Póliza (opcional)',
     ];
-
-    // Último doc aprobado por tipo
-    $approvedByType = collect($docs)
-      ->where('status','approved')
-      ->groupBy('type')
-      ->map(fn($g)=>$g->sortByDesc('id')->first());
-
+    $approvedByType = collect($docs)->where('status','approved')->groupBy('type')->map(fn($g)=>$g->sortByDesc('id')->first());
     $requiredOk = collect($required)->every(fn($t)=>isset($approvedByType[$t]));
   @endphp
 
   <div class="row g-3 mb-3">
+    {{-- Resumen --}}
     <div class="col-12 col-lg-6">
       <div class="card h-100">
         <div class="card-header">
-          <strong>Resumen de verificación</strong>
+          <strong>Resumen</strong>
         </div>
         <div class="card-body">
-          <div class="mb-2">
-            <strong>Estado actual:</strong>
-            <span class="badge bg-{{ $badge }}">{{ $statusLower }}</span>
+          <div class="mb-2 text-muted">
+            Eco: <strong>{{ $v->economico }}</strong> · Placa: <strong>{{ $v->plate }}</strong><br>
+            {{ $v->brand ?: '—' }} {{ $v->model ?: '' }} {{ $v->year ? '('.$v->year.')' : '' }}
           </div>
 
-          <div class="mb-3">
-            <strong>Documentos requeridos:</strong>
-            <div class="mt-2 d-flex flex-wrap gap-2">
-              @foreach($required as $rt)
-                @php
-                  $ok = isset($approvedByType[$rt]);
-                  $lbl = $typeLabels[$rt] ?? $rt;
-                @endphp
-                <span class="badge bg-{{ $ok ? 'success' : 'secondary' }}">
-                  {{ $lbl }} {{ $ok ? '✓' : '—' }}
-                </span>
-              @endforeach
+          @if(!empty($v->verification_notes))
+            <div class="alert alert-outline-danger mb-3">
+              <strong>Notas actuales:</strong> {{ $v->verification_notes }}
             </div>
+          @endif
+
+          <div class="mb-2"><strong>Documentos requeridos</strong></div>
+          <div class="d-flex flex-wrap gap-2">
+            @foreach($required as $rt)
+              @php $ok = isset($approvedByType[$rt]); @endphp
+              <span class="badge {{ $ok ? 'bg-success' : 'bg-secondary' }} pill">
+                {{ $typeLabels[$rt] ?? $rt }} {{ $ok ? '✓' : '—' }}
+              </span>
+            @endforeach
           </div>
+
+          <hr>
 
           @if(!$requiredOk)
             <div class="alert alert-warning mb-0">
-              Faltan documentos requeridos aprobados.  
-              El vehículo seguirá <strong>pendiente</strong> hasta que
-              "Foto del vehículo", "Placas" y "Cédula / Transporte público" estén aprobados.
+              Faltan aprobaciones de requeridos. El vehículo seguirá <strong>pending</strong> hasta aprobar
+              “Foto del vehículo”, “Placas” y “Cédula / Transporte público”.
             </div>
           @elseif($statusLower !== 'verified')
             <div class="alert alert-info mb-0">
-              Todos los documentos requeridos están aprobados.  
-              Al aprobar/recalcular los documentos el sistema puede marcar este vehículo como
-              <strong>verified</strong> automáticamente.
+              Requeridos completos. Al terminar la revisión, el sistema puede marcarlo como <strong>verified</strong>.
             </div>
           @else
             <div class="alert alert-success mb-0">
-              Este vehículo está <strong>verificado</strong>.  
-              Si rechazas algún documento requerido, se marcará como <strong>rejected</strong> o <strong>pending</strong>
-              según corresponda.
+              El vehículo está <strong>verified</strong>. Si rechazas algún documento requerido, se actualizará a
+              <strong>rejected</strong> o <strong>pending</strong> según corresponda.
             </div>
           @endif
         </div>
       </div>
     </div>
 
-    {{-- Foto rápida si existe --}}
+    {{-- Foto rápida --}}
     <div class="col-12 col-lg-6">
       <div class="card h-100">
         <div class="card-header">
-          <strong>Foto rápida del vehículo</strong>
+          <strong>Foto rápida</strong>
         </div>
         <div class="card-body">
           @php
             $foto = null;
-            if (!empty($v->foto_path))    { $foto = asset('storage/'.$v->foto_path); }
-            elseif (!empty($v->photo_url)){ $foto = $v->photo_url; }
+            if (!empty($v->foto_path))    $foto = asset('storage/'.$v->foto_path);
+            elseif (!empty($v->photo_url)) $foto = $v->photo_url;
           @endphp
 
           @if($foto)
             <div class="text-center">
               <img src="{{ $foto }}" class="img-fluid rounded border"
-                   style="max-height:260px;object-fit:contain;" alt="Foto vehículo">
+                   style="max-height:260px;object-fit:contain" alt="Foto del vehículo">
             </div>
           @else
             <div class="alert alert-secondary mb-0">
-              El tenant aún no ha subido una foto al campo principal del vehículo.
-              Puedes revisar las imágenes en la tabla de documentos.
+              Sin imagen principal. Revisa la tabla de documentos para visualizar archivos cargados.
             </div>
           @endif
         </div>
@@ -177,132 +143,94 @@
     </div>
   </div>
 
-  {{-- Tabla de documentos --}}
+  {{-- Documentos --}}
   <div class="card">
-    <div class="card-header">
+    <div class="card-header d-flex justify-content-between align-items-center">
       <strong>Documentos del vehículo</strong>
+      <span class="text-muted small">Total: {{ count($docs) }}</span>
     </div>
     <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-striped mb-0 align-middle">
+        <table class="table table-vcenter table-striped mb-0 align-middle">
           <thead class="table-light">
             <tr>
               <th>Tipo</th>
-              <th>Status</th>
-              <th>No. / Emisor</th>
+              <th>Estatus</th>
+              <th>No./Emisor</th>
               <th>Fechas</th>
               <th>Archivo</th>
-              <th>Revisión</th>
+              <th class="text-end">Revisión</th>
             </tr>
           </thead>
           <tbody>
           @forelse($docs as $d)
             @php
-              $status = $d->status ?? 'pending';
-              $statusLower = strtolower($status);
-              $badgeDoc = match($statusLower) {
-                'approved' => 'success',
-                'rejected' => 'danger',
-                'expired'  => 'secondary',
-                default    => 'warning',
-              };
+              $st = strtolower($d->status ?? 'pending');
+              $badgeDoc = match($st){ 'approved'=>'success','rejected'=>'danger','expired'=>'secondary', default=>'warning' };
               $label = $typeLabels[$d->type] ?? $d->type;
               $url = $d->file_path ? asset('storage/'.$d->file_path) : null;
               $ext = $d->file_path ? strtolower(pathinfo($d->file_path, PATHINFO_EXTENSION)) : null;
               $isImage = in_array($ext, ['jpg','jpeg','png','gif','webp']);
-              $isPdf   = $ext === 'pdf';
+              $isPdf = $ext === 'pdf';
             @endphp
             <tr>
               <td>
-                <div>{{ $label }}</div>
-                <div class="small text-muted">Tipo: {{ $d->type }}</div>
+                <div class="fw-semibold">{{ $label }}</div>
+                <div class="text-muted small">Tipo: {{ $d->type }}</div>
               </td>
               <td>
-                <span class="badge bg-{{ $badgeDoc }}">{{ $statusLower }}</span>
+                <span class="badge bg-{{ $badgeDoc }}">{{ $st }}</span>
                 @if($d->reviewed_at)
-                  <div class="small text-muted mt-1">
-                    Rev: {{ $d->reviewed_at }}
-                  </div>
+                  <div class="text-muted small mt-1">Rev: {{ $d->reviewed_at }}</div>
                 @endif
               </td>
               <td class="small">
-                @if($d->document_no)
-                  <div><strong>No:</strong> {{ $d->document_no }}</div>
-                @endif
-                @if($d->issuer)
-                  <div><strong>Emisor:</strong> {{ $d->issuer }}</div>
-                @endif
-                @if(!$d->document_no && !$d->issuer)
-                  <span class="text-muted">—</span>
-                @endif
+                @if($d->document_no)<div><strong>No:</strong> {{ $d->document_no }}</div>@endif
+                @if($d->issuer)<div><strong>Emisor:</strong> {{ $d->issuer }}</div>@endif
+                @if(!$d->document_no && !$d->issuer)<span class="text-muted">—</span>@endif
               </td>
               <td class="small">
-                @if($d->issue_date)
-                  <div><strong>Emisión:</strong> {{ $d->issue_date }}</div>
-                @endif
-                @if($d->expiry_date)
-                  <div><strong>Vence:</strong> {{ $d->expiry_date }}</div>
-                @endif
-                @if(!$d->issue_date && !$d->expiry_date)
-                  <span class="text-muted">—</span>
-                @endif
+                @if($d->issue_date)<div><strong>Emisión:</strong> {{ $d->issue_date }}</div>@endif
+                @if($d->expiry_date)<div><strong>Vence:</strong> {{ $d->expiry_date }}</div>@endif
+                @if(!$d->issue_date && !$d->expiry_date)<span class="text-muted">—</span>@endif
               </td>
-              <td style="width:280px;">
+              <td style="width:280px">
                 @if($url)
                   @if($isImage)
                     <a href="{{ $url }}" target="_blank" class="d-inline-block mb-1">
                       <img src="{{ $url }}" class="doc-preview-img border" alt="Doc">
                     </a>
-                    <div class="small">
-                      <a href="{{ route('sysadmin.vehicle-documents.download', $d->id) }}">
-                        Descargar
-                      </a>
-                    </div>
+                    <div class="small"><a href="{{ route('sysadmin.vehicle-documents.download', $d->id) }}">Descargar</a></div>
                   @elseif($isPdf)
                     <iframe src="{{ $url }}" class="doc-preview-frame mb-1"></iframe>
-                    <div class="small">
-                      <a href="{{ route('sysadmin.vehicle-documents.download', $d->id) }}">
-                        Descargar PDF
-                      </a>
-                    </div>
+                    <div class="small"><a href="{{ route('sysadmin.vehicle-documents.download', $d->id) }}">Descargar PDF</a></div>
                   @else
-                    <div class="small mb-1">
-                      <i class="bi bi-file-earmark"></i> Archivo: {{ $ext ?: 'desconocido' }}
-                    </div>
-                    <a href="{{ route('sysadmin.vehicle-documents.download', $d->id) }}" class="btn btn-sm btn-outline-secondary">
-                      Descargar
-                    </a>
+                    <div class="small mb-1"><i class="bi bi-file-earmark"></i> Archivo: {{ $ext ?: 'desconocido' }}</div>
+                    <a href="{{ route('sysadmin.vehicle-documents.download', $d->id) }}" class="btn btn-sm btn-outline-secondary">Descargar</a>
                   @endif
                 @else
                   <span class="text-muted small">Sin archivo</span>
                 @endif
               </td>
-              <td style="width:320px;">
-                <form method="POST"
-                      action="{{ route('sysadmin.verifications.vehicle_docs.review', $d->id) }}">
+              <td class="text-end" style="width:340px">
+                <form method="POST" action="{{ route('sysadmin.verifications.vehicle_docs.review', $d->id) }}"
+                      class="d-inline-block text-start" style="max-width:320px">
                   @csrf
                   <div class="input-group input-group-sm mb-1">
                     <select name="action" class="form-select">
-                      <option value="approve" {{ $statusLower === 'approved' ? 'selected' : '' }}>Aprobar</option>
-                      <option value="reject"  {{ $statusLower === 'rejected' ? 'selected' : '' }}>Rechazar</option>
+                      <option value="approve" @selected($st==='approved')>Aprobar</option>
+                      <option value="reject"  @selected($st==='rejected')>Rechazar</option>
                     </select>
-                    <button class="btn btn-primary" type="submit">
-                      Guardar
-                    </button>
+                    <button class="btn btn-primary" type="submit">Guardar</button>
                   </div>
-                  <input type="text" name="notes"
-                         class="form-control form-control-sm"
+                  <input type="text" name="notes" class="form-control form-control-sm"
                          placeholder="Notas para el tenant (opcional)"
                          value="{{ old('notes', $d->review_notes) }}">
                 </form>
               </td>
             </tr>
           @empty
-            <tr>
-              <td colspan="6" class="text-center text-muted py-3">
-                Este vehículo aún no tiene documentos cargados.
-              </td>
-            </tr>
+            <tr><td colspan="6" class="text-center text-muted py-4">Sin documentos cargados.</td></tr>
           @endforelse
           </tbody>
         </table>

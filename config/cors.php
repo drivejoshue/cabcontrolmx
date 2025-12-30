@@ -28,7 +28,8 @@ return [
         '#^https://[a-z0-9-]+\.trycloudflare\.com$#',
     ],
 
-    'allowed_headers' => ['*'],
+   'allowed_headers' => ['Content-Type', 'Accept', 'X-PUBLIC-KEY'],
+
     'exposed_headers' => [],
     'max_age' => 0,
 

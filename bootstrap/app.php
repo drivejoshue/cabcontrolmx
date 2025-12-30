@@ -31,6 +31,7 @@ return Application::configure(basePath: dirname(__DIR__))
                'dispatch'  => \App\Http\Middleware\EnsureUserCanDispatch::class,
                     'tenant.balance' => \App\Http\Middleware\EnsureTenantSufficientBalance::class,
                      'staff' => \App\Http\Middleware\EnsureStaff::class,
+                     'public.key' => \App\Http\Middleware\PublicApiKeyMiddleware::class,
 
 
 

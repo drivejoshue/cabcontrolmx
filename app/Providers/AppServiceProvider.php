@@ -39,6 +39,13 @@ class AppServiceProvider extends ServiceProvider
                 ->where('public_active', 0)
                 ->update(['public_active' => 1]);
         });
+
+        RateLimiter::for('public-contact', function ($request) {
+    return [
+        Limit::perMinute(10)->by($request->ip()),
+        Limit::perHour(100)->by($request->ip()),
+    ];
+});
     }
 }
 

@@ -111,7 +111,7 @@ return [
     'driver_app_url' => env('DRIVER_APP_URL'),
     'passenger_app_url' => env('PASSENGER_APP_URL'),
 
-
+    
     /*
     |--------------------------------------------------------------------------
     | Maintenance Mode Driver

@@ -52,12 +52,13 @@ use App\Http\Controllers\Admin\BI\DemandHeatmapController;
 use App\Http\Controllers\Api\SectorController as ApiSectorController;
 use App\Http\Controllers\Api\TaxiStandController as ApiTaxiStandController;
 
-// SysAdmin
+// SysAdmin controllers
 use App\Http\Controllers\SysAdmin\DashboardController as SysAdminDashboardController;
 use App\Http\Controllers\SysAdmin\TenantController as SysTenantController;
 use App\Http\Controllers\SysAdmin\TenantBillingController;
 use App\Http\Controllers\SysAdmin\TenantInvoiceController;
 use App\Http\Controllers\SysAdmin\VehicleDocumentController;
+use App\Http\Controllers\SysAdmin\SysDriverDocumentController;
 use App\Http\Controllers\SysAdmin\TenantCommissionReportController;
 use App\Http\Controllers\SysAdmin\VerificationQueueController;
 use App\Http\Controllers\SysAdmin\ContactLeadController;
@@ -265,6 +266,9 @@ Route::prefix('admin')
                 Route::delete('/drivers/{id}', [DriverController::class, 'destroy'])->name('drivers.destroy');
                 Route::post('/drivers/{id}/assign-vehicle', [DriverController::class, 'assignVehicle'])->name('drivers.assignVehicle');
                 Route::put('/assignments/{id}/close', [DriverController::class, 'closeAssignment'])->name('assignments.close');
+                Route::post('/drivers/{id}/reset-password', [DriverController::class,'resetPassword'])
+                ->name('drivers.resetPassword');
+
 
                 // Vehicles
                 Route::get('/vehicles', [VehicleController::class, 'index'])->name('vehicles.index');
@@ -387,61 +391,90 @@ Route::prefix('admin')
 |--------------------------------------------------------------------------
 | PANEL SYSADMIN (/sysadmin/… ) – separado del tenant
 |--------------------------------------------------------------------------
-*/
-Route::prefix('sysadmin')
-    ->middleware(['auth', 'sysadmin'])
-    ->group(function () {
+*/        // routes/web.php (dentro del mismo group)
 
-        Route::get('/', [SysAdminDashboardController::class, 'index'])->name('sysadmin.dashboard');
 
-        // Tenants
-        Route::get('/tenants', [SysTenantController::class, 'index'])->name('sysadmin.tenants.index');
-        Route::get('/tenants/create', [SysTenantController::class, 'create'])->name('sysadmin.tenants.create');
-        Route::post('/tenants', [SysTenantController::class, 'store'])->name('sysadmin.tenants.store');
-        Route::get('/tenants/{tenant}/edit', [SysTenantController::class, 'edit'])->name('sysadmin.tenants.edit');
-        Route::post('/tenants/{tenant}', [SysTenantController::class, 'update'])->name('sysadmin.tenants.update');
+Route::prefix('sysadmin')->middleware(['auth','sysadmin'])->group(function () {
 
-        // Billing tenant
-        Route::get('/tenants/{tenant}/billing', [TenantBillingController::class, 'show'])->name('sysadmin.tenants.billing.show');
-        Route::post('/tenants/{tenant}/billing', [TenantBillingController::class, 'update'])->name('sysadmin.tenants.billing.update');
+    // Dashboard
+    Route::get('/', [SysAdminDashboardController::class,'index'])
+        ->name('sysadmin.dashboard');
 
-        // Facturas
-        Route::get('/invoices', [TenantInvoiceController::class, 'index'])->name('sysadmin.invoices.index');
-        Route::get('/invoices/{invoice}', [TenantInvoiceController::class, 'show'])->name('sysadmin.invoices.show');
+    // Tenants (CRUD básico)
+    Route::get('/tenants', [SysTenantController::class, 'index'])->name('sysadmin.tenants.index');
+    Route::get('/tenants/create', [SysTenantController::class, 'create'])->name('sysadmin.tenants.create');
+    Route::post('/tenants', [SysTenantController::class, 'store'])->name('sysadmin.tenants.store');
+    Route::get('/tenants/{tenant}/edit', [SysTenantController::class, 'edit'])->name('sysadmin.tenants.edit');
+    Route::post('/tenants/{tenant}', [SysTenantController::class, 'update'])->name('sysadmin.tenants.update');
 
-        // Documentos vehículos
-        Route::get('/tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'index'])->name('sysadmin.vehicles.documents.index');
-        Route::post('/tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'store'])->name('sysadmin.vehicles.documents.store');
-        Route::post('/vehicle-documents/{document}/review', [VehicleDocumentController::class, 'review'])->name('sysadmin.vehicle-documents.review');
-        Route::get('/vehicle-documents/{document}/download', [VehicleDocumentController::class, 'download'])->name('sysadmin.vehicle-documents.download');
+    // Billing del tenant (show/update) + generar factura mensual de prueba
+    Route::get('/tenants/{tenant}/billing', [TenantBillingController::class,'show'])
+        ->name('sysadmin.tenants.billing.show');
+    Route::post('/tenants/{tenant}/billing', [TenantBillingController::class,'update'])
+        ->name('sysadmin.tenants.billing.update');
+    Route::post('/tenants/{tenant}/billing/generate-monthly', [TenantBillingController::class,'generateMonthly'])
+        ->name('sysadmin.tenants.billing.generate-monthly');
 
-        // Reporte comisiones
-        Route::get('/tenants/{tenant}/reports/commissions', [TenantCommissionReportController::class, 'index'])->name('sysadmin.tenants.reports.commissions');
+        Route::post('/tenants/{tenant}/billing/run-monthly', [\App\Http\Controllers\SysAdmin\TenantBillingController::class, 'runMonthly'])
+    ->name('sysadmin.tenants.billing.runMonthly');
 
-        // Cola verificación
-        Route::get('/verifications', [VerificationQueueController::class, 'index'])->name('sysadmin.verifications.index');
-        Route::get('/verifications/vehicles/{document}', [VerificationQueueController::class, 'showVehicle'])->name('sysadmin.verifications.vehicles.show');
-        Route::get('/verifications/drivers/{document}', [VerificationQueueController::class, 'showDriver'])->name('sysadmin.verifications.drivers.show');
-        Route::post('/verifications/{document}/review', [VerificationQueueController::class, 'review'])->name('sysadmin.verifications.review');
+    // Facturas (listar/ver). NO se define export_csv para evitar "route not defined".
+    Route::get('/invoices', [TenantInvoiceController::class, 'index'])->name('sysadmin.invoices.index');
+    Route::get('/invoices/{invoice}', [TenantInvoiceController::class, 'show'])->name('sysadmin.invoices.show');
 
-        // Leads
-        Route::get('/leads', [ContactLeadController::class, 'index'])->name('sysadmin.leads.index');
-        Route::get('/leads/{lead}', [ContactLeadController::class, 'show'])->name('sysadmin.leads.show');
-        Route::post('/leads/{lead}/status', [ContactLeadController::class, 'updateStatus'])->name('sysadmin.leads.status');
-    });
+    Route::get('/invoices/export/csv', [TenantInvoiceController::class, 'exportCsv'])
+    ->name('sysadmin.invoices.export_csv');
 
-/*
-|--------------------------------------------------------------------------
-| DEBUG (proteger para sysadmin)
-|--------------------------------------------------------------------------
-*/
-Route::middleware(['auth', 'sysadmin'])->group(function () {
-    Route::get('/debug/test-event', function () {
-        event(new TestEvent('Hola desde Laravel @ ' . now()));
-        return ['ok' => true];
-    });
+     Route::get('/invoices/export/pdf', [TenantInvoiceController::class, 'downloadPdf'])
+    ->name('sysadmin.invoices.pdf');
+
+
+
+    // Documentos de VEHÍCULO
+    Route::get('/tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'index'])
+        ->name('sysadmin.vehicles.documents.index');
+    Route::post('/tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'store'])
+        ->name('sysadmin.vehicles.documents.store');
+    Route::post('/vehicle-documents/{document}/review', [VehicleDocumentController::class, 'review'])
+        ->name('sysadmin.vehicle-documents.review');
+    Route::get('/vehicle-documents/{document}/download', [VehicleDocumentController::class, 'download'])
+        ->name('sysadmin.vehicle-documents.download');
+    Route::get('/vehicle-documents/{document}/view', [VehicleDocumentController::class, 'view'])
+        ->name('sysadmin.vehicle-documents.view');
+
+    // Documentos de DRIVER
+    Route::get('/tenants/{tenant}/drivers/{driver}/documents', [SysDriverDocumentController::class, 'index'])
+        ->name('sysadmin.drivers.documents.index');
+    Route::post('/tenants/{tenant}/drivers/{driver}/documents', [SysDriverDocumentController::class, 'store'])
+        ->name('sysadmin.drivers.documents.store');
+    Route::post('/driver-documents/{document}/review', [SysDriverDocumentController::class, 'review'])
+        ->name('sysadmin.driver-documents.review');
+    Route::get('/driver-documents/{document}/download', [SysDriverDocumentController::class, 'download'])
+        ->name('sysadmin.driver-documents.download');
+    Route::get('/driver-documents/{document}/view', [SysDriverDocumentController::class, 'view'])
+        ->name('sysadmin.driver-documents.view');
+
+    // Cola de verificación + acciones específicas
+    Route::get('/verifications', [VerificationQueueController::class, 'index'])
+        ->name('sysadmin.verifications.index');
+    Route::get('/verifications/vehicles/{vehicle}', [VerificationQueueController::class, 'showVehicle'])
+        ->name('sysadmin.verifications.vehicles.show');
+    Route::get('/verifications/drivers/{driver}', [VerificationQueueController::class, 'showDriver'])
+        ->name('sysadmin.verifications.drivers.show');
+    Route::post('/verifications/vehicle-docs/{document}/review', [VerificationQueueController::class, 'reviewVehicleDoc'])
+        ->name('sysadmin.verifications.vehicle_docs.review');
+    Route::post('/verifications/driver-docs/{document}/review', [VerificationQueueController::class, 'reviewDriverDoc'])
+        ->name('sysadmin.verifications.driver_docs.review');
+
+    // Leads
+    Route::get('/leads', [ContactLeadController::class,'index'])->name('sysadmin.leads.index');
+    Route::get('/leads/{lead}', [ContactLeadController::class,'show'])->name('sysadmin.leads.show');
+    Route::post('/leads/{lead}/status', [ContactLeadController::class,'updateStatus'])->name('sysadmin.leads.status');
+
+    // Reporte (placeholder habilitado si ya existe controller)
+    Route::get('/tenants/{tenant}/reports/commissions', [TenantCommissionReportController::class, 'index'])
+        ->name('sysadmin.tenants.reports.commissions');
 });
-
 /*
 |--------------------------------------------------------------------------
 | Auth scaffolding (Breeze) => incluye POST /logout

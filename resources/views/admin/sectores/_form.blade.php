@@ -55,13 +55,67 @@
 @push('scripts')
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+
+  <script>
+  window.__TENANT_LOC__ = @json($tenantLoc); // null o {latitud,longitud,coverage_radius_km,...}
+</script>
+
+
+
   <script>
   (function(){
+
+const TENANT = window.__TENANT_LOC__ || null;
+
     const map = L.map('map-sector', { zoomControl: true, preferCanvas: true });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 20, minZoom: 2}).addTo(map);
 
    map.createPane('existingPane');
 map.getPane('existingPane').style.zIndex = 350; // debajo del default (400)
+
+// === CENTRAR MAPA POR TENANT (simple) ===
+(function(){
+  const t   = window.__TENANT_LOC__ || null;
+  const lat = t && parseFloat(t.latitud);
+  const lng = t && parseFloat(t.longitud);
+  const rad = t && parseFloat(t.coverage_radius_km);
+
+  function zoomForRadiusKm(r){
+    if (!r || r <= 0) return 12;
+    if (r <= 3)  return 14;
+    if (r <= 5)  return 13;
+    if (r <= 8)  return 12;
+    if (r <= 15) return 11;
+    if (r <= 30) return 10;
+    if (r <= 60) return 9;
+    return 8;
+  }
+
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    const z = zoomForRadiusKm(rad || 12);
+    map.setView([lat, lng], z);
+  } else {
+    // Fallback si no hay coords del tenant
+    map.setView([19.4326, -99.1332], 12);
+  }
+})();
+// Centrar en las coords del tenant con zoom fijo (evita cálculos raros)
+(function(){
+  const t   = TENANT;
+  const lat = t && Number.isFinite(parseFloat(t.latitud))  ? parseFloat(t.latitud)  : null;
+  const lng = t && Number.isFinite(parseFloat(t.longitud)) ? parseFloat(t.longitud) : null;
+
+  // Ajusta este número si quieres más cerca (14) o más lejos (12)
+  const FIXED_ZOOM = 13;
+
+  if (lat !== null && lng !== null) {
+    map.setView([lat, lng], FIXED_ZOOM);
+  } else {
+    map.setView([19.4326, -99.1332], 12); // Fallback CDMX
+  }
+})();
+
 
 const existingLayer = L.geoJSON(null, {
   pane: 'existingPane',
@@ -202,11 +256,21 @@ const existingLayer = L.geoJSON(null, {
       document.querySelectorAll('.pill-actions .nav-link').forEach(x=>x.classList.remove('active'));
       a.classList.add('active');
     }
-    function fitInitial(force=false){
-      const b = boundsOf(drawnLayer); if (b) return map.fitBounds(b, {padding:[24,24]});
-      const be = boundsOf(existingLayer); if (be) return map.fitBounds(be, {padding:[24,24]});
-      if (force) return map.setView([19.4326,-99.1332], 12);
+   function fitInitial(force=false){
+  const b1 = boundsOf(drawnLayer);    if (b1) return map.fitBounds(b1, {padding:[24,24]});
+  const b2 = boundsOf(existingLayer); if (b2) return map.fitBounds(b2, {padding:[24,24]});
+
+  if (TENANT && Number.isFinite(TENANT.latitud) && Number.isFinite(TENANT.longitud)) {
+    if (coverageCircle) {
+      return map.fitBounds(coverageCircle.getBounds(), {padding:[24,24]});
+    } else {
+      const z = zoomForRadiusKm(TENANT.coverage_radius_km || 12);
+      return map.setView([TENANT.latitud, TENANT.longitud], z);
     }
+  }
+
+  if (force) return map.setView([19.4326,-99.1332], 12); // Fallback: CDMX
+}
     function boundsOf(layer){ try { const b = layer.getBounds(); if (b?.isValid()) return b; } catch(e) {} return null; }
 
     // Fallback de área geodésica

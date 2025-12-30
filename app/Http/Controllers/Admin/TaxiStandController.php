@@ -38,18 +38,50 @@ class TaxiStandController extends Controller
         return view('admin.taxistands.index', ['taxistands' => $stands]);
     }
 
-    public function create()
-    {
-        $tenantId = $this->currentTenantId();
+public function create()
+{
+    $tenantId = $this->currentTenantId();
 
-        $sectores = DB::table('sectores')
-            ->where('tenant_id', $tenantId)
-            ->where('activo', 1)
-            ->orderBy('nombre')
-            ->get();
+    $sectores = DB::table('sectores')
+        ->where('tenant_id', $tenantId)
+        ->where('activo', 1)
+        ->orderBy('nombre')
+        ->get();
 
-        return view('admin.taxistands.create', compact('sectores'));
-    }
+    $tenantLoc = DB::table('tenants')
+        ->where('id', $tenantId)
+        ->select('latitud','longitud','coverage_radius_km')
+        ->first();
+
+    // ⬇️ añade tenantId
+    return view('admin.taxistands.create', compact('sectores','tenantLoc','tenantId'));
+}
+
+public function edit(int $id)
+{
+    $tenantId = $this->currentTenantId();
+
+    $stand = DB::table('taxi_stands')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $id)
+        ->first();
+
+    abort_if(!$stand, 404);
+
+    $sectores = DB::table('sectores')
+        ->where('tenant_id', $tenantId)
+        ->where('activo', 1)
+        ->orderBy('nombre')->get();
+
+    $tenantLoc = DB::table('tenants')
+        ->where('id', $tenantId)
+        ->select('latitud','longitud','coverage_radius_km')
+        ->first();
+
+    // ⬇️ añade tenantId
+    return view('admin.taxistands.edit', compact('stand','sectores','tenantLoc','tenantId'));
+}
+
 
     public function store(Request $request)
     {
@@ -84,24 +116,7 @@ class TaxiStandController extends Controller
         return redirect()->route('taxistands.index')->with('ok', 'Paradero creado.');
     }
 
-    public function edit(int $id)
-    {
-        $tenantId = $this->currentTenantId();
-
-        $stand = DB::table('taxi_stands')
-            ->where('tenant_id', $tenantId)
-            ->where('id', $id)
-            ->first();
-
-        abort_if(!$stand, 404);
-
-        $sectores = DB::table('sectores')
-            ->where('tenant_id', $tenantId)
-            ->where('activo', 1)
-            ->orderBy('nombre')->get();
-
-        return view('admin.taxistands.edit', compact('stand','sectores'));
-    }
+   
 
     public function update(Request $request, int $id)
     {

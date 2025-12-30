@@ -35,6 +35,9 @@ use App\Http\Controllers\Api\PassengerPlacesController;
 use App\Http\Controllers\Api\PublicContactController;
 use App\Events\DriverEvent;
 use App\Http\Controllers\Webhooks\MercadoPagoWebhookController;
+use App\Http\Controllers\SysAdmin\ContactLeadController;
+
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -103,7 +106,10 @@ Route::post('/passenger/auth-sync', [PassengerAuthController::class, 'syncFromFi
  * Rutas de la app de pasajero (quote, crear ride, bidding, cancelar, relanzar).
  */
 
-
+Route::middleware('throttle:public-contact')->group(function () {
+    Route::post('/public/contact', [ContactLeadController::class, 'store'])
+        ->name('public.contact.store');
+});
 
 Route::prefix('dispatch/chats')->group(function () {
 

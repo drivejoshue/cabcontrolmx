@@ -7,6 +7,8 @@
  * - $sectores (Collection id=>nombre)
  */
 $stand     = $stand ?? null;
+$tenantLoc = $tenantLoc ?? null;
+
 $method    = $method ?? 'POST';
 $nombre    = old('nombre',    $stand->nombre    ?? '');
 $latitud   = old('latitud',   $stand->latitud   ?? '');
@@ -16,6 +18,31 @@ $sector_id = old('sector_id', $stand->sector_id ?? '');
 $activo    = (int)old('activo', (string)($stand->activo ?? 1));
 $centerLat = $latitud  !== '' ? (float)$latitud  : 19.1738;
 $centerLng = $longitud !== '' ? (float)$longitud : -96.1342;
+
+
+/**
+ * Centro del mapa:
+ * 1) Si el form trae lat/lng -> esas
+ * 2) Si no, usa lat/lng del tenant (si existen)
+ * 3) Fallback Veracruz (como tienes ahora)
+ */
+if ($latitud !== '' && $longitud !== '') {
+    $centerLat = (float)$latitud;
+    $centerLng = (float)$longitud;
+    $centerSource = 'form';
+} elseif ($tenantLoc && $tenantLoc->latitud !== null && $tenantLoc->longitud !== null) {
+    $centerLat = (float)$tenantLoc->latitud;
+    $centerLng = (float)$tenantLoc->longitud;
+    $centerSource = 'tenant';
+} else {
+    $centerLat = 19.1738;
+    $centerLng = -96.1342;
+    $centerSource = 'fallback';
+}
+$centerZoom = 13;
+
+
+
 ?>
 <form action="{{ $action }}" method="POST" novalidate>
   @csrf
@@ -122,6 +149,22 @@ $centerLng = $longitud !== '' ? (float)$longitud : -96.1342;
 
 @push('scripts')
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+  // === DEBUG TAXISTANDS CENTER ===
+  window.__DBG_TAXISTAND__ = {
+    tenantId   : @json($tenantId ?? null),
+    tenantLoc  : @json($tenantLoc ?? null),
+    formLat    : @json($latitud),
+    formLng    : @json($longitud),
+    chosen     : { lat: {{ $centerLat }}, lng: {{ $centerLng }}, zoom: {{ $centerZoom }} },
+    source     : @json($centerSource)
+  };
+  console.log('[TaxiStands] Center debug →', window.__DBG_TAXISTAND__);
+</script>
+
+
+
 <script>
 (function(){
   const centerDefault = [{{ $centerLat }}, {{ $centerLng }}];
@@ -135,8 +178,15 @@ $centerLng = $longitud !== '' ? (float)$longitud : -96.1342;
     attribution: '&copy; OSM & Carto'
   });
 
-  const map = L.map('mapStand',{ worldCopyJump:false, maxBoundsViscosity:1.0 })
-               .setView(centerDefault, 15);
+console.log('[TaxiStands] init map setView', [{{ $centerLat }}, {{ $centerLng }}], 'z=', {{ $centerZoom }});
+
+const map = L.map('mapStand',{ worldCopyJump:false, maxBoundsViscosity:1.0 })
+             .setView([{{ $centerLat }}, {{ $centerLng }}], {{ $centerZoom }});
+
+// (Opcional) marca temporal para validar el centro elegido
+L.circleMarker([{{ $centerLat }}, {{ $centerLng }}], {radius:4}).addTo(map)
+ .bindTooltip('CENTER: ' + {{ $centerLat }} + ', ' + {{ $centerLng }}).openTooltip();
+
 
   let currentBase = isDark ? baseDark : baseLight;
   currentBase.addTo(map);

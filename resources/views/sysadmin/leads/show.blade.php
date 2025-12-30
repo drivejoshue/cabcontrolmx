@@ -5,12 +5,12 @@
 @section('content')
 <div class="container-fluid py-3">
 
+  {{-- Header --}}
   <div class="d-flex align-items-center justify-content-between mb-3">
     <div>
       <div class="text-muted small">Lead</div>
-      <h1 class="h4 mb-0">#{{ $lead->id }} · {{ $lead->contact_name }}</h1>
+      <h1 class="h4 mb-0">#{{ $lead->id }} · {{ $lead->contact_name ?: '—' }}</h1>
     </div>
-
     <div class="d-flex gap-2">
       <a href="{{ route('sysadmin.leads.index') }}" class="btn btn-outline-secondary btn-sm">
         Volver
@@ -20,27 +20,21 @@
 
   <div class="row g-3">
 
+    {{-- Mensaje --}}
     <div class="col-lg-8">
       <div class="card shadow-sm">
         <div class="card-header bg-white d-flex align-items-center justify-content-between">
           <div class="fw-semibold">Mensaje</div>
-
           @php
             $status = $lead->status ?: 'new';
-            $badge = match($status) {
-              'new' => 'bg-danger',
-              'contacted' => 'bg-primary',
-              'closed' => 'bg-success',
-              default => 'bg-secondary'
-            };
-            $label = match($status) {
-              'new' => 'Nuevo',
-              'contacted' => 'En seguimiento',
-              'closed' => 'Cerrado',
-              default => $status
+            [$badgeClass,$label] = match($status) {
+              'new'       => ['bg-danger','Nuevo'],
+              'contacted' => ['bg-primary','En seguimiento'],
+              'closed'    => ['bg-success','Cerrado'],
+              default     => ['bg-secondary',$status],
             };
           @endphp
-          <span class="badge {{ $badge }}">{{ $label }}</span>
+          <span class="badge {{ $badgeClass }}">{{ $label }}</span>
         </div>
 
         <div class="card-body">
@@ -51,20 +45,28 @@
           @endif
         </div>
 
-        <div class="card-footer bg-white text-muted small">
-          Recibido: {{ optional($lead->created_at)->format('Y-m-d H:i:s') }}
+        <div class="card-footer bg-white text-muted small d-flex justify-content-between">
+          <span>Recibido: {{ optional($lead->created_at)->format('Y-m-d H:i:s') }}</span>
+          <span>{{ optional($lead->created_at)->diffForHumans() }}</span>
         </div>
       </div>
     </div>
 
+    {{-- Sidebar --}}
     <div class="col-lg-4">
+
+      {{-- Datos de contacto --}}
       <div class="card shadow-sm mb-3">
         <div class="card-header bg-white fw-semibold">Datos de contacto</div>
         <div class="card-body">
           <div class="mb-2">
             <div class="text-muted small">Email</div>
             <div class="fw-semibold">
-              <a href="mailto:{{ $lead->contact_email }}">{{ $lead->contact_email }}</a>
+              @if($lead->contact_email)
+                <a href="mailto:{{ $lead->contact_email }}">{{ $lead->contact_email }}</a>
+              @else
+                —
+              @endif
             </div>
           </div>
 
@@ -95,21 +97,20 @@
         </div>
       </div>
 
+      {{-- Acciones --}}
       <div class="card shadow-sm">
         <div class="card-header bg-white fw-semibold">Acciones</div>
         <div class="card-body">
-
+          {{-- Mantiene la misma ruta que ya tienes --}}
           <form method="POST" action="{{ route('sysadmin.leads.status', $lead) }}">
             @csrf
             <label class="form-label">Cambiar estado</label>
             <select name="status" class="form-select mb-2" required>
-              <option value="new" {{ ($lead->status === 'new') ? 'selected' : '' }}>Nuevo</option>
-              <option value="contacted" {{ ($lead->status === 'contacted') ? 'selected' : '' }}>En seguimiento</option>
-              <option value="closed" {{ ($lead->status === 'closed') ? 'selected' : '' }}>Cerrado</option>
+              <option value="new"       @selected($lead->status === 'new')>Nuevo</option>
+              <option value="contacted" @selected($lead->status === 'contacted')>En seguimiento</option>
+              <option value="closed"    @selected($lead->status === 'closed')>Cerrado</option>
             </select>
-            <button class="btn btn-primary w-100">
-              Guardar
-            </button>
+            <button class="btn btn-primary w-100">Guardar</button>
           </form>
 
           <hr>
@@ -119,7 +120,6 @@
             <div><b>IP:</b> {{ $lead->ip ?: '—' }}</div>
             <div class="text-truncate"><b>User-Agent:</b> {{ $lead->user_agent ?: '—' }}</div>
           </div>
-
         </div>
       </div>
 

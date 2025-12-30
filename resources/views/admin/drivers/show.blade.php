@@ -84,6 +84,29 @@
     $requiredOkDriver = collect($driverRequiredTypes ?? [])->every(fn($t) => isset($approvedByType[$t]));
   @endphp
 
+
+@if(session('driver_creds'))
+  @php $c = session('driver_creds'); @endphp
+  <div class="alert alert-warning">
+    <div class="d-flex justify-content-between align-items-start gap-2">
+      <div>
+        <div class="fw-bold mb-1">Credenciales de acceso (solo visible una vez)</div>
+        <div class="small text-muted">Cópialas y guárdalas. No se podrán volver a mostrar.</div>
+
+        <div class="mt-2">
+          <div class="small"><b>Email:</b> <code id="credEmail">{{ $c['email'] }}</code></div>
+          <div class="small"><b>Password:</b> <code id="credPass">{{ $c['password'] }}</code></div>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-sm btn-outline-dark" onclick="copyText('credEmail')">Copiar email</button>
+        <button type="button" class="btn btn-sm btn-primary" onclick="copyText('credPass')">Copiar password</button>
+      </div>
+    </div>
+  </div>
+@endif
+
   <div class="card mb-3">
     <div class="card-body d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
       <div>
@@ -218,6 +241,39 @@
               @else — @endif
             </dd>
           </dl>
+          @php
+  $hasUser = !empty($driver->user_id);
+
+@endphp
+
+<hr>
+
+<div class="d-flex justify-content-between align-items-center">
+  <div>
+    <div class="fw-semibold">Cuenta de acceso (App Driver)</div>
+    <div class="text-muted small">
+      @if($hasUser)
+        Usuario vinculado: <code>{{ $driver->user_email ?? ($linkedUser->email ?? '—') }}</code>
+
+      @else
+        Sin usuario vinculado
+      @endif
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    @if($hasUser)
+      <button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#modalResetPwd">
+        <i data-feather="key"></i> Reset password
+      </button>
+    @else
+      <a class="btn btn-sm btn-outline-primary" href="{{ route('drivers.edit',$driver->id) }}">
+        <i data-feather="user-plus"></i> Crear usuario
+      </a>
+    @endif
+  </div>
+</div>
+
         </div>
       </div>
     </div>
@@ -327,4 +383,50 @@
     </form>
   </div>
 </div>
+
+@if(!empty($linkedUser))
+<div class="modal fade" id="modalResetPwd" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="{{ route('drivers.resetPassword', ['id'=>$driver->id]) }}">
+      @csrf
+      <div class="modal-header">
+        <h5 class="modal-title">Resetear contraseña</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning">
+          Se generará una contraseña temporal nueva para <b>{{ $linkedUser->email }}</b>.
+          La contraseña se mostrará una sola vez al guardar.
+        </div>
+        <p class="mb-0 small text-muted">
+          Recomendación: el conductor debe cambiarla desde soporte o en un flujo futuro de “cambiar contraseña”.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-warning" type="submit">Generar nueva contraseña</button>
+      </div>
+    </form>
+  </div>
+</div>
+@endif
+
 @endsection
+<script>
+  async function copyText(elId){
+    const el = document.getElementById(elId);
+    if(!el) return;
+    const text = el.innerText || el.textContent;
+    try {
+      await navigator.clipboard.writeText(text.trim());
+    } catch (e) {
+      // fallback
+      const ta = document.createElement('textarea');
+      ta.value = text.trim();
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  }
+</script>

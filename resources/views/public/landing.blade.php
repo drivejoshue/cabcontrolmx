@@ -139,7 +139,7 @@
           </h1>
 
           <p class="gate-muted mb-0">
-            Esta página es la puerta de entrada. La información completa está en el sitio principal.
+          
           </p>
         </div>
 

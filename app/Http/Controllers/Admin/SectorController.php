@@ -8,16 +8,35 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class SectorController extends Controller
-{   
-
-     private function tenantId(): int
+{
+    private function tenantId(): int
     {
         $tid = Auth::user()->tenant_id ?? null;
         if (!$tid) abort(403, 'Usuario sin tenant asignado');
         return (int) $tid;
     }
 
-    
+    /** NUEVO: lee lat/lng/radio desde tenants para centrar mapas */
+    private function tenantLoc(int $tenantId): ?array
+    {
+        $t = DB::table('tenants')
+            ->select('latitud','longitud','coverage_radius_km','timezone','utc_offset_minutes')
+            ->where('id', $tenantId)
+            ->first();
+
+        if (!$t || $t->latitud === null || $t->longitud === null) {
+            return null;
+        }
+
+        return [
+            'latitud'             => (float) $t->latitud,
+            'longitud'            => (float) $t->longitud,
+            'coverage_radius_km'  => (float) ($t->coverage_radius_km ?? 12),
+            'timezone'            => $t->timezone ?? 'America/Mexico_City',
+            'utc_offset_minutes'  => $t->utc_offset_minutes,
+        ];
+    }
+
     public function index(Request $request)
     {
         $tenantId = $this->tenantId();
@@ -33,7 +52,11 @@ class SectorController extends Controller
 
     public function create()
     {
-        return view('admin.sectores.create');
+        $tenantId  = $this->tenantId();
+        $tenantLoc = $this->tenantLoc($tenantId);
+
+        // La vista usará window.__TENANT_LOC__ = @json($tenantLoc)
+        return view('admin.sectores.create', compact('tenantLoc'));
     }
 
     public function store(Request $request)
@@ -52,7 +75,7 @@ class SectorController extends Controller
         }
 
         try {
-            $feature = $this->normalizeGeoFeature($geo); // guardamos Feature completo
+            $feature = $this->normalizeGeoFeature($geo);
         } catch (\Throwable $e) {
             return back()->withErrors(['area' => $e->getMessage()])->withInput();
         }
@@ -66,22 +89,20 @@ class SectorController extends Controller
             'updated_at' => now(),
         ]);
 
+        // Actualiza columna espacial (MySQL 8+)
         DB::update("
-  UPDATE sectores
-  SET area_geom = ST_GeomFromText(
-                    ST_AsText(
-                      ST_GeomFromGeoJSON(JSON_EXTRACT(area, '$.geometry'))
-                    ), 4326
-                  )
-  WHERE id = ? AND tenant_id = ?
-", [$id, $tenantId]);
+            UPDATE sectores
+               SET area_geom = ST_GeomFromGeoJSON(JSON_EXTRACT(area, '$.geometry'))
+             WHERE id = ? AND tenant_id = ?
+        ", [$id, $tenantId]);
 
         return redirect()->route('sectores.show', $id)->with('ok','Sector creado correctamente.');
     }
 
     public function show(int $id)
     {
-        $tenantId = $this->tenantId();
+        $tenantId  = $this->tenantId();
+        $tenantLoc = $this->tenantLoc($tenantId);
 
         $sector = DB::table('sectores')
             ->where('tenant_id', $tenantId)
@@ -90,12 +111,13 @@ class SectorController extends Controller
 
         abort_if(!$sector, 404);
 
-        return view('admin.sectores.show', compact('sector'));
+        return view('admin.sectores.show', compact('sector','tenantLoc'));
     }
 
     public function edit(int $id)
     {
-        $tenantId = $this->tenantId();
+        $tenantId  = $this->tenantId();
+        $tenantLoc = $this->tenantLoc($tenantId);
 
         $sector = DB::table('sectores')
             ->where('tenant_id', $tenantId)
@@ -104,7 +126,7 @@ class SectorController extends Controller
 
         abort_if(!$sector, 404);
 
-        return view('admin.sectores.edit', compact('sector'));
+        return view('admin.sectores.edit', compact('sector','tenantLoc'));
     }
 
     public function update(Request $request, int $id)
@@ -138,20 +160,15 @@ class SectorController extends Controller
                 'updated_at' => now(),
             ]);
 
-            DB::update("
-  UPDATE sectores
-  SET area_geom = ST_GeomFromText(
-                    ST_AsText(
-                      ST_GeomFromGeoJSON(JSON_EXTRACT(area, '$.geometry'))
-                    ), 4326
-                  )
-  WHERE id = ? AND tenant_id = ?
-", [$id, $tenantId]);
+        DB::update("
+            UPDATE sectores
+               SET area_geom = ST_GeomFromGeoJSON(JSON_EXTRACT(area, '$.geometry'))
+             WHERE id = ? AND tenant_id = ?
+        ", [$id, $tenantId]);
 
         return redirect()->route('sectores.show', $id)->with('ok','Sector actualizado.');
     }
 
-    /** Desactivar (NO borrar físico) */
     public function destroy(int $id)
     {
         $tenantId = $this->tenantId();
@@ -167,10 +184,7 @@ class SectorController extends Controller
         return redirect()->route('sectores.index')->with('ok','Sector desactivado (no se elimina físicamente).');
     }
 
-    /**
-     * Devuelve FeatureCollection de TODOS los sectores del tenant (solo lectura)
-     * con geometry extraída del campo 'area' (que guardamos como Feature).
-     */
+    /** GeoJSON de sectores del tenant */
     public function geojson(Request $request)
     {
         $tenantId = $this->tenantId();
@@ -185,12 +199,8 @@ class SectorController extends Controller
 
         foreach ($rows as $s) {
             $area = is_string($s->area) ? json_decode($s->area, true) : $s->area;
-
-            // extrae geometry si está guardado como Feature; acepta Polygon/MultiPolygon también
             $geom = $this->extractGeometry($area);
-            if (!$geom) {
-                continue; // ignora registros corruptos
-            }
+            if (!$geom) continue;
 
             $features[] = [
                 'type'       => 'Feature',
@@ -210,10 +220,8 @@ class SectorController extends Controller
 
     // ===================== Helpers =====================
 
-    /** Acepta geometry (Polygon/MultiPolygon), Feature o FeatureCollection y devuelve un Feature */
     private function normalizeGeoFeature(array $geo): array
     {
-        // Si ya es Feature y tiene geometry válida => úsalo tal cual
         if (($geo['type'] ?? null) === 'Feature') {
             if (!isset($geo['geometry']['type'])) {
                 throw new \InvalidArgumentException('Feature sin geometry');
@@ -221,16 +229,14 @@ class SectorController extends Controller
             return $geo;
         }
 
-        // Si llega Polygon/MultiPolygon => envolver en Feature
         if (in_array($geo['type'] ?? null, ['Polygon', 'MultiPolygon'], true)) {
             return [
                 'type'       => 'Feature',
                 'geometry'   => $geo,
-                'properties' => new \stdClass(), // json_encode lo maneja perfecto
+                'properties' => new \stdClass(),
             ];
         }
 
-        // Si llega FeatureCollection, tomar el primer Feature válido
         if (($geo['type'] ?? null) === 'FeatureCollection') {
             $first = $geo['features'][0] ?? null;
             if (!$first || ($first['type'] ?? null) !== 'Feature' || !isset($first['geometry'])) {
@@ -242,7 +248,6 @@ class SectorController extends Controller
         throw new \InvalidArgumentException('GeoJSON debe ser Feature o Polygon/MultiPolygon');
     }
 
-    /** Devuelve solo la geometry a partir de Feature/FeatureCollection/geometry */
     private function extractGeometry($area): ?array
     {
         if (!is_array($area)) return null;

@@ -706,5 +706,82 @@ public function billingUiState(
 }
 
 
+public function generateMonthlyInvoice(Tenant $tenant, Carbon $refDate): TenantInvoice
+{
+    $p = $tenant->billingProfile;
+    if (!$p) {
+        throw new \RuntimeException("Tenant sin billing profile.");
+    }
+    if (($p->billing_model ?? 'per_vehicle') !== 'per_vehicle') {
+        throw new \RuntimeException("Solo implementado para billing_model=per_vehicle.");
+    }
+
+    // Si el trial terminó => generar activación post-trial prorrateada (si aplica)
+    $postTrialInv = $this->ensurePostTrialActivationInvoice($tenant, $refDate);
+    if ($postTrialInv) {
+        return $postTrialInv; // idempotente: regresa existente si ya se creó
+    }
+
+    // Si está ACTIVE => generar mes completo (prepago) del mes de refDate
+    // (idempotente: si ya existe, regresa la existente)
+    return $this->generateMonthInvoicePrepaid($tenant, $refDate);
+}
+
+/**
+ * Corre el ciclo mensual de un tenant de forma segura e idempotente:
+ * 1) Si venció el trial, genera factura de activación (prorrateo).
+ * 2) Si es día 1 y está activo, genera la factura del mes en pending.
+ * 3) Si hay invoice pending y wallet alcanza, intenta pagar.
+ * 4) Revalida estado (active/paused/overdue) con reglas existentes.
+ */
+public function runMonthlyCycle(int $tenantId, ?Carbon $now = null): array
+{
+    $now = $now ?: Carbon::now();
+    /** @var Tenant $tenant */
+    $tenant = Tenant::findOrFail($tenantId);
+    $p = $tenant->billingProfile;
+    if (!$p) {
+        throw new \RuntimeException("Tenant #{$tenantId} sin billing profile.");
+    }
+    if (($p->billing_model ?? 'per_vehicle') !== 'per_vehicle') {
+        // Por ahora solo per_vehicle. Si luego soportas comisión, extiéndelo aquí.
+        return ['ok' => true, 'mode' => $p->billing_model, 'message' => 'No aplica ciclo per_vehicle.'];
+    }
+
+    $created = null;
+    DB::transaction(function () use ($tenant, $now, &$created) {
+        // (1) Intentar activación post-trial (si aplica)
+        $created = $this->ensurePostTrialActivationInvoice($tenant, $now);
+
+        // (2) Si es día 1 (TZ tenant) y status ACTIVE, generar mensual prepago
+        $tzNow = $tenant->timezone ? $now->copy()->setTimezone($tenant->timezone) : $now->copy();
+        if ((int)$tzNow->format('d') === 1 && strtolower((string)$tenant->billingProfile->status) === 'active') {
+            $created = $this->generateMonthInvoicePrepaid($tenant, $tzNow);
+        }
+    });
+
+    // (3) Auto-pago desde wallet (si alcanza)
+    $wallet = app(TenantWalletService::class);
+    $inv = $this->findCurrentUnpaidInvoice($tenant, $now);
+    if ($inv) {
+        $this->payInvoiceFromWallet($inv, $wallet); // idempotente si no alcanza o ya está paid
+    }
+
+    // (4) Revalidar estado canónico
+    $this->recheckTenantBillingState($tenant, $wallet, $now);
+
+    $ui = $this->billingUiState($tenant, $wallet, $now);
+
+    return [
+        'ok' => true,
+        'created_invoice_id' => $created?->id,
+        'billing_state' => $ui['billing_state'] ?? null,
+        'invoice_id' => $ui['invoice_id'] ?? null,
+        'invoice_status' => $ui['invoice_status'] ?? null,
+        'required_amount' => $ui['required_amount'] ?? 0.0,
+        'balance' => $ui['balance'] ?? null,
+        'due_date' => $ui['due_date'] ?? null,
+    ];
+}
 
 }

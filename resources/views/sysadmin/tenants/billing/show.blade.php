@@ -1,15 +1,12 @@
-
 @extends('layouts.sysadmin')
 
 @section('title','Billing · Tenant #'.$tenant->id.' · '.$tenant->name)
 
 @push('styles')
 <style>
-  .stat-pill {
-    border-radius: 999px;
-    padding: .25rem .7rem;
-    font-size: .75rem;
-  }
+  .stat-pill { border-radius: 999px; padding:.25rem .7rem; font-size:.75rem; }
+  /* Montos y fechas alineados mejor */
+  .tabular { font-variant-numeric: tabular-nums; }
 </style>
 @endpush
 
@@ -20,7 +17,7 @@
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
       <h3 class="mb-0">
-        Billing del tenant: {{ $tenant->name }}
+        Facturación del tenant: {{ $tenant->name }}
         @php
           $bm = $profile->billing_model ?? 'per_vehicle';
           $st = strtolower($profile->status ?? 'trial');
@@ -38,13 +35,9 @@
         </span>
 
         @if($bm === 'commission')
-          <span class="badge bg-info stat-pill align-middle">
-            Modelo: comisión
-          </span>
+          <span class="badge bg-info stat-pill align-middle">Modelo: comisión</span>
         @else
-          <span class="badge bg-primary stat-pill align-middle">
-            Modelo: por vehículo
-          </span>
+          <span class="badge bg-primary stat-pill align-middle">Modelo: por vehículo</span>
         @endif
       </h3>
       <div class="text-muted small">
@@ -54,23 +47,20 @@
       </div>
     </div>
 
-    <div class="d-flex gap-2">
-  {{-- Generar factura mensual (pruebas) --}}
-  <form method="POST"
-        action="{{ route('sysadmin.tenants.billing.generate-monthly', $tenant) }}"
-        class="d-inline">
-    @csrf
-    <button type="submit"
-            class="btn btn-outline-success btn-sm"
-            onclick="return confirm('¿Generar factura mensual de prueba para este tenant?');">
-      Generar factura de prueba
-    </button>
-  </form>
-
+   <div class="d-flex gap-2">
   <a href="{{ route('sysadmin.tenants.index') }}" class="btn btn-outline-secondary btn-sm">
     Volver a lista de tenants
   </a>
+
+  <form method="POST" action="{{ route('sysadmin.tenants.billing.runMonthly', $tenant) }}"
+        onsubmit="return confirm('¿Correr el ciclo mensual de facturación para este tenant?');">
+    @csrf
+    <button class="btn btn-primary btn-sm">
+      Correr ciclo mensual
+    </button>
+  </form>
 </div>
+
   </div>
 
   {{-- Flash messages --}}
@@ -116,36 +106,26 @@
             <dd class="col-7">{{ $profile->invoice_day ?? 1 }}</dd>
 
             <dt class="col-5">Trial hasta</dt>
-            <dd class="col-7">
-              {{ optional($profile->trial_ends_at)->toDateString() ?? '—' }}
-            </dd>
+            <dd class="col-7">{{ optional($profile->trial_ends_at)->toDateString() ?? '—' }}</dd>
 
             <dt class="col-5">Vehículos en trial</dt>
-            <dd class="col-7">
-              {{ $profile->trial_vehicles ?? 0 }}
-            </dd>
-          <dt class="col-5">Última factura</dt>
-          <dd class="col-7">
-            @if($lastInvoice)
-              <div>{{ $lastInvoice->issue_date?->toDateString() }} · {{ number_format($lastInvoice->total,2) }} {{ $lastInvoice->currency }}</div>
-              <a href="{{ route('sysadmin.invoices.show', $lastInvoice) }}" class="small">
-                Ver factura
-              </a>
-            @else
-              <span class="text-muted">Sin facturas todavía</span>
-            @endif
-          </dd>
+            <dd class="col-7">{{ $profile->trial_vehicles ?? 0 }}</dd>
 
+            <dt class="col-5">Última factura</dt>
+            <dd class="col-7">
+              @if($lastInvoice)
+                <div>{{ $lastInvoice->issue_date?->toDateString() }} · {{ number_format($lastInvoice->total,2) }} {{ $lastInvoice->currency }}</div>
+                <a href="{{ route('sysadmin.invoices.show', $lastInvoice) }}" class="small">Ver factura</a>
+              @else
+                <span class="text-muted">Sin facturas todavía</span>
+              @endif
+            </dd>
 
             <dt class="col-5">Próx. corte</dt>
-            <dd class="col-7">
-              {{ optional($profile->next_invoice_date)->toDateString() ?? '—' }}
-            </dd>
+            <dd class="col-7">{{ optional($profile->next_invoice_date)->toDateString() ?? '—' }}</dd>
 
             <dt class="col-5">Notas</dt>
-            <dd class="col-7">
-              {{ $profile->notes ?: '—' }}
-            </dd>
+            <dd class="col-7">{{ $profile->notes ?: '—' }}</dd>
           </dl>
         </div>
       </div>
@@ -173,26 +153,18 @@
               <dd class="col-6">{{ $profile->max_vehicles ?? 'Ilimitado' }}</dd>
 
               <dt class="col-6">Base mensual</dt>
-              <dd class="col-6">
-                ${{ number_format($profile->base_monthly_fee ?? 0,2) }} MXN
-              </dd>
+              <dd class="col-6">${{ number_format($profile->base_monthly_fee ?? 0,2) }} MXN</dd>
 
               <dt class="col-6">Precio por vehículo extra</dt>
-              <dd class="col-6">
-                ${{ number_format($profile->price_per_vehicle ?? 0,2) }} MXN
-              </dd>
+              <dd class="col-6">${{ number_format($profile->price_per_vehicle ?? 0,2) }} MXN</dd>
             @else
               <dt class="col-6">Comisión %</dt>
               <dd class="col-6">
-                {{ $profile->commission_percent !== null
-                      ? $profile->commission_percent.' %'
-                      : '—' }}
+                {{ $profile->commission_percent !== null ? $profile->commission_percent.' %' : '—' }}
               </dd>
 
               <dt class="col-6">Mínimo mensual</dt>
-              <dd class="col-6">
-                ${{ number_format($profile->commission_min_fee ?? 0,2) }} MXN
-              </dd>
+              <dd class="col-6">${{ number_format($profile->commission_min_fee ?? 0,2) }} MXN</dd>
             @endif
           </dl>
 
@@ -225,21 +197,14 @@
               <label class="form-label">Código de plan</label>
               <input type="text" name="plan_code" class="form-control form-control-sm"
                      value="{{ old('plan_code', $profile->plan_code ?? 'basic-per-vehicle') }}">
-              <small class="text-muted">
-                Ej: <code>basic-per-vehicle</code>, <code>orbana-global</code>.
-              </small>
             </div>
 
             <div class="mb-2">
               <label class="form-label">Modelo de cobro</label>
               @php $bmVal = old('billing_model', $profile->billing_model ?? 'per_vehicle'); @endphp
               <select name="billing_model" class="form-select form-select-sm">
-                <option value="per_vehicle" @selected($bmVal==='per_vehicle')>
-                  Por vehículo (TaxiCaller-style)
-                </option>
-                <option value="commission" @selected($bmVal==='commission')>
-                  Comisión por viaje (Orbana Global)
-                </option>
+                <option value="per_vehicle" @selected($bmVal==='per_vehicle')>Por vehículo</option>
+                <option value="commission" @selected($bmVal==='commission')>Comisión por viaje</option>
               </select>
             </div>
 
@@ -273,7 +238,7 @@
                      value="{{ old('invoice_day', $profile->invoice_day ?? 1) }}">
             </div>
 
-            {{-- Bloque Per Vehicle --}}
+            {{-- Per Vehicle --}}
             <div class="border rounded p-2 mb-2">
               <div class="form-text mb-1">Si el modelo es <strong>per_vehicle</strong>:</div>
               <div class="row g-2 mb-1">
@@ -310,7 +275,7 @@
               </div>
             </div>
 
-            {{-- Bloque Comisión --}}
+            {{-- Comisión --}}
             <div class="border rounded p-2 mb-2">
               <div class="form-text mb-1">Si el modelo es <strong>commission</strong>:</div>
               <div class="row g-2">
@@ -338,9 +303,7 @@
             </div>
           </div>
           <div class="card-footer d-flex justify-content-end">
-            <button class="btn btn-primary btn-sm" type="submit">
-              Guardar cambios
-            </button>
+            <button class="btn btn-primary btn-sm" type="submit">Guardar cambios</button>
           </div>
         </form>
       </div>

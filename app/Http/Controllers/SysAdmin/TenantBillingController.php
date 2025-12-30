@@ -161,4 +161,23 @@ class TenantBillingController extends Controller
                 ]);
         }
     }
+
+
+    public function runMonthly(\App\Models\Tenant $tenant)
+{
+    // Puedes inyectar tu servicio real si ya lo tienes
+    // p.ej. TenantBillingService $svc y llamar $svc->runMonthlyCycle($tenant)
+    try {
+        \DB::transaction(function () use ($tenant) {
+            // Llama a tu servicio canónico (ajusta el nombre a tu implementación real)
+            app(\App\Services\TenantBillingService::class)->runMonthlyCycle($tenant->id);
+        });
+
+        return back()->with('ok', 'Ciclo mensual ejecutado correctamente para el tenant #'.$tenant->id.'.');
+    } catch (\Throwable $e) {
+        \Log::error('BILLING_RUN_MONTHLY_FAIL', ['tenant_id'=>$tenant->id, 'e'=>$e->getMessage()]);
+        return back()->withErrors('No se pudo correr el ciclo mensual: '.$e->getMessage());
+    }
+}
+
 }
