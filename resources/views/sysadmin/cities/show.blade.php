@@ -46,10 +46,10 @@
             </dl>
           </div>
           <div class="card-footer">
-            <a class="btn btn-outline-primary" href="{{ route('sysadmin.city_places.index', ['city_id' => $city->id]) }}">
+            <a class="btn btn-outline-primary" href="{{ route('sysadmin.city-places.index', ['city_id' => $city->id]) }}">
               Ver lugares sugeridos
             </a>
-            <a class="btn btn-primary" href="{{ route('sysadmin.city_places.create', ['city_id' => $city->id]) }}">
+            <a class="btn btn-primary" href="{{ route('sysadmin.city-places.create', ['city_id' => $city->id]) }}">
               Agregar lugar
             </a>
           </div>
@@ -63,8 +63,8 @@
           </div>
           <div class="card-body d-flex flex-column gap-2">
             <a class="btn btn-outline-secondary" href="{{ route('sysadmin.cities.edit', $city) }}">Editar ciudad</a>
-            <a class="btn btn-outline-primary" href="{{ route('sysadmin.city_places.index', ['city_id' => $city->id]) }}">Filtrar lugares por ciudad</a>
-            <a class="btn btn-outline-primary" href="{{ route('sysadmin.city_places.create', ['city_id' => $city->id]) }}">Nuevo lugar sugerido</a>
+            <a class="btn btn-outline-primary" href="{{ route('sysadmin.city-places.index', ['city_id' => $city->id]) }}">Filtrar lugares por ciudad</a>
+            <a class="btn btn-outline-primary" href="{{ route('sysadmin.city-places.create', ['city_id' => $city->id]) }}">Nuevo lugar sugerido</a>
           </div>
         </div>
       </div>
