@@ -5,6 +5,8 @@ use App\Models\City;
 
 class CityResolver
 {
+    private float $marginKm = 10.0; // tolerancia opcional
+
     public function resolve(float $lat, float $lng): ?array
     {
         $cities = City::where('is_active', 1)->get([
@@ -13,23 +15,20 @@ class CityResolver
 
         if ($cities->isEmpty()) return null;
 
-        $bestInside = null;   // dentro del radio
-        $bestAny    = null;   // más cercana (fallback)
+        $bestInside = null;
 
         foreach ($cities as $city) {
             $d = $this->haversineKm($lat, $lng, (float)$city->center_lat, (float)$city->center_lng);
+            $radius = (float)$city->radius_km + $this->marginKm;
 
-            if ($bestAny === null || $d < $bestAny['distance_km']) {
-                $bestAny = ['city' => $city, 'distance_km' => $d, 'inside' => ($d <= (float)$city->radius_km)];
-            }
-            if ($d <= (float)$city->radius_km) {
+            if ($d <= $radius) {
                 if ($bestInside === null || $d < $bestInside['distance_km']) {
                     $bestInside = ['city' => $city, 'distance_km' => $d, 'inside' => true];
                 }
             }
         }
 
-        return $bestInside ?? $bestAny;
+        return $bestInside; // ✅ si no entra a ninguna, regresa null
     }
 
     private function haversineKm(float $lat1, float $lng1, float $lat2, float $lng2): float
@@ -42,3 +41,4 @@ class CityResolver
         return 2 * $R * asin(min(1.0, sqrt($a)));
     }
 }
+

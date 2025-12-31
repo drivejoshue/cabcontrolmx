@@ -11,7 +11,7 @@ use Illuminate\Http\Request;
 
 class PassengerSuggestionsController extends Controller
 {
- public function suggestions(Request $request, CityResolver $resolver)
+public function suggestions(Request $request, CityResolver $resolver)
 {
     $data = $request->validate([
         'firebase_uid' => 'required|string|max:128',
@@ -28,18 +28,15 @@ class PassengerSuggestionsController extends Controller
     $lng = (float)$data['lng'];
 
     $resolved = $resolver->resolve($lat, $lng);
-    $city = $resolved ? $resolved['city'] : null;
+    $city = ($resolved && !empty($resolved['inside'])) ? $resolved['city'] : null;
 
-    // saved home/work/fav (slot 0)
     $saved = PassengerPlace::where('passenger_id', $passenger->id)
         ->where('is_active', 1)
         ->whereIn('kind', ['home','work','fav'])
         ->get()
         ->keyBy('kind');
 
-    $usedKeys = []; // dedupe por ~100m
-
-    // Slots fijos
+    $usedKeys = [];
     $items = [null, null, null];
 
     // Slot 0: home
@@ -52,27 +49,27 @@ class PassengerSuggestionsController extends Controller
         $items[1] = $this->mapSavedPlace($saved['work'], 'work', $usedKeys);
     }
 
-    // Slot 2: fav > recent > current
+    // Slot 2: fav > recent (solo si cae dentro de city) > null (aún no current aquí)
     if (isset($saved['fav'])) {
         $items[2] = $this->mapSavedPlace($saved['fav'], 'fav', $usedKeys);
     } else {
         $recent = $this->pickRecentDestination($passenger->id, $city, $usedKeys);
-        $items[2] = $recent ?: $this->mapCurrentItem($lat, $lng, $usedKeys);
+        $items[2] = $recent; // ✅ si no hay recent, queda null
     }
 
-    // Rellenar huecos home/work con suggested (y si no hay city, usar current)
+    // Rellenar huecos home/work SOLO con suggested (si hay city). Si no, se quedan null.
     for ($i = 0; $i < 2; $i++) {
         if ($items[$i] !== null) continue;
 
         $fallback = $city ? $this->pickCityFallback($city->id, $passenger->id, $usedKeys) : null;
-        $items[$i] = $fallback ?: $this->mapCurrentItem($lat, $lng, $usedKeys);
+        $items[$i] = $fallback; // ✅ NO current aquí
     }
 
-    // Por seguridad: si algo quedara null, rellena con current
-    for ($i = 0; $i < 3; $i++) {
-        if ($items[$i] === null) {
-            $items[$i] = $this->mapCurrentItem($lat, $lng, $usedKeys);
-        }
+    // Regla: si NO hay nada, devolver SOLO current (y máximo 3)
+    $hasAny = ($items[0] !== null) || ($items[1] !== null) || ($items[2] !== null);
+
+    if (!$hasAny) {
+        $items[2] = $this->mapCurrentItem($lat, $lng, $usedKeys); // ✅ solo current
     }
 
     return response()->json([
@@ -86,6 +83,7 @@ class PassengerSuggestionsController extends Controller
         'items' => $items,
     ]);
 }
+
 
 private function mapSavedPlace(PassengerPlace $p, string $kind, array &$usedKeys): array
 {
@@ -119,6 +117,10 @@ private function mapCurrentItem(float $lat, float $lng, array &$usedKeys): array
 
 private function pickRecentDestination(int $passengerId, $cityOrNull, array &$usedKeys): ?array
 {
+    if (!$cityOrNull) {
+        return null; // ✅ sin ciudad, no sugieras recientes
+    }
+
     $rides = Ride::where('passenger_id', $passengerId)
         ->whereNotNull('dest_lat')
         ->whereNotNull('dest_lng')
@@ -130,10 +132,8 @@ private function pickRecentDestination(int $passengerId, $cityOrNull, array &$us
         $lat = (float)$r->dest_lat;
         $lng = (float)$r->dest_lng;
 
-        if ($cityOrNull) {
-            $dc = $this->haversineKm($lat, $lng, (float)$cityOrNull->center_lat, (float)$cityOrNull->center_lng);
-            if ($dc > (float)$cityOrNull->radius_km) continue;
-        }
+        $dc = $this->haversineKm($lat, $lng, (float)$cityOrNull->center_lat, (float)$cityOrNull->center_lng);
+        if ($dc > (float)$cityOrNull->radius_km) continue;
 
         if ($this->isUsed($lat, $lng, $usedKeys)) continue;
 
@@ -152,6 +152,7 @@ private function pickRecentDestination(int $passengerId, $cityOrNull, array &$us
 
     return null;
 }
+
 
 private function pickCityFallback(int $cityId, int $passengerId, array &$usedKeys): ?array
 {
