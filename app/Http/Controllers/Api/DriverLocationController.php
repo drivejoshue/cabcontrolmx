@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use App\Services\RideBroadcaster;
+use App\Services\AutoKickService;
 
 class DriverLocationController extends Controller
 {
@@ -21,38 +23,41 @@ class DriverLocationController extends Controller
         $userTenant = (int)($user->tenant_id ?? 0);
 
         if ($userTenant <= 0) {
-            return response()->json(['ok'=>false,'message'=>'Driver sin tenant asignado'], 403);
+            return response()->json(['ok' => false, 'message' => 'Driver sin tenant asignado'], 403);
         }
 
         $headerTenant = $r->header('X-Tenant-ID');
         if ($headerTenant && (int)$headerTenant !== $userTenant) {
-            return response()->json(['ok'=>false,'message'=>'Tenant inválido para este driver'], 403);
+            return response()->json(['ok' => false, 'message' => 'Tenant inválido para este driver'], 403);
         }
 
         $tenantId = $userTenant;
 
         $data = $r->validate([
-            'lat'        => 'required|numeric',
-            'lng'        => 'required|numeric',
-            'busy'       => 'nullable|boolean',
-            'speed_kmh'  => 'nullable|numeric',
-            'bearing'    => 'nullable|numeric|min:0|max:360', // 360 la normalizamos a 0
-            'heading_deg'=> 'nullable|numeric|min:0|max:360',
+            'lat'         => 'required|numeric',
+            'lng'         => 'required|numeric',
+            'busy'        => 'nullable|boolean',
+            'speed_kmh'   => 'nullable|numeric',
+            'bearing'     => 'nullable|numeric|min:0|max:360', // 360 -> 0
+            'heading_deg' => 'nullable|numeric|min:0|max:360',
         ]);
 
         $driver = DB::table('drivers')
             ->where('tenant_id', $tenantId)
             ->where('user_id', $user->id)
-            ->select('id','status','last_active_status')
+            ->select('id', 'status', 'last_active_status')
             ->first();
 
         if (!$driver) {
-            return response()->json(['ok'=>false,'message'=>'Usuario no vinculado a conductor'], 403);
+            return response()->json(['ok' => false, 'message' => 'Usuario no vinculado a conductor'], 403);
         }
 
         if ($driverId && (int)$driverId !== (int)$driver->id) {
-            return response()->json(['ok'=>false,'message'=>'Driver inválido'], 403);
+            return response()->json(['ok' => false, 'message' => 'Driver inválido'], 403);
         }
+
+        // ====== STATUS PREVIO (SIEMPRE DEFINIDO, ANTES DE CUALQUIER CÁLCULO) ======
+        $prevStatus = strtolower((string)($driver->status ?? 'offline'));
 
         // TZ tenant (para last_ping_at y reported_at)
         $tz = DB::table('tenants')->where('id', $tenantId)->value('timezone')
@@ -64,11 +69,11 @@ class DriverLocationController extends Controller
         $activeRide = DB::table('rides')
             ->where('tenant_id', $tenantId)
             ->where('driver_id', $driver->id)
-            ->whereIn('status', ['accepted','arrived','on_board'])
-            ->select('id','status')
+            ->whereIn('status', ['accepted', 'arrived', 'on_board'])
+            ->select('id', 'status')
             ->first();
 
-        $speed = array_key_exists('speed_kmh', $data) ? (float)$data['speed_kmh'] : null;
+        $speed     = array_key_exists('speed_kmh', $data) ? (float)$data['speed_kmh'] : null;
         $isStopped = $speed !== null && $speed < 1.0;
 
         // bearing: prefer bearing; fallback heading_deg
@@ -85,7 +90,8 @@ class DriverLocationController extends Controller
         if (!$isStopped && $rawBearing !== null) {
             $b = (float)$rawBearing;
             $b = fmod($b, 360.0);
-            if ($b < 0) $b += 360.0;   // normaliza [0,360)
+            if ($b < 0) $b += 360.0; // normaliza [0,360)
+            if ($b == 360.0) $b = 0.0;
             $bearing = $b;
             $heading = $b;
         }
@@ -104,16 +110,15 @@ class DriverLocationController extends Controller
         ]);
 
         // 2) Estado efectivo
-        $currentStatus = strtolower((string)($driver->status ?? 'offline'));
-        $effectiveStatus = $currentStatus;
+        $effectiveStatus = $prevStatus;
 
         if ($activeRide) {
             $effectiveStatus = 'on_ride';
         } elseif (array_key_exists('busy', $data)) {
             $effectiveStatus = $data['busy'] ? 'busy' : 'idle';
-        } elseif ($currentStatus === 'offline') {
+        } elseif ($prevStatus === 'offline') {
             // ping sin busy: revive a last_active_status o idle
-            $lastActive = $driver->last_active_status ?? null;
+            $lastActive      = $driver->last_active_status ?? null;
             $effectiveStatus = $lastActive ?: 'idle';
         }
 
@@ -136,6 +141,82 @@ class DriverLocationController extends Controller
 
         DB::table('drivers')->where('id', $driver->id)->update($update);
 
+        // ===== LOG BASE DEL PING =====
+        Log::info('DriverLocation.ping', [
+            'tenant_id'        => $tenantId,
+            'driver_id'        => (int)$driver->id,
+            'prev_status'      => $prevStatus,
+            'effective_status' => $effectiveStatus,
+            'busy_in_payload'  => array_key_exists('busy', $data) ? (bool)$data['busy'] : null,
+            'active_ride_id'   => $activeRide ? (int)$activeRide->id : null,
+            'speed_kmh'        => $speed,
+            'bearing'          => $bearing,
+        ]);
+
+        // ===============================
+        // AUTOKICK: TRANSICIÓN A IDLE
+        // Dispara cuando:
+        // - NO hay ride activo
+        // - antes NO estaba idle (offline/busy/on_ride)
+        // - ahora SÍ está idle
+        // - debounce por driver para no spamear
+        // ===============================
+        if (!$activeRide) {
+            $wasUnavailable = in_array($prevStatus, ['offline', 'busy', 'on_ride'], true);
+            $becameIdle     = ($effectiveStatus === 'idle');
+
+            if ($wasUnavailable && $becameIdle) {
+                $key = "autokick:tenant:$tenantId:driver:{$driver->id}";
+                $debounced = Cache::add($key, 1, 8); // 8s debounce
+
+                Log::info('AutoKick.check', [
+                    'tenant_id'   => $tenantId,
+                    'driver_id'   => (int)$driver->id,
+                    'prev_status' => $prevStatus,
+                    'now_status'  => $effectiveStatus,
+                    'debounced'   => $debounced ? 0 : 1, // 0=se permitió, 1=bloqueado por debounce
+                ]);
+
+                if ($debounced) {
+                    try {
+                        // IMPORTANTE: este método debe existir y hacer la wave sobre un ride cercano.
+                        // Si tu AutoKickService retorna data, la logueamos.
+                        $kickRes = AutoKickService::kickNearestRideForDriver(
+                            tenantId: $tenantId,
+                            driverId: (int)$driver->id,
+                            lat: (float)$data['lat'],
+                            lng: (float)$data['lng']
+                        );
+
+                        Log::info('AutoKick.done', [
+                            'tenant_id' => $tenantId,
+                            'driver_id' => (int)$driver->id,
+                            'res'       => $kickRes,
+                        ]);
+                    } catch (\Throwable $e) {
+                        Log::error('AutoKick.failed', [
+                            'tenant_id' => $tenantId,
+                            'driver_id' => (int)$driver->id,
+                            'err'       => $e->getMessage(),
+                        ]);
+                    }
+                }
+            }
+        }
+
+        if (!$activeRide && $effectiveStatus === 'idle') {
+    $key = "autokick:tenant:$tenantId:driver:{$driver->id}";
+    if (\Cache::add($key, 1, 8)) { // 8s debounce
+        $res = \App\Services\AutoKickService::kickNearestRideForDriver(
+            tenantId: $tenantId,
+            driverId: (int)$driver->id,
+            lat: (float)$data['lat'],
+            lng: (float)$data['lng']
+        );
+        \Log::info('AutoKick.done', ['tenant_id'=>$tenantId,'driver_id'=>$driver->id,'res'=>$res]);
+    }
+}
+
         // 4) Broadcast al pasajero si hay ride activo
         if ($activeRide) {
             try {
@@ -147,26 +228,27 @@ class DriverLocationController extends Controller
                     bearing: $bearing
                 );
             } catch (\Throwable $e) {
-                Log::error('DriverLocation → Error en broadcast', [
+                Log::error('DriverLocation.broadcast_failed', [
                     'tenant_id' => $tenantId,
-                    'ride_id'   => $activeRide->id,
-                    'driver_id' => $driver->id,
+                    'ride_id'   => (int)$activeRide->id,
+                    'driver_id' => (int)$driver->id,
                     'error'     => $e->getMessage(),
                 ]);
             }
         }
 
         return response()->json([
-            'ok'          => true,
-            'tenant_id'   => $tenantId,
-            'driver_id'   => $driver->id,
-            'status'      => $effectiveStatus,
-            'active_ride' => $activeRide ? [
-                'ride_id' => $activeRide->id,
-                'status'  => $activeRide->status,
+            'ok'           => true,
+            'tenant_id'    => $tenantId,
+            'driver_id'    => (int)$driver->id,
+            'prev_status'  => $prevStatus,
+            'status'       => $effectiveStatus,
+            'active_ride'  => $activeRide ? [
+                'ride_id' => (int)$activeRide->id,
+                'status'  => (string)$activeRide->status,
             ] : null,
-            'is_stopped'  => $isStopped,
-            'bearing_sent'=> $bearing !== null,
+            'is_stopped'   => $isStopped,
+            'bearing_sent' => $bearing !== null,
         ]);
     }
 }

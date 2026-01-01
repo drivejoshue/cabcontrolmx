@@ -1206,24 +1206,9 @@ if (!window.__cancelHandlerBound) {
     });
     if (!result.isConfirmed) return;
 
-    // (Opcional) Motivo
-    let chosenReason = null;
-    if (Array.isArray(window.cancelReasons) && window.cancelReasons.length > 0) {
-      const { value: reasonId } = await Swal.fire({
-        title: 'Motivo de cancelación',
-        input: 'select',
-        inputOptions: window.cancelReasons.reduce((acc, r) => {
-          acc[r.id] = r.label; return acc;
-        }, {}),
-        inputPlaceholder: 'Selecciona un motivo',
-        showCancelButton: true,
-        confirmButtonText: 'Continuar',
-        cancelButtonText: 'Volver',
-      });
-      if (reasonId === undefined) return; // canceló
-      const item = window.cancelReasons.find(r => String(r.id) === String(reasonId));
-      chosenReason = item ? item.label : null;
-    }
+   // Motivo fijo (Dispatch). No pedimos selección.
+    const chosenReason = 'Cancelado por central';
+
 
     // UI: evitar doble click
     const prevText = btn.textContent;

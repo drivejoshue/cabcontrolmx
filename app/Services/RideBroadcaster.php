@@ -18,11 +18,16 @@ class RideBroadcaster
     }
 
     /** Lee driver_id del ride, si existe */
-    private static function rideDriverId(int $rideId): ?int
-    {
-        $d = DB::table('rides')->where('id', $rideId)->value('driver_id');
-        return $d ? (int) $d : null;
-    }
+   private static function rideDriverId(int $tenantId, int $rideId): ?int
+{
+    $d = DB::table('rides')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $rideId)
+        ->value('driver_id');
+
+    return $d ? (int)$d : null;
+}
+
 
     /**
      * Emitir a canal del RIDE y (si aplica) al DRIVER
@@ -36,9 +41,16 @@ class RideBroadcaster
         Realtime::toRide($tenantId, $rideId)->emit('ride.update', $payload);
 
         // Canal del driver (si ya hay ganador)
-        if ($driverId = self::rideDriverId($rideId)) {
-            Realtime::toDriver($tenantId, $driverId)->emit('ride.update', $payload);
+        if ($driverId = self::rideDriverId($tenantId, $rideId)) {
+    Realtime::toDriver($tenantId, $driverId)->emit('ride.update', $payload);
         }
+
+        \Log::info('RideBroadcaster.update OUT', [
+  'tenant_id' => $tenantId,
+  'ride_id'   => $rideId,
+  'status'    => $status,
+  'channel'   => "tenant.$tenantId.ride.$rideId",
+]);
     }
 
     /* -----------------------------------------------------------------
@@ -329,7 +341,8 @@ public static function bootstrapLocationAndRoute(
     }
 
     public static function canceled(int $tenantId, int $rideId, ?string $by = null, ?string $reason = null): void
-    {
+    {   
+        
         self::update($tenantId, $rideId, 'canceled', [
             'canceled_by'   => $by,
             'cancel_reason' => $reason,

@@ -87,17 +87,23 @@ class PassengerRideController extends Controller
             (float) $v['pickup_lng'],
         );
 
-        if (! $coverageTenant || (int) $coverageTenant->id !== $tenantId) {
-            \Log::warning('PassengerRide.store coverage mismatch', [
-                'tenant_id'       => $tenantId,
-                'coverage_tenant' => $coverageTenant?->id,
-            ]);
-
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'La ubicación de recogida no coincide con la zona del operador.',
+       if (! $coverageTenant) {
+       return response()->json([
+        'ok'   => false,
+        'code' => 'NO_COVERAGE',
+        'msg'  => 'Sin cobertura en tu zona. Intenta en otra ubicación.',
             ], 422);
         }
+
+        if ((int)$coverageTenant->id !== $tenantId) {
+            return response()->json([
+                'ok'   => false,
+                'code' => 'COVERAGE_MISMATCH',
+                'msg'  => 'La ubicación de recogida no coincide con la zona del operador.',
+                'expected_tenant_id' => (int)$coverageTenant->id,
+            ], 422);
+        }
+
 
         // 2) Buscar pasajero
         $passenger = Passenger::where('firebase_uid', $v['firebase_uid'])->first();
@@ -353,6 +359,10 @@ class PassengerRideController extends Controller
                 ->where('id', $rideId)
                 ->first();
 
+
+               
+
+
             if ($rideRow) {
                 $dispatchRes = AutoDispatchService::kickoff(
                     tenantId: $tenantId,
@@ -364,6 +374,8 @@ class PassengerRideController extends Controller
                     limitN:   $limitN,
                     autoAssignIfSingle: $autoAssign
                 );
+
+               
 
                 \Log::info('PassengerRide.store kickoff', [
                     'tenant_id' => $tenantId,
@@ -379,6 +391,9 @@ class PassengerRideController extends Controller
                     'ride_id'   => $rideId,
                 ]);
             }
+
+
+
 
             // 12) Broadcast "buscando conductor" al canal del ride
             RideBroadcaster::requestedFromPassenger(
@@ -418,8 +433,11 @@ class PassengerRideController extends Controller
             'passenger_offer' => $offered,
             'distance_m'      => $distance_m,
             'duration_s'      => $duration_s,
+           
         ], 201);
     }
+
+
 
 
 
@@ -487,6 +505,8 @@ class PassengerRideController extends Controller
                 'total_amount',
                 'payment_method', 
                 'driver_id',
+                 'cancel_reason',
+                 'canceled_by',
 
                           
                 'passenger_onway_at',
@@ -498,6 +518,9 @@ class PassengerRideController extends Controller
             ])
             ->first();
 
+          
+
+
         // 4) Si no hay ride activo → ok:true, ride:null
         if (! $row) {
             return response()->json([
@@ -505,6 +528,8 @@ class PassengerRideController extends Controller
                 'ride' => null,
             ]);
         }
+
+          $searchExpiresAt = $this->computeRideSearchExpiresAt($tenantId, (int)$row->id);
 
         // 5) Armar payload compacto para el cliente
         $ridePayload = [
@@ -540,11 +565,16 @@ class PassengerRideController extends Controller
                 'passenger_onboard_at'  => $row->passenger_onboard_at,
                 'passenger_finished_at' => $row->passenger_finished_at,
 
+                'cancel_reason' => $row->cancel_reason ? (string) $row->cancel_reason : null,
+        'canceled_by'   => $row->canceled_by   ? (string) $row->canceled_by   : null,
+
             'driver_id'  => $row->driver_id !== null ? (int) $row->driver_id : null,
             'has_driver' => !empty($row->driver_id),
 
             'created_at' => $row->created_at,
             'updated_at' => $row->updated_at,
+            'search_expires_at' => $searchExpiresAt,
+
         ];
 
         return response()->json([
@@ -606,11 +636,14 @@ class PassengerRideController extends Controller
                 'passenger_onway_at',
                 'passenger_onboard_at',
                 'passenger_finished_at',
-
+                'cancel_reason',
+                 'canceled_by',
                 'created_at',
                 'updated_at',
             ])
             ->first();
+
+           
 
         // 4) Si no hay → ok:true, ride:null
         if (! $row) {
@@ -619,6 +652,12 @@ class PassengerRideController extends Controller
                 'ride' => null,
             ]);
         }
+
+
+         $tenantId = (int)$row->tenant_id;
+            $searchExpiresAt = $this->computeRideSearchExpiresAt($tenantId, (int)$row->id);
+
+
 
         // 5) Armar payload parecido al de current()
         $ridePayload = [
@@ -653,10 +692,13 @@ class PassengerRideController extends Controller
             'passenger_onway_at'    => $row->passenger_onway_at,
             'passenger_onboard_at'  => $row->passenger_onboard_at,
             'passenger_finished_at' => $row->passenger_finished_at,
+            'cancel_reason' => $row->cancel_reason ? (string) $row->cancel_reason : null,
+            'canceled_by'   => $row->canceled_by   ? (string) $row->canceled_by   : null,
 
 
             'created_at'      => $row->created_at,
             'updated_at'      => $row->updated_at,
+            'search_expires_at' => $searchExpiresAt,
         ];
 
         return response()->json([
@@ -665,7 +707,126 @@ class PassengerRideController extends Controller
         ]);
     }
 
+ public function offers(Request $req, int $ride)
+    {
+        $v = $req->validate([
+            'tenant_id'    => 'required|integer|exists:tenants,id',
+            'firebase_uid' => 'required|string',
+        ]);
 
+        $tenantId = (int) $v['tenant_id'];
+
+        // 1) Validar pasajero por firebase_uid
+        $passenger = Passenger::where('firebase_uid', $v['firebase_uid'])->first();
+        if (! $passenger) {
+            return response()->json([
+                'ok'  => false,
+                'msg' => 'Pasajero no encontrado',
+            ], 422);
+        }
+
+        // 2) Ride
+        $r = DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $ride)
+            ->first();
+
+        if (! $r) {
+            return response()->json([
+                'ok'  => false,
+                'msg' => 'Ride no encontrado',
+            ], 404);
+        }
+
+        // que el ride sea de este pasajero
+        if ((int) $r->passenger_id !== (int) $passenger->id) {
+            return response()->json([
+                'ok'  => false,
+                'msg' => 'No autorizado',
+            ], 403);
+        }
+
+        // 3) Ofertas asociadas + driver + vehículo asignado actual
+        $offers = DB::table('ride_offers as o')
+            ->leftJoin('drivers as d', function ($q) use ($tenantId) {
+                $q->on('d.id', '=', 'o.driver_id')
+                  ->where('d.tenant_id', '=', $tenantId);
+            })
+            ->leftJoin('driver_vehicle_assignments as a', function ($q) use ($tenantId) {
+                $q->on('a.driver_id', '=', 'o.driver_id')
+                  ->where('a.tenant_id', '=', $tenantId)
+                  ->whereNull('a.end_at'); // asignación vigente
+            })
+            ->leftJoin('vehicles as v', function ($q) use ($tenantId) {
+                $q->on('v.id', '=', 'a.vehicle_id')
+                  ->where('v.tenant_id', '=', $tenantId);
+            })
+            ->where('o.tenant_id', $tenantId)
+            ->where('o.ride_id', $ride)
+            ->orderByDesc('o.id')
+            ->select([
+                'o.id          as offer_id',
+                'o.status',
+                'o.driver_id',
+                'o.driver_offer',
+                'o.expires_at',
+                'o.sent_at',
+                'o.responded_at',
+                'o.distance_m',
+                'o.eta_seconds',
+
+                DB::raw('CEIL(o.eta_seconds / 60) as eta_minutes'),
+
+                // Campos del driver
+                'd.name       as driver_name',
+                'd.foto_path  as driver_foto_path',
+
+                // Campos básicos del vehículo asignado
+                'v.brand      as vehicle_brand',
+                'v.model      as vehicle_model',
+                'v.plate      as vehicle_plate',
+                'v.economico  as vehicle_economico',
+            ])
+            ->get()
+            ->map(function ($o) {
+                // casteos básicos
+                $o->driver_offer = $o->driver_offer !== null ? (float) $o->driver_offer : null;
+                $o->distance_m   = $o->distance_m   !== null ? (int)   $o->distance_m   : null;
+                $o->eta_seconds  = $o->eta_seconds  !== null ? (int)   $o->eta_seconds  : null;
+                $o->eta_minutes  = $o->eta_minutes  !== null ? (int)   $o->eta_minutes  : null;
+
+                // URL pública del avatar (a partir de foto_path)
+                if (!empty($o->driver_foto_path)) {
+                    $o->avatar_url = Storage::disk('public')->url($o->driver_foto_path);
+                } else {
+                    $o->avatar_url = null;
+                }
+
+                // Opcional: etiqueta compacta de vehículo (marca + modelo)
+                $brand = $o->vehicle_brand ?? '';
+                $model = $o->vehicle_model ?? '';
+                $label = trim($brand.' '.$model);
+                $o->vehicle_label = $label !== '' ? $label : null;
+
+                // si no quieres exponer foto_path crudo:
+                unset($o->driver_foto_path);
+
+                return $o;
+            });
+
+        return response()->json([
+            'ok'    => true,
+            'ride'  => [
+                'id'              => (int) $r->id,
+                'status'          => $r->status,
+                'passenger_offer' => $r->passenger_offer !== null ? (float) $r->passenger_offer : null,
+                'quoted_amount'   => $r->quoted_amount   !== null ? (float) $r->quoted_amount   : null,
+                'driver_offer'    => $r->driver_offer    !== null ? (float) $r->driver_offer    : null,
+                'agreed_amount'   => $r->agreed_amount   !== null ? (float) $r->agreed_amount   : null,
+            ],
+            'items' => $offers,
+        ]);
+    }
 
       public function acceptOffer(Request $req, int $ride)
     {
@@ -1139,129 +1300,18 @@ class PassengerRideController extends Controller
     }
 
 
+private function computeRideSearchExpiresAt(int $tenantId, int $rideId): ?string
+{
+    // Tomamos el MAX(expires_at) de la ola actual (o de todas las ofertas del ride)
+    // Si no hay ofertas, devolvemos null.
+    $max = DB::table('ride_offers')
+        ->where('tenant_id', $tenantId)
+        ->where('ride_id', $rideId)
+        ->max('expires_at');
 
-    public function offers(Request $req, int $ride)
-    {
-        $v = $req->validate([
-            'tenant_id'    => 'required|integer|exists:tenants,id',
-            'firebase_uid' => 'required|string',
-        ]);
-
-        $tenantId = (int) $v['tenant_id'];
-
-        // 1) Validar pasajero por firebase_uid
-        $passenger = Passenger::where('firebase_uid', $v['firebase_uid'])->first();
-        if (! $passenger) {
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'Pasajero no encontrado',
-            ], 422);
-        }
-
-        // 2) Ride
-        $r = DB::table('rides')
-            ->where('tenant_id', $tenantId)
-            ->where('id', $ride)
-            ->first();
-
-        if (! $r) {
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'Ride no encontrado',
-            ], 404);
-        }
-
-        // que el ride sea de este pasajero
-        if ((int) $r->passenger_id !== (int) $passenger->id) {
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'No autorizado',
-            ], 403);
-        }
-
-        // 3) Ofertas asociadas + driver + vehículo asignado actual
-        $offers = DB::table('ride_offers as o')
-            ->leftJoin('drivers as d', function ($q) use ($tenantId) {
-                $q->on('d.id', '=', 'o.driver_id')
-                  ->where('d.tenant_id', '=', $tenantId);
-            })
-            ->leftJoin('driver_vehicle_assignments as a', function ($q) use ($tenantId) {
-                $q->on('a.driver_id', '=', 'o.driver_id')
-                  ->where('a.tenant_id', '=', $tenantId)
-                  ->whereNull('a.end_at'); // asignación vigente
-            })
-            ->leftJoin('vehicles as v', function ($q) use ($tenantId) {
-                $q->on('v.id', '=', 'a.vehicle_id')
-                  ->where('v.tenant_id', '=', $tenantId);
-            })
-            ->where('o.tenant_id', $tenantId)
-            ->where('o.ride_id', $ride)
-            ->orderByDesc('o.id')
-            ->select([
-                'o.id          as offer_id',
-                'o.status',
-                'o.driver_id',
-                'o.driver_offer',
-                'o.expires_at',
-                'o.sent_at',
-                'o.responded_at',
-                'o.distance_m',
-                'o.eta_seconds',
-
-                DB::raw('CEIL(o.eta_seconds / 60) as eta_minutes'),
-
-                // Campos del driver
-                'd.name       as driver_name',
-                'd.foto_path  as driver_foto_path',
-
-                // Campos básicos del vehículo asignado
-                'v.brand      as vehicle_brand',
-                'v.model      as vehicle_model',
-                'v.plate      as vehicle_plate',
-                'v.economico  as vehicle_economico',
-            ])
-            ->get()
-            ->map(function ($o) {
-                // casteos básicos
-                $o->driver_offer = $o->driver_offer !== null ? (float) $o->driver_offer : null;
-                $o->distance_m   = $o->distance_m   !== null ? (int)   $o->distance_m   : null;
-                $o->eta_seconds  = $o->eta_seconds  !== null ? (int)   $o->eta_seconds  : null;
-                $o->eta_minutes  = $o->eta_minutes  !== null ? (int)   $o->eta_minutes  : null;
-
-                // URL pública del avatar (a partir de foto_path)
-                if (!empty($o->driver_foto_path)) {
-                    $o->avatar_url = Storage::disk('public')->url($o->driver_foto_path);
-                } else {
-                    $o->avatar_url = null;
-                }
-
-                // Opcional: etiqueta compacta de vehículo (marca + modelo)
-                $brand = $o->vehicle_brand ?? '';
-                $model = $o->vehicle_model ?? '';
-                $label = trim($brand.' '.$model);
-                $o->vehicle_label = $label !== '' ? $label : null;
-
-                // si no quieres exponer foto_path crudo:
-                unset($o->driver_foto_path);
-
-                return $o;
-            });
-
-        return response()->json([
-            'ok'    => true,
-            'ride'  => [
-                'id'              => (int) $r->id,
-                'status'          => $r->status,
-                'passenger_offer' => $r->passenger_offer !== null ? (float) $r->passenger_offer : null,
-                'quoted_amount'   => $r->quoted_amount   !== null ? (float) $r->quoted_amount   : null,
-                'driver_offer'    => $r->driver_offer    !== null ? (float) $r->driver_offer    : null,
-                'agreed_amount'   => $r->agreed_amount   !== null ? (float) $r->agreed_amount   : null,
-            ],
-            'items' => $offers,
-        ]);
-    }
-
-
+    return $max ? (string) $max : null;
+}
+   
 
 
   public function onTheWay(Request $req, int $ride)

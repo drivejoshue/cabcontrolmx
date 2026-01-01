@@ -12,25 +12,22 @@ use App\Services\OfferBroadcaster;
 //    - NO cierra turnos
 // =====================================================
 Schedule::call(function () {
-    $now = now();
+   
+$cut = now()->subMinutes(30);
 
-    // Ajusta según tu operación
-    $offlineAfterMinutes = 30;
-    $cutOffOffline = now()->subMinutes($offlineAfterMinutes);
+$activeDriverIds = DB::table('driver_locations')
+    ->whereNotNull('reported_at')
+    ->where('reported_at', '>=', $cut)
+    ->select('driver_id')
+    ->distinct();
 
-    // OJO: aquí sigues usando last_seen_at.
-    // Si ya migraste a driver_locations para "fresh", cambia esta lógica a driver_locations.
-    DB::table('drivers')
-        ->where(function ($q) use ($cutOffOffline) {
-            $q->whereNull('last_seen_at')
-              ->orWhere('last_seen_at', '<', $cutOffOffline);
-        })
-        ->where('status', '!=', 'offline')
-        ->update([
-            'status'     => 'offline',
-            'updated_at' => $now,
-        ]);
-
+DB::table('drivers')
+    ->where('status', '!=', 'offline')
+    ->whereNotIn('id', $activeDriverIds)
+    ->update([
+        'status' => 'offline',
+        'updated_at' => now(),
+    ]);
     // ✅ Ya NO se autocierra driver_shifts
 })->everyMinute()
   ->name('drivers.watchdog.offline')
@@ -61,56 +58,6 @@ Schedule::call(function () {
   ->withoutOverlapping();
 
 
-// =====================================================
-// 3) Expirar ofertas vencidas + emitir realtime
-//    - SOLO una versión (no uses también el Command)
-// =====================================================
-Schedule::call(function () {
-    $now = now();
-
-    DB::table('ride_offers')
-        ->select('id','tenant_id','driver_id','ride_id')
-        ->where('status', 'offered')
-        ->whereNotNull('expires_at')
-        ->where('expires_at', '<', $now)
-        ->orderBy('id')
-        ->chunkById(500, function ($rows) use ($now) {
-            foreach ($rows as $r) {
-                // anti-race: solo si sigue offered
-                $updated = DB::table('ride_offers')
-                    ->where('id', $r->id)
-                    ->where('status', 'offered')
-                    ->update([
-                        'status'       => 'expired',
-                        'responded_at' => $now,
-                        'updated_at'   => $now,
-                    ]);
-
-                if ($updated) {
-                    try {
-                        OfferBroadcaster::emitStatus(
-                            (int)$r->tenant_id,
-                            (int)$r->driver_id,
-                            (int)$r->ride_id,
-                            (int)$r->id,
-                            'expired'
-                        );
-                    } catch (\Throwable $e) {
-                        Log::warning('offers.expire emit failed', [
-                            'tenant' => (int)$r->tenant_id,
-                            'driver' => (int)$r->driver_id,
-                            'ride'   => (int)$r->ride_id,
-                            'offer'  => (int)$r->id,
-                            'msg'    => $e->getMessage(),
-                        ]);
-                    }
-                }
-            }
-        });
-})->everyMinute()
-  ->name('offers.expire')
-  ->withoutOverlapping();
-
 
 // =====================================================
 // 4) Billing (deja SOLO una estrategia; no dupliques)
@@ -128,6 +75,19 @@ Schedule::command('tenants:bill-month-start')
     ->name('tenants.billMonthStart')
     ->withoutOverlapping();
 
+
+      Schedule::command('orbana:expire-passenger-rides')
+    ->everyMinute()
+    ->name('orbana.expire_passenger_rides')
+    ->withoutOverlapping();
+
+
+    Schedule::command('orbanamx:autodispatch-tick')
+        ->everyMinute()
+        ->withoutOverlapping(55)
+        ->runInBackground()
+        ->appendOutputTo(storage_path('logs/autodispatch_tick.log'));
+
 // Si todavía ocupas tenants:bill, deja SOLO UNO (NO por clase y por firma a la vez)
 // Schedule::command('tenants:bill')->dailyAt('03:00')->name('tenants.bill')->withoutOverlapping();
 
@@ -139,3 +99,7 @@ Schedule::command('tenants:bill-month-start')
 //     ->dailyAt('03:00')
 //     ->name('chat.purgeOld')
 //     ->withoutOverlapping();
+
+
+
+

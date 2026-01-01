@@ -17,6 +17,7 @@ class TenantResolverService
         // Tenants que aceptan pasajeros desde la app
         $tenants = Tenant::query()
             ->where('allow_marketplace', 1)
+              ->where('public_active', 1)   
             ->whereNotNull('latitud')
             ->whereNotNull('longitud')
             ->get();

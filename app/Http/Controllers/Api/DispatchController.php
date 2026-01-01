@@ -286,11 +286,65 @@ class DispatchController extends Controller
         ->whereRaw('o.expires_at IS NULL OR o.expires_at > NOW()')
         ->where(DB::raw('LOWER(o.status)'), 'offered');
 
-    $activeForDriver = DB::query()
-        ->fromSub($assignedOrInProgress->unionAll($liveOffers), 'ar')
-        ->select('ar.driver_id', 'ar.ride_status')
-        ->orderByRaw("FIELD(ar.ride_status,'on_board','en_route','arrived','accepted','offered','requested','scheduled')")
-        ->orderBy('ar.driver_id');
+
+        // =========================================================
+// 2) Estado activo por driver (1 SOLO status por driver, por prioridad)
+// =========================================================
+
+// ... $assignedOrInProgress y $liveOffers se quedan igual ...
+
+$activeUnion = $assignedOrInProgress->unionAll($liveOffers);
+
+// 1) Mapear a prioridad numérica (menor = más importante)
+$activeWithPrio = DB::query()
+    ->fromSub($activeUnion, 'ar0')
+    ->select([
+        'ar0.driver_id',
+        DB::raw("
+            CASE ar0.ride_status
+                WHEN 'on_board'  THEN 1
+                WHEN 'en_route'  THEN 2
+                WHEN 'arrived'   THEN 3
+                WHEN 'accepted'  THEN 4
+                WHEN 'offered'   THEN 5
+                WHEN 'requested' THEN 6
+                WHEN 'scheduled' THEN 7
+                ELSE 99
+            END AS prio
+        "),
+    ]);
+
+// 2) Colapsar: una fila por driver con la prioridad mínima
+$minPrioPerDriver = DB::query()
+    ->fromSub($activeWithPrio, 'ap')
+    ->select('ap.driver_id', DB::raw('MIN(ap.prio) as min_prio'))
+    ->groupBy('ap.driver_id');
+
+// 3) Convertir min_prio a ride_status final
+$activeForDriver = DB::query()
+    ->fromSub($minPrioPerDriver, 'mp')
+    ->select([
+        'mp.driver_id',
+        DB::raw("
+            CASE mp.min_prio
+                WHEN 1 THEN 'on_board'
+                WHEN 2 THEN 'en_route'
+                WHEN 3 THEN 'arrived'
+                WHEN 4 THEN 'accepted'
+                WHEN 5 THEN 'offered'
+                WHEN 6 THEN 'requested'
+                WHEN 7 THEN 'scheduled'
+                ELSE NULL
+            END AS ride_status
+        "),
+    ]);
+
+
+    // $activeForDriver = DB::query()
+    //     ->fromSub($assignedOrInProgress->unionAll($liveOffers), 'ar')
+    //     ->select('ar.driver_id', 'ar.ride_status')
+    //     ->orderByRaw("FIELD(ar.ride_status,'on_board','en_route','arrived','accepted','offered','requested','scheduled')")
+    //     ->orderBy('ar.driver_id');
 
     // =========================================================
     // 3) Última fila de queue por driver (por tenant)
@@ -321,6 +375,7 @@ class DispatchController extends Controller
     // =========================================================
     $drivers = DB::table('drivers')
         ->where('drivers.tenant_id', $tenantId)
+        ->whereRaw('LOWER(COALESCE(drivers.status,"offline")) != "offline"')
 
         ->leftJoin('driver_shifts as ds', function ($j) use ($tenantId) {
             $j->on('ds.driver_id', '=', 'drivers.id')
@@ -620,20 +675,36 @@ class DispatchController extends Controller
         }
     }
 
-  public function cancel(Request $r, int $ride)
+public function cancel(Request $r, int $ride)
 {
-    $r->validate(['reason' => 'nullable|string|max:160']);
-    $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
+    // Dispatch cancel -> delega al canónico
+    return $this->cancelRide($r, $ride, 'dispatch');
+}
 
-    \Log::info('dispatch.cancel IN', [
+
+
+
+ public function cancelRide(Request $r, int $ride, string $by = 'ops')
+{
+    $data = $r->validate([
+        'reason' => 'nullable|string|max:160',
+         'cancel_reason' => 'nullable|string|max:160',
+    ]);
+
+    $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
+    $cancelReason = $data['reason'] ?? null;
+
+    \Log::info('cancelRide IN', [
         'tenantId' => $tenantId,
         'ride'     => $ride,
-        'reason'   => $r->input('reason'),
+        'by'       => $by,
+        'reason'   => $cancelReason,
         'user_id'  => optional($r->user())->id,
     ]);
 
     try {
-        return DB::transaction(function () use ($tenantId, $ride, $r) {
+        return DB::transaction(function () use ($tenantId, $ride, $by, $cancelReason) {
+
             $row = DB::table('rides')
                 ->where('tenant_id', $tenantId)
                 ->where('id', $ride)
@@ -641,20 +712,19 @@ class DispatchController extends Controller
                 ->first();
 
             if (!$row) {
-                \Log::warning('dispatch.cancel ride not found', compact('tenantId','ride'));
-                return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
+                \Log::warning('cancelRide ride not found', compact('tenantId','ride'));
+                return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'], 404);
             }
 
             $prev = strtolower($row->status ?? '');
             if (in_array($prev, ['finished','canceled'], true)) {
-                \Log::info('dispatch.cancel idempotent', compact('ride','prev'));
-                return response()->json(['ok' => true]);
+                \Log::info('cancelRide idempotent', compact('ride','prev'));
+                return response()->json(['ok'=>true]);
             }
 
-            $driverId     = $row->driver_id ? (int)$row->driver_id : null;
-            $cancelReason = $r->input('reason');
+            $driverId = $row->driver_id ? (int)$row->driver_id : null;
 
-            // 🔹 Ofertas afectadas (las tomamos ANTES de actualizar)
+            // 🔹 Capturar ofertas afectadas ANTES de actualizar (para emitir offers.update por driver)
             $offersToRelease = DB::table('ride_offers')
                 ->where('tenant_id', $tenantId)
                 ->where('ride_id',   $ride)
@@ -667,7 +737,7 @@ class DispatchController extends Controller
                 ->where('status',    'accepted')
                 ->get(['id','driver_id']);
 
-            // 1) ride -> canceled
+            // 1) Ride -> canceled
             DB::table('rides')
                 ->where('tenant_id', $tenantId)
                 ->where('id', $ride)
@@ -675,20 +745,19 @@ class DispatchController extends Controller
                     'status'        => 'canceled',
                     'canceled_at'   => now(),
                     'cancel_reason' => $cancelReason,
-                    'canceled_by'   => 'dispatch',
+                    'canceled_by'   => $by,
                     'updated_at'    => now(),
                 ]);
 
-            // 2) historial
+            // 2) Historial
             DB::table('ride_status_history')->insert([
                 'tenant_id'   => $tenantId,
                 'ride_id'     => $ride,
-                'status'      => 'canceled',
                 'prev_status' => $prev,
                 'new_status'  => 'canceled',
                 'meta'        => json_encode([
                     'reason' => $cancelReason,
-                    'by'     => 'dispatch'
+                    'by'     => $by,
                 ]),
                 'created_at'  => now(),
                 'updated_at'  => now(),
@@ -698,7 +767,7 @@ class DispatchController extends Controller
             DB::table('ride_offers')
                 ->where('tenant_id', $tenantId)
                 ->where('ride_id',   $ride)
-                ->whereIn('status', ['offered', 'pending_passenger'])
+                ->whereIn('status', ['offered','pending_passenger'])
                 ->update([
                     'status'       => 'released',
                     'responded_at' => now(),
@@ -709,14 +778,14 @@ class DispatchController extends Controller
             DB::table('ride_offers')
                 ->where('tenant_id', $tenantId)
                 ->where('ride_id',   $ride)
-                ->where('status',    'accepted')
+                ->where('status','accepted')
                 ->update([
                     'status'       => 'canceled',
                     'responded_at' => now(),
                     'updated_at'   => now(),
                 ]);
 
-            // 5) si tenía driver, regresarlo a idle
+            // 5) Driver -> idle (si había)
             if ($driverId) {
                 DB::table('drivers')
                     ->where('tenant_id', $tenantId)
@@ -727,187 +796,81 @@ class DispatchController extends Controller
                     ]);
             }
 
-            // 6) EMITIR offers.update para cada oferta afectada
+            // 6) Emitir offers.update por driver (igual que tu cancel original)
             foreach ($offersToRelease as $o) {
                 OfferBroadcaster::emitStatus(
                     $tenantId,
-                    (int) $o->driver_id,
-                    $ride,
-                    (int) $o->id,
+                    (int)$o->driver_id,
+                    (int)$ride,
+                    (int)$o->id,
                     'released'
                 );
             }
-
             foreach ($offersToCancel as $o) {
                 OfferBroadcaster::emitStatus(
                     $tenantId,
-                    (int) $o->driver_id,
-                    $ride,
-                    (int) $o->id,
+                    (int)$o->driver_id,
+                    (int)$ride,
+                    (int)$o->id,
                     'canceled'
                 );
             }
 
-            \Log::info('dispatch.cancel OK', ['ride' => $ride]);
-            return response()->json(['ok' => true]);
+            // 7) ✅ Emitir al PASAJERO (siempre): ride.update con cancel_reason/canceled_by
+            try {
+                RideBroadcaster::canceled($tenantId, (int)$ride, $by, $cancelReason);
+            } catch (\Throwable $e) {
+                \Log::error('cancelRide RideBroadcaster failed', [
+                    'ride' => $ride,
+                    'err'  => $e->getMessage(),
+                ]);
+            }
+
+            // 8) Emitir al DRIVER (si aplica)
+            if ($driverId) {
+                try {
+                    \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.update', [
+                        'ride_id'       => (int)$ride,
+                        'status'        => 'canceled',
+                        'cancel_reason' => $cancelReason,
+                        'canceled_by'   => $by,
+                        'canceled_at'   => now()->format('Y-m-d H:i:s'),
+                    ]);
+
+                    \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.canceled', [
+                        'ride_id' => (int)$ride,
+                        'reason'  => $cancelReason,
+                        'by'      => $by,
+                    ]);
+                } catch (\Throwable $e) {
+                    \Log::error('cancelRide toDriver failed', [
+                        'ride' => $ride,
+                        'driver_id' => $driverId,
+                        'err'  => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            \Log::info('cancelRide OK', [
+                'ride'      => $ride,
+                'tenant_id' => $tenantId,
+                'driver_id' => $driverId,
+                'by'        => $by,
+            ]);
+
+            return response()->json(['ok'=>true]);
         });
+
     } catch (\Throwable $e) {
-        \Log::error('dispatch.cancel FAIL', [
+        \Log::error('cancelRide FAIL', [
             'ride'  => $ride,
             'ex'    => $e->getMessage(),
             'trace' => $e->getTraceAsString(),
         ]);
-        return response()->json(['ok' => false, 'msg' => $e->getMessage()], 500);
+        return response()->json(['ok'=>false,'msg'=>$e->getMessage()], 500);
     }
 }
 
-
-
-
-    public function cancelRide(Request $r, int $ride)
-    {
-        $data = $r->validate([
-            'reason' => 'nullable|string|max:160',
-        ]);
-
-        $tenantId = (int)($r->header('X-Tenant-ID') ?? optional($r->user())->tenant_id ?? 1);
-
-        \Log::info('cancelRide IN', [
-            'tenantId' => $tenantId,
-            'ride'     => $ride,
-            'reason'   => $data['reason'] ?? null,
-            'user_id'  => optional($r->user())->id,
-        ]);
-
-        try {
-            return DB::transaction(function () use ($tenantId, $ride, $data) {
-                $row = DB::table('rides')
-                    ->where('tenant_id', $tenantId)
-                    ->where('id', $ride)
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$row) {
-                    \Log::warning('cancelRide ride not found', compact('tenantId','ride'));
-                    return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'], 404);
-                }
-
-                $prev = strtolower($row->status ?? '');
-                if (in_array($prev, ['finished','canceled'], true)) {
-                    \Log::info('cancelRide idempotent', compact('ride','prev'));
-                    return response()->json(['ok'=>true]);
-                }
-
-                $driverId     = $row->driver_id ? (int)$row->driver_id : null;
-                $cancelReason = $data['reason'] ?? null;
-
-                // 1) Ride -> canceled
-                DB::table('rides')
-                    ->where('tenant_id', $tenantId)
-                    ->where('id', $ride)
-                    ->update([
-                        'status'        => 'canceled',
-                        'canceled_at'   => now(),
-                        'cancel_reason' => $cancelReason,
-                        'canceled_by'   => 'ops',
-                        'updated_at'    => now(),
-                    ]);
-
-                // 2) Historial
-                DB::table('ride_status_history')->insert([
-                    'tenant_id'   => $tenantId,
-                    'ride_id'     => $ride,
-                    'prev_status' => $prev,
-                    'new_status'  => 'canceled',
-                    'meta'        => json_encode([
-                        'reason' => $cancelReason,
-                        'by'     => 'ops'
-                    ]),
-                    'created_at'  => now(),
-                    'updated_at'  => now(),
-                ]);
-
-                // 3) Si tenía driver, regresarlo a idle
-                if ($driverId) {
-                    DB::table('drivers')
-                        ->where('tenant_id', $tenantId)
-                        ->where('id',        $driverId)
-                        ->update([
-                            'status'     => 'idle',
-                            'updated_at' => now(),
-                        ]);
-                }
-
-                // 4) Cerrar ofertas vivas
-                DB::table('ride_offers')
-                    ->where('tenant_id', $tenantId)
-                    ->where('ride_id', $ride)
-                    ->whereIn('status', ['offered','pending_passenger'])
-                    ->update([
-                        'status'       => 'released',
-                        'responded_at' => now(),
-                        'updated_at'   => now(),
-                    ]);
-
-                DB::table('ride_offers')
-                    ->where('tenant_id', $tenantId)
-                    ->where('ride_id', $ride)
-                    ->where('status','accepted')
-                    ->update([
-                        'status'       => 'canceled',
-                        'responded_at' => now(),
-                        'updated_at'   => now(),
-                    ]);
-
-                // 5) Eventos
-                try {
-                    RideBroadcaster::canceled(
-                        $tenantId,
-                        $ride,
-                        'ops',
-                        $cancelReason
-                    );
-
-                    if ($driverId) {
-                        \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.update', [
-                            'ride_id'       => $ride,
-                            'status'        => 'canceled',
-                            'cancel_reason' => $cancelReason,
-                            'canceled_by'   => 'ops',
-                            'canceled_at'   => now()->format('Y-m-d H:i:s'),
-                        ]);
-
-                        \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.canceled', [
-                            'ride_id' => $ride,
-                            'reason'  => $cancelReason,
-                            'by'      => 'ops',
-                        ]);
-                    }
-
-                    \Log::info('cancelRide events emitted', [
-                        'ride'      => $ride,
-                        'driver_id' => $driverId,
-                        'tenant_id' => $tenantId,
-                    ]);
-
-                } catch (\Throwable $eventError) {
-                    \Log::error('cancelRide event emission failed', [
-                        'ride'  => $ride,
-                        'error' => $eventError->getMessage(),
-                    ]);
-                }
-
-                return response()->json(['ok'=>true]);
-            });
-        } catch (\Throwable $e) {
-            \Log::error('cancelRide FAIL', [
-                'ride'  => $ride,
-                'ex'    => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            return response()->json(['ok'=>false,'msg'=>$e->getMessage()], 500);
-        }
-    }
 
 
     public function tick(\Illuminate\Http\Request $req)

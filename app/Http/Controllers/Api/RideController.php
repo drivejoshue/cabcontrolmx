@@ -650,6 +650,66 @@ class RideController extends Controller
             $snap->total_amount ?? $snap->quoted_amount ?? null
         );
 
+
+       // 3.b) AutoKick al terminar: usa driver_id del snap (canonical)
+$driverId = (int)($snap->driver_id ?? 0);
+
+if ($driverId > 0) {
+    try {
+        $d = DB::table('drivers')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $driverId)
+            ->first(['last_lat','last_lng']);
+
+        if ($d && $d->last_lat !== null && $d->last_lng !== null) {
+
+            \Log::info('finish.autokick IN', [
+                'tenant_id' => $tenantId,
+                'ride_id'   => $ride,
+                'driver_id' => $driverId,
+                'lat'       => (float)$d->last_lat,
+                'lng'       => (float)$d->last_lng,
+            ]);
+
+            $ak = AutoKickService::kickNearestRideForDriver(
+                tenantId: (int)$tenantId,
+                driverId: (int)$driverId,
+                lat: (float)$d->last_lat,
+                lng: (float)$d->last_lng
+            );
+
+            \Log::info('finish.autokick OUT', [
+                'tenant_id' => $tenantId,
+                'ride_id'   => $ride,
+                'driver_id' => $driverId,
+                'res'       => $ak,
+            ]);
+
+        } else {
+            \Log::warning('finish.autokick SKIP no driver location', [
+                'tenant_id' => $tenantId,
+                'ride_id'   => $ride,
+                'driver_id' => $driverId,
+            ]);
+        }
+    } catch (\Throwable $e) {
+        \Log::error('finish.autokick FAIL', [
+            'tenant_id' => $tenantId,
+            'ride_id'   => $ride,
+            'driver_id' => $driverId,
+            'err'       => $e->getMessage(),
+        ]);
+    }
+} else {
+    \Log::warning('finish.autokick SKIP no driverId on ride', [
+        'tenant_id' => $tenantId,
+        'ride_id'   => $ride,
+    ]);
+}
+
+
+
+
         // 4) Wallet SOLO para tenant global (commission mode)
         $globalTenantId = (int) config('cabcontrol.global_tenant_id', 100);
 
