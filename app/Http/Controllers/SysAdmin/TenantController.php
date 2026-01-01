@@ -19,32 +19,48 @@ class TenantController extends Controller
      * Rutas esperadas:
      *  GET /sysadmin/tenants -> name: sysadmin.tenants.index
      */
-    public function index(Request $request)
-    {
-        $q     = trim((string)$request->input('q', ''));
-        $sort  = $request->input('sort', 'id');              // id|name|slug|created_at
-        $dir   = strtolower($request->input('dir', 'asc'));  // asc|desc
-        $dir   = in_array($dir, ['asc','desc']) ? $dir : 'asc';
+  public function index(Request $request)
+{
+    $q = trim((string)$request->input('q', ''));
+    $billingModel = $request->input('billing_model', ''); // commission|per_vehicle|none
 
-        $sortable = ['id','name','slug','created_at'];
-        if (!in_array($sort, $sortable)) {
-            $sort = 'id';
-        }
+    $sort  = $request->input('sort', 'id');
+    $dir   = strtolower($request->input('dir', 'asc'));
+    $dir   = in_array($dir, ['asc','desc']) ? $dir : 'asc';
 
-        $tenants = Tenant::query()
-            ->when($q !== '', function($qb) use ($q) {
-                $qb->where(function($qq) use ($q) {
-                    $qq->where('name','like', "%{$q}%")
-                       ->orWhere('slug','like', "%{$q}%")
-                       ->orWhere('timezone','like', "%{$q}%");
+    $sortable = ['id','name','slug','created_at'];
+    if (!in_array($sort, $sortable)) $sort = 'id';
+
+    $tenants = Tenant::query()
+        ->with('billingProfile')
+        ->when($q !== '', function($qb) use ($q) {
+            $qb->where(function($qq) use ($q) {
+                $qq->where('name','like', "%{$q}%")
+                   ->orWhere('slug','like', "%{$q}%")
+                   ->orWhere('timezone','like', "%{$q}%");
+            });
+        })
+        ->when($billingModel !== '', function($qb) use ($billingModel) {
+            if ($billingModel === 'none') {
+                $qb->whereDoesntHave('billingProfile');
+            } else {
+                $qb->whereHas('billingProfile', function($bq) use ($billingModel) {
+                    $bq->where('billing_model', $billingModel);
                 });
-            })
-            ->orderBy($sort, $dir)
-            ->paginate(20)
-            ->appends(compact('q','sort','dir'));
+            }
+        })
+        ->orderBy($sort, $dir)
+        ->paginate(20)
+        ->appends([
+            'q' => $q,
+            'sort' => $sort,
+            'dir' => $dir,
+            'billing_model' => $billingModel,
+        ]);
 
-        return view('sysadmin.tenants.index', compact('tenants','q','sort','dir'));
-    }
+    return view('sysadmin.tenants.index', compact('tenants','q','sort','dir','billingModel'));
+}
+
 
     /**
      * Form de creación

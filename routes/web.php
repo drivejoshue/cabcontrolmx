@@ -406,7 +406,8 @@ Route::prefix('sysadmin')->middleware(['auth','sysadmin'])->group(function () {
     Route::get('/tenants/create', [SysTenantController::class, 'create'])->name('sysadmin.tenants.create');
     Route::post('/tenants', [SysTenantController::class, 'store'])->name('sysadmin.tenants.store');
     Route::get('/tenants/{tenant}/edit', [SysTenantController::class, 'edit'])->name('sysadmin.tenants.edit');
-    Route::post('/tenants/{tenant}', [SysTenantController::class, 'update'])->name('sysadmin.tenants.update');
+   Route::put('/tenants/{tenant}', [SysTenantController::class, 'update'])->name('sysadmin.tenants.update');
+
 
     // Billing del tenant (show/update) + generar factura mensual de prueba
     Route::get('/tenants/{tenant}/billing', [TenantBillingController::class,'show'])

@@ -85,6 +85,16 @@
           <option value="name_desc"    @selected(request('sort')==='name_desc')>Nombre Z–A</option>
         </select>
       </div>
+      <div class="col-md-3">
+  <label class="form-label">Facturación</label>
+  <select class="form-select" name="billing_model" id="filterBillingModel">
+    <option value="" @selected(request('billing_model')==='')>Todos</option>
+    <option value="per_vehicle" @selected(request('billing_model')==='per_vehicle')>Por vehículo</option>
+    <option value="commission"  @selected(request('billing_model')==='commission')>Por comisión</option>
+    <option value="none"        @selected(request('billing_model')==='none')>Sin perfil</option>
+  </select>
+</div>
+
       <div class="col-md-2 d-flex gap-2">
         <button class="btn btn-outline-secondary w-100" type="submit">
           <i class="ti ti-filter me-1"></i> Aplicar
@@ -221,8 +231,8 @@
 
 @push('scripts')
 <script>
-  // Auto-aplicar filtros al cambiar selects
   document.getElementById('filterMarketplace')?.addEventListener('change', e => e.target.form.submit());
+  document.getElementById('filterBillingModel')?.addEventListener('change', e => e.target.form.submit());
   document.getElementById('filterSort')?.addEventListener('change', e => e.target.form.submit());
 </script>
 @endpush
