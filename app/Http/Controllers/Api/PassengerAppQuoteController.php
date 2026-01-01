@@ -36,11 +36,12 @@ class PassengerAppQuoteController extends Controller
         );
 
         if (! $tenant) {
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'Fuera de zona de cobertura',
-            ], 422);
-        }
+                return response()->json([
+                    'ok'      => false,
+                    'code'    => 'no_coverage',
+                    'message' => 'No hay cobertura en tu zona. No hay centrales disponibles por ahora.',
+                ], 422);
+            }
 
         // 2) Opcional: localizar pasajero por firebase_uid
         $passenger = null;

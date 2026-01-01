@@ -17,7 +17,7 @@ class TenantResolverService
         // Tenants que aceptan pasajeros desde la app
         $tenants = Tenant::query()
             ->where('allow_marketplace', 1)
-              ->where('public_active', 1)   
+            ->where('public_active', 1)   
             ->whereNotNull('latitud')
             ->whereNotNull('longitud')
             ->get();
@@ -27,7 +27,7 @@ class TenantResolverService
         }
 
         // Calcular distancia y filtrar por radio
-        $candidates = $tenants->map(function (Tenant $t) use ($lat, $lng) {
+            $candidates = $tenants->map(function (Tenant $t) use ($lat, $lng) {
             $distKm = $this->haversineDistanceKm(
                 $lat,
                 $lng,

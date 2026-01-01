@@ -651,11 +651,11 @@ class RideController extends Controller
         );
 
 
-       // 3.b) AutoKick al terminar: usa driver_id del snap (canonical)
-$driverId = (int)($snap->driver_id ?? 0);
+               // 3.b) AutoKick al terminar: usa driver_id del snap (canonical)
+        $driverId = (int)($snap->driver_id ?? 0);
 
-if ($driverId > 0) {
-    try {
+        if ($driverId > 0) {
+            try {
         $d = DB::table('drivers')
             ->where('tenant_id', $tenantId)
             ->where('id', $driverId)
@@ -692,20 +692,20 @@ if ($driverId > 0) {
                 'driver_id' => $driverId,
             ]);
         }
-    } catch (\Throwable $e) {
-        \Log::error('finish.autokick FAIL', [
-            'tenant_id' => $tenantId,
-            'ride_id'   => $ride,
-            'driver_id' => $driverId,
-            'err'       => $e->getMessage(),
-        ]);
-    }
-} else {
-    \Log::warning('finish.autokick SKIP no driverId on ride', [
-        'tenant_id' => $tenantId,
-        'ride_id'   => $ride,
-    ]);
-}
+            } catch (\Throwable $e) {
+                \Log::error('finish.autokick FAIL', [
+                    'tenant_id' => $tenantId,
+                    'ride_id'   => $ride,
+                    'driver_id' => $driverId,
+                    'err'       => $e->getMessage(),
+                ]);
+            }
+        } else {
+            \Log::warning('finish.autokick SKIP no driverId on ride', [
+                'tenant_id' => $tenantId,
+                'ride_id'   => $ride,
+            ]);
+        }
 
 
 
