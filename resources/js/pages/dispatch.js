@@ -132,6 +132,16 @@ function logListDebug(list, tag='[dispatch] list'){
   } catch(e){ console.warn('debug error', e); }
 }
 
+function updateHeaderKpis(m) {
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(val ?? 0);
+  };
+
+  set('kpi-free',   m.free);
+  set('kpi-busy',   m.busy);
+  set('kpi-onhold', m.inQueue); // "en cola"
+}
 
 
 
@@ -608,6 +618,16 @@ async function refreshDispatch(){
     renderDockActive(rides);
     renderDrivers(driverList);
 
+
+    try {
+    window.fleetMetrics = window.fleetMetrics || new FleetMetrics();
+window.fleetMetrics.calculateMetrics(driverList, queues);
+
+// pinta header
+updateHeaderKpis(window.fleetMetrics.metrics);
+    } catch (e) {
+      console.warn('[metrics] failed', e);
+    }
 
     await updateSuggestedRoutes(rides);
 
@@ -2616,7 +2636,7 @@ function _canonStatus(s){
 }
 
 // Conjuntos ya en canónico
-const _SET_WAITING = new Set(['requested','pending','new','offered','offering']);
+const _SET_WAITING = new Set(['requested','pending','new','offered','queued']);
 const _SET_ACTIVE  = new Set(['accepted','assigned','en_route','arrived','boarding','on_board']);
 const _SET_SCHED   = new Set(['scheduled']);
 
@@ -2902,7 +2922,7 @@ class FleetMetrics {
         case 'free': metrics.free++; break;
         case 'busy': metrics.busy++; break;
         case 'offline': metrics.offline++; break;
-        case 'on_board': metrics.onTrip++; break;
+        case 'on_ride': metrics.onTrip++; break;
         default: metrics.busy++;
       }
     });
@@ -2932,6 +2952,8 @@ class FleetMetrics {
     if (timeEl) {
       timeEl.textContent = new Date().toLocaleTimeString();
     }
+
+
   }
 
   updateLive() {
@@ -4186,6 +4208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   layerDrivers  = L.layerGroup().addTo(map);
   layerSuggested= L.layerGroup({ pane:'suggestedPane' }).addTo(map);
 
+window.fleetMetrics = window.fleetMetrics || new FleetMetrics();
 
 function mkAutocomplete(inputEl, fields) {
   if (!inputEl) return null;
