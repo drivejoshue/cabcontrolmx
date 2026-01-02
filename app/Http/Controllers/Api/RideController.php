@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use App\Services\DriverWalletService;
 use App\Models\Ride;
+use App\Http\Controllers\Api\AutoKickService;
+
 
 
 class RideController extends Controller
