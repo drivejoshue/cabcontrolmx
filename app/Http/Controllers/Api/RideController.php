@@ -310,15 +310,7 @@ class RideController extends Controller
     }
 
 
-    // ... (el resto de tus métodos existentes se mantienen igual)
-    // POST /api/rides
-    // PATCH /api/rides/{ride}/stops
-    // POST /api/driver/rides/{ride}/arrived
-    // POST /api/driver/rides/{ride}/board
-    // POST /api/driver/rides/{ride}/finish
-    // POST /api/driver/rides/{ride}/cancel
-    // POST /api/rides/{ride}/stops/complete
-    // private function commitStatusChange
+  
     private function passengerRatingSummary(int $tenantId, int $passengerId): ?object
     {
         return DB::table('ratings as r')

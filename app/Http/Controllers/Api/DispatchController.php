@@ -122,7 +122,7 @@ class DispatchController extends Controller
             'en_route','enroute',
             'arrived','boarding',
             'on_board','onboard',
-            'scheduled',
+            'scheduled','queued',
         ];
 
         $orderForField = [
@@ -130,7 +130,7 @@ class DispatchController extends Controller
             'en_route','enroute',
             'arrived','boarding',
             'on_board','onboard',
-            'scheduled',
+            'scheduled','queued',
         ];
 
         $rides = \DB::table('rides as ri')

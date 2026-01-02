@@ -2636,9 +2636,9 @@ function _canonStatus(s){
 }
 
 // Conjuntos ya en canónico
-const _SET_WAITING = new Set(['requested','pending','new','offered','queued']);
-const _SET_ACTIVE  = new Set(['accepted','assigned','en_route','arrived','boarding','on_board']);
-const _SET_SCHED   = new Set(['scheduled']);
+const _SET_WAITING = new Set(['requested','pending','new','offered']);
+const _SET_ACTIVE  = new Set(['accepted','assigned','en_route','arrived','boarding','on_board','queued',]);
+const _SET_SCHED   = new Set(['scheduled','queued']);
 
 const _isWaiting   = r => _SET_WAITING.has(_canonStatus(r?.status));
 const _isActive    = r => _SET_ACTIVE.has(_canonStatus(r?.status));
