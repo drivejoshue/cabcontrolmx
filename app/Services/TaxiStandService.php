@@ -78,7 +78,7 @@ class TaxiStandService
      * Join por stand_id (ya validado / resuelto).
      * Incluye validación por distancia.
      */
-  public static function joinStandById(int $tenantId, int $driverId, int $standId): array
+ public static function joinStandById(int $tenantId, int $driverId, int $standId): array
 {
     self::ensureCanJoin($tenantId, $driverId);
 
@@ -89,13 +89,9 @@ class TaxiStandService
         ->first();
 
     if (!$stand) {
-        return [
-            'ok'      => false,
-            'message' => 'Base no encontrada o inactiva',
-        ];
+        return ['ok' => false, 'message' => 'Base no encontrada o inactiva'];
     }
 
-    // Ubicación actual del driver
     $driver = DB::table('drivers')
         ->where('tenant_id', $tenantId)
         ->where('id', $driverId)
@@ -103,66 +99,24 @@ class TaxiStandService
         ->first();
 
     if (!$driver || $driver->last_lat === null || $driver->last_lng === null) {
-        return [
-            'ok'      => false,
-            'message' => 'No tenemos tu ubicación. Abre el mapa unos segundos e inténtalo de nuevo.',
-        ];
+        return ['ok' => false, 'message' => 'No tenemos tu ubicación. Abre el mapa unos segundos e inténtalo de nuevo.'];
     }
 
-    // Radio permitido para bases
-    $settings = DB::table('dispatch_settings')
-        ->where('tenant_id', $tenantId)
-        ->first();
-
-    $radiusKm = 0.2; // ~200m por defecto
+    $settings = DB::table('dispatch_settings')->where('tenant_id', $tenantId)->first();
+    $radiusKm = 0.2;
     if ($settings) {
-        $radiusKm = $settings->stand_radius_km
-            ?? $settings->auto_dispatch_radius_km
-            ?? 0.2;
+        $radiusKm = $settings->stand_radius_km ?? $settings->auto_dispatch_radius_km ?? 0.2;
     }
 
-    $distKm = self::haversineKm(
-        (float) $stand->latitud,
-        (float) $stand->longitud,
-        (float) $driver->last_lat,
-        (float) $driver->last_lng
-    );
-
+    $distKm = self::haversineKm((float)$stand->latitud, (float)$stand->longitud, (float)$driver->last_lat, (float)$driver->last_lng);
     if ($distKm > $radiusKm) {
-        return [
-            'ok'        => false,
-            'message'   => 'No estás dentro de la base. Acércate al paradero para unirte.',
-            'dist_km'   => $distKm,
-            'radius_km' => $radiusKm,
-        ];
+        return ['ok' => false, 'message' => 'No estás dentro de la base. Acércate al paradero para unirte.', 'dist_km' => $distKm, 'radius_km' => $radiusKm];
     }
 
-    // 🔴 IMPORTANTE: Eliminar registros 'salio' antes de intentar unirse
- DB::table('taxi_stand_queue')
-  ->where('tenant_id', $tenantId)
-  ->where('stand_id', $standId)
-  ->where('driver_id', $driverId)
-  ->whereIn('status', ['salio','asignado'])
-  ->delete();
+    // Join por SP (idempotente + maneja cambio de base)
+    DB::statement('CALL sp_queue_join_stand_v1(?, ?, ?)', [$tenantId, $standId, $driverId]);
 
-    // Sales de cualquier otra cola donde estuvieras
-    DB::table('taxi_stand_queue')
-        ->where('tenant_id', $tenantId)
-        ->where('driver_id', $driverId)
-      ->whereIn('q.status', ['en_cola','saltado'])     // <-- aquí
-
-        ->update(['status' => 'salio']);
-
-    // Entrar a esta base (SP)
-    DB::statement(
-        'CALL sp_queue_join_stand_v1(?, ?, ?)',
-        [$tenantId, $standId, $driverId]
-    );
-
-    return [
-        'ok'      => true,
-        'message' => 'Te uniste a la base.',
-    ];
+    return ['ok' => true, 'message' => 'Te uniste a la base.'];
 }
 
     /**
