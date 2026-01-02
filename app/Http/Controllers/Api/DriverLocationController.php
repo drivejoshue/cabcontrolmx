@@ -114,12 +114,31 @@ class DriverLocationController extends Controller
 
         if ($activeRide) {
             $effectiveStatus = 'on_ride';
-        } elseif (array_key_exists('busy', $data)) {
-            $effectiveStatus = $data['busy'] ? 'busy' : 'idle';
-        } elseif ($prevStatus === 'offline') {
-            // ping sin busy: revive a last_active_status o idle
-            $lastActive      = $driver->last_active_status ?? null;
-            $effectiveStatus = $lastActive ?: 'idle';
+            } elseif (array_key_exists('busy', $data)) {
+                $effectiveStatus = $data['busy'] ? 'busy' : 'idle';
+            } elseif ($prevStatus === 'offline') {
+        // ping sin busy: revive a last_active_status, PERO nunca on_ride sin ride activo
+             $lastActive = strtolower((string)($driver->last_active_status ?? ''));
+            if (in_array($lastActive, ['on_ride', 'offline', ''], true)) {
+                $effectiveStatus = 'idle';
+            } elseif (in_array($lastActive, ['busy', 'idle'], true)) {
+                $effectiveStatus = $lastActive;
+            } else {
+                $effectiveStatus = 'idle';
+            }
+        }
+
+        $lastActive = strtolower((string)($driver->last_active_status ?? ''));
+
+        $lastActiveWasOnRideButNoRide = ($lastActive === 'on_ride' && !$activeRide);
+
+        if ($lastActiveWasOnRideButNoRide) {
+            Log::warning('DriverLocation.reconcile_onride_to_idle', [
+                'tenant_id' => $tenantId,
+                'driver_id' => (int)$driver->id,
+                'prev_status' => $prevStatus,
+                'last_active_status' => $driver->last_active_status,
+            ]);
         }
 
         // 3) Update de drivers (lo que usa el panel)
@@ -138,6 +157,13 @@ class DriverLocationController extends Controller
             $update['last_active_status'] = $effectiveStatus;
             $update['last_active_at']     = $nowLocal;
         }
+        if ($lastActiveWasOnRideButNoRide) {
+            // Corrige snapshot para que no vuelva a revivir a on_ride sin ride
+            $update['last_active_status'] = 'idle';
+            $update['last_active_at']     = $nowLocal;
+        }
+
+
 
         DB::table('drivers')->where('id', $driver->id)->update($update);
 

@@ -4187,46 +4187,119 @@ document.addEventListener('DOMContentLoaded', async () => {
   layerSuggested= L.layerGroup({ pane:'suggestedPane' }).addTo(map);
 
 
-       
+function mkAutocomplete(inputEl, fields) {
+  if (!inputEl) return null;
+  if (!window.google?.maps?.places?.Autocomplete) {
+    console.warn('[PLACES] Places no disponible');
+    return null;
+  }
+
+  const cc = (window.__TENANT_COUNTRY__ || 'mx').toString().trim().toLowerCase();
+  const opts = {
+    fields: fields || ['formatted_address', 'geometry', 'address_components'],
+    componentRestrictions: { country: cc },
+    // Nota: NO todos los proyectos soportan "types" igual, pero esto suele ayudar:
+    // types: ['geocode'],
+  };
+
+  console.log('[PLACES] init autocomplete', { id: inputEl.id, cc, opts });
+
+  const ac = new google.maps.places.Autocomplete(inputEl, opts);
+
+  // Reaplica por seguridad
+  ac.setOptions({ componentRestrictions: { country: cc } });
+
+  // Bias por bounds del tenant (reduce países extraños)
+  const c = window.ccTenant?.map;
+  if (c?.lat && c?.lng && window.google?.maps?.Circle) {
+    const circle = new google.maps.Circle({
+      center: { lat: Number(c.lat), lng: Number(c.lng) },
+      radius: (Number(c.radius_km || 20) * 1000),
+    });
+    ac.setBounds(circle.getBounds());
+    // Si quieres que sea MUY estricto:
+    // ac.setOptions({ strictBounds: true });
+    ac.setOptions({ strictBounds: false });
+
+    console.log('[PLACES] bias bounds applied', {
+      id: inputEl.id,
+      lat: c.lat, lng: c.lng, radius_km: c.radius_km || 20
+    });
+  }
+
+  return ac;
+}
+
+function placeCountryShort(place) {
+  const comps = place?.address_components || [];
+  const c = comps.find(x => (x.types || []).includes('country'));
+  return c?.short_name || null; // "MX"
+}
+
+function enforceCountry(place, inputEl) {
+  const expected = (window.__TENANT_COUNTRY__ || 'mx').toString().toUpperCase();
+  const got = placeCountryShort(place);
+  console.log('[PLACES] picked', { expected, got, addr: place?.formatted_address, place_id: place?.place_id });
+
+  // Si no trae country (a veces pasa), no bloquees duro; solo avisa.
+  if (!got) return true;
+
+  if (got !== expected) {
+    alert(`Selecciona una dirección dentro de ${expected}.`);
+    if (inputEl) inputEl.value = '';
+    return false;
+  }
+  return true;
+}
+
 
   // google widgets
-  loadGoogleMaps().then((google)=>{
-    gDirService = new google.maps.DirectionsService();
-    gGeocoder   = new google.maps.Geocoder();
+loadGoogleMaps().then((google)=>{
+  gDirService = new google.maps.DirectionsService();
+  gGeocoder   = new google.maps.Geocoder();
 
-    acFrom = new google.maps.places.Autocomplete(qs('#inFrom'), { fields:['formatted_address','geometry'] });
-    acTo   = new google.maps.places.Autocomplete(qs('#inTo'),   { fields:['formatted_address','geometry'] });
-    acFrom.addListener('place_changed', ()=>{
-      const p = acFrom.getPlace(); if(!p?.geometry) return;
-      setFrom([p.geometry.location.lat(), p.geometry.location.lng()], p.formatted_address);
-    });
-    acTo.addListener('place_changed', ()=>{
-      const p = acTo.getPlace(); if(!p?.geometry) return;
-      setTo([p.geometry.location.lat(), p.geometry.location.lng()], p.formatted_address);
-    });
-    if (window.google?.maps?.places) {
-  if (qs('#inStop1')) {
-    acStop1 = new google.maps.places.Autocomplete(qs('#inStop1'), { fields:['geometry','formatted_address'] });
-    acStop1.addListener('place_changed', ()=>{
-      const p = acStop1.getPlace();
-      const ll = p?.geometry?.location;
-      if (!ll) return;
-      setStop1([ll.lat(), ll.lng()], p.formatted_address || null);
-    });
-  }
-  if (qs('#inStop2')) {
-    acStop2 = new google.maps.places.Autocomplete(qs('#inStop2'), { fields:['geometry','formatted_address'] });
-    acStop2.addListener('place_changed', ()=>{
-      // solo si existe stop1
-      if (!Number.isFinite(parseFloat(qs('#stop1Lat')?.value))) return;
-      const p = acStop2.getPlace();
-      const ll = p?.geometry?.location;
-      if (!ll) return;
-      setStop2([ll.lat(), ll.lng()], p.formatted_address || null);
-    });
-  }
+acFrom = mkAutocomplete(qs('#inFrom'), ['formatted_address','geometry','address_components']);
+acTo   = mkAutocomplete(qs('#inTo'),   ['formatted_address','geometry','address_components']);
+
+acFrom?.addListener('place_changed', () => {
+  const p = acFrom.getPlace();
+  if (!p?.geometry) return;
+  if (!enforceCountry(p, qs('#inFrom'))) return;
+  setFrom([p.geometry.location.lat(), p.geometry.location.lng()], p.formatted_address);
+});
+
+acTo?.addListener('place_changed', () => {
+  const p = acTo.getPlace();
+  if (!p?.geometry) return;
+  if (!enforceCountry(p, qs('#inTo'))) return;
+  setTo([p.geometry.location.lat(), p.geometry.location.lng()], p.formatted_address);
+});
+
+if (qs('#inStop1')) {
+  acStop1 = mkAutocomplete(qs('#inStop1'), ['formatted_address','geometry','address_components']);
+  acStop1?.addListener('place_changed', () => {
+    const p = acStop1.getPlace();
+    const ll = p?.geometry?.location;
+    if (!ll) return;
+    if (!enforceCountry(p, qs('#inStop1'))) return;
+    setStop1([ll.lat(), ll.lng()], p.formatted_address || null);
+  });
 }
-  }).catch(e=> console.warn('[DISPATCH] Google no cargó', e));
+
+if (qs('#inStop2')) {
+  acStop2 = mkAutocomplete(qs('#inStop2'), ['formatted_address','geometry','address_components']);
+  acStop2?.addListener('place_changed', () => {
+    if (!Number.isFinite(parseFloat(qs('#stop1Lat')?.value))) return;
+    const p = acStop2.getPlace();
+    const ll = p?.geometry?.location;
+    if (!ll) return;
+    if (!enforceCountry(p, qs('#inStop2'))) return;
+    setStop2([ll.lat(), ll.lng()], p.formatted_address || null);
+  });
+}
+
+}).catch(e=> console.warn('[DISPATCH] Google no cargó', e));
+
 
   // toggles + pick
   let pickMode=null;

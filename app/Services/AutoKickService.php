@@ -126,6 +126,45 @@ class AutoKickService
             }
         }
 
+        $rejectCooldownSec = 120;
+        $recentRejected = DB::table('ride_offers')
+            ->where('tenant_id', $tenantId)
+            ->where('ride_id', $rideId)
+            ->where('driver_id', $driverId)
+            ->where('status', 'rejected')
+            ->where('responded_at', '>', now()->subSeconds($rejectCooldownSec))
+            ->exists();
+
+        if ($recentRejected) {
+            Log::info('AutoKick.skip', [
+                'tenant_id' => $tenantId,
+                'driver_id' => $driverId,
+                'skipped'   => 'recent_rejected',
+                'ride_id'   => $rideId,
+                'cooldown_s'=> $rejectCooldownSec,
+            ]);
+            return ['ok'=>true,'via'=>'autokick','skipped'=>'recent_rejected','ride_id'=>$rideId];
+        }
+
+        $alive = ['offered','pending_passenger','queued','accepted'];
+
+        $hasAliveOffer = DB::table('ride_offers')
+            ->where('tenant_id', $tenantId)
+            ->where('ride_id', $rideId)
+            ->where('driver_id', $driverId)
+            ->whereIn('status', $alive)
+            ->where('expires_at', '>', now())
+            ->exists();
+
+        if ($hasAliveOffer) {
+            Log::info('AutoKick.skip', [
+                'tenant_id'=>$tenantId,'driver_id'=>$driverId,
+                'skipped'=>'already_has_alive_offer','ride_id'=>$rideId
+            ]);
+            return ['ok'=>true,'via'=>'autokick','skipped'=>'already_has_alive_offer','ride_id'=>$rideId];
+        }
+
+
         // 3) DISPATCH/CENTRAL => oferta directa SOLO a este driver
         try {
             DB::statement('CALL sp_create_offer_v2(?, ?, ?, ?)', [

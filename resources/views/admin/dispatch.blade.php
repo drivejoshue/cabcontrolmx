@@ -1093,6 +1093,9 @@ window.__CHAT_SEND_URL__     = "{{ route('api.dispatch.chats.send', ['driverId' 
 <script>
 console.log('TENANT(view) id=', @json($tenant->id ?? null), 'name=', @json($tenant->name ?? null));
 </script>
+<script>
+  window.__TENANT_COUNTRY__ = @json(strtolower($tenant->country_code ?? 'MX'));
+</script>
 
 <script>
   window.ccTenant = window.ccTenant || {};
