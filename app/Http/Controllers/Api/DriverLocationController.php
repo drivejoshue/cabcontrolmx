@@ -67,35 +67,44 @@ class DriverLocationController extends Controller
         $nowUtc   = now('UTC');
 
         // OJO: NO forzamos status por activeRide. Solo usamos para broadcast.
-        $activeRide = DB::table('rides')
-            ->where('tenant_id', $tenantId)
-            ->where('driver_id', $driver->id)
-            ->whereIn('status', ['accepted', 'arrived', 'on_board'])
-            ->select('id', 'status')
-            ->first();
+       $activeRide = DB::table('rides')
+    ->where('tenant_id', $tenantId)
+    ->where('driver_id', $driver->id)
+    ->whereIn('status', ['accepted', 'arrived', 'on_board'])
+    ->select('id', 'status')
+    ->first();
 
-        $speed     = array_key_exists('speed_kmh', $data) ? (float)$data['speed_kmh'] : null;
-        $isStopped = $speed !== null && $speed < 1.0;
+    $speed     = array_key_exists('speed_kmh', $data) ? (float)$data['speed_kmh'] : null;
+    $isStopped = $speed !== null && $speed < 1.0;
 
-        // bearing: prefer bearing; fallback heading_deg
-        $rawBearing = null;
-        if (array_key_exists('bearing', $data)) {
-            $rawBearing = $data['bearing'];
-        } elseif (array_key_exists('heading_deg', $data)) {
-            $rawBearing = $data['heading_deg'];
-        }
+    // bearing: prefer bearing; fallback heading_deg
+    $rawBearing = null;
+    if (array_key_exists('bearing', $data)) {
+        $rawBearing = $data['bearing'];
+    } elseif (array_key_exists('heading_deg', $data)) {
+        $rawBearing = $data['heading_deg'];
+    }
 
-        $bearing = null;
-        $heading = null;
+    $bearing = null;
+    $heading = null;
 
-        if (!$isStopped && $rawBearing !== null) {
-            $b = (float)$rawBearing;
-            $b = fmod($b, 360.0);
-            if ($b < 0) $b += 360.0; // normaliza [0,360)
-            if ($b == 360.0) $b = 0.12;
-            $bearing = $b;
-            $heading = $b;
-        }
+    if (!$isStopped && $rawBearing !== null) {
+        $b = (float)$rawBearing;
+        $b = fmod($b, 360.0);
+        if ($b < 0) $b += 360.0; // normaliza [0,360)
+
+        // ✅ OFFSET GLOBAL DEL ICONO (tu caso: +90°)
+        $offset = 90.0;
+        $b = fmod($b + $offset, 360.0);
+        if ($b < 0) $b += 360.0;
+
+        // evita 360 exacto
+        if ($b == 360.0) $b = 0.12;
+
+        $bearing = $b;
+        $heading = $b;
+    }
+
 
         // 1) Historial
         DB::table('driver_locations')->insert([
