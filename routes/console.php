@@ -88,6 +88,15 @@ Schedule::command('tenants:bill-month-start')
         ->runInBackground()
         ->appendOutputTo(storage_path('logs/autodispatch_tick.log'));
 
+
+
+        Schedule::command('orbana:normalize-runtime')
+    ->hourly()
+    ->name('orbana.normalize_runtime')
+    ->withoutOverlapping(55)
+    ->appendOutputTo(storage_path('logs/normalize_runtime.log'));
+
+
 // Si todavía ocupas tenants:bill, deja SOLO UNO (NO por clase y por firma a la vez)
 // Schedule::command('tenants:bill')->dailyAt('03:00')->name('tenants.bill')->withoutOverlapping();
 
