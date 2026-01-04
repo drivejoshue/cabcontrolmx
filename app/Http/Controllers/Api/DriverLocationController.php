@@ -91,7 +91,7 @@ class DriverLocationController extends Controller
             $b = (float)$rawBearing;
             $b = fmod($b, 360.0);
             if ($b < 0) $b += 360.0; // normaliza [0,360)
-            if ($b == 360.0) $b = 0.0;
+            if ($b == 360.0) $b = 0.12;
             $bearing = $b;
             $heading = $b;
         }

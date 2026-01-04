@@ -26,7 +26,7 @@ class RideController extends Controller
         $this->walletService = $walletService;
     }
 
-   private function tenantIdFrom(Request $req): int
+    private function tenantIdFrom(Request $req): int
     {
         $user       = $req->user();
         $userTenant = $user->tenant_id ?? null;
@@ -326,7 +326,7 @@ class RideController extends Controller
             ->first();
     }
 
-  /** POST /api/rides */
+    /** POST /api/rides */
     public function store(Request $req)
     {
         $data = $req->validate([
@@ -462,7 +462,6 @@ class RideController extends Controller
     }
 
 
-
     /** PATCH /api/rides/{ride}/stops  (panel) */
     public function updateStops(Request $req, int $ride)
     {
@@ -585,9 +584,6 @@ class RideController extends Controller
             'status' => 'on_board',
         ]);
     }
-
-
-
 
 
     /** POST /api/driver/rides/{ride}/finish */
@@ -758,6 +754,7 @@ class RideController extends Controller
             'promoted' => $next,
         ]);
     }
+
 
     /** POST /api/driver/rides/{ride}/cancel */
     public function cancelByDriver(Request $req, int $ride)
@@ -1441,41 +1438,41 @@ class RideController extends Controller
     }
 
    /**
- * Resuelve el monto final canónico de un viaje.
- *
- * Reglas:
- * - passenger_app:
- *      agreed_amount -> passenger_offer -> total_amount -> quoted_amount
- * - otros canales (dispatch, driver_app, api):
- *      total_amount -> agreed_amount -> passenger_offer -> quoted_amount
- *
- * Siempre retorna un float entero (round) o null.
- */
-private function resolveFinalAmount(?object $rideRow): ?float
-{
-    if (!$rideRow) {
-        return null;
+     * Resuelve el monto final canónico de un viaje.
+     *
+     * Reglas:
+     * - passenger_app:
+     *      agreed_amount -> passenger_offer -> total_amount -> quoted_amount
+     * - otros canales (dispatch, driver_app, api):
+     *      total_amount -> agreed_amount -> passenger_offer -> quoted_amount
+     *
+     * Siempre retorna un float entero (round) o null.
+     */
+    private function resolveFinalAmount(?object $rideRow): ?float
+    {
+        if (!$rideRow) {
+            return null;
+        }
+
+        $channel = $rideRow->requested_channel ?? null;
+
+        $agreed  = $rideRow->agreed_amount     ?? null;
+        $paxOff  = $rideRow->passenger_offer   ?? null;
+        $total   = $rideRow->total_amount      ?? null;
+        $quoted  = $rideRow->quoted_amount     ?? null;
+
+        if ($channel === 'passenger_app') {
+            $base = $agreed ?? $paxOff ?? $total ?? $quoted;
+        } else {
+            $base = $total ?? $agreed ?? $paxOff ?? $quoted;
+        }
+
+        if ($base === null) {
+            return null;
+        }
+
+        return (float) round((float) $base);
     }
-
-    $channel = $rideRow->requested_channel ?? null;
-
-    $agreed  = $rideRow->agreed_amount     ?? null;
-    $paxOff  = $rideRow->passenger_offer   ?? null;
-    $total   = $rideRow->total_amount      ?? null;
-    $quoted  = $rideRow->quoted_amount     ?? null;
-
-    if ($channel === 'passenger_app') {
-        $base = $agreed ?? $paxOff ?? $total ?? $quoted;
-    } else {
-        $base = $total ?? $agreed ?? $paxOff ?? $quoted;
-    }
-
-    if ($base === null) {
-        return null;
-    }
-
-    return (float) round((float) $base);
-}
 
 
 

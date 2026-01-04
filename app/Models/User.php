@@ -71,5 +71,9 @@ public function getIsadminAttribute()
 }
 
 
-     public function driver() { return $this->hasOne(\App\Models\Driver::class); }
+   public function driver()
+{
+    return $this->hasOne(\App\Models\Driver::class, 'user_id', 'id');
+}
+
 }

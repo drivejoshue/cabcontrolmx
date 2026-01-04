@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\DriverMessage;
 use App\Events\DriverEvent;
+use Illuminate\Support\Facades\DB;
+
 
 class DriverChatController extends Controller
 {
@@ -13,8 +15,32 @@ class DriverChatController extends Controller
      * GET /api/driver/messages
      */
     public function index(Request $request)
-    {
-        $user = $request->user();
+    { $user = $request->user();
+
+        $driver = DB::table('drivers')
+    ->where('user_id', $user->id)
+    ->first(['id','tenant_id']);
+
+if (!$driver) {
+    return response()->json([
+        'ok' => false,
+        'error' => 'Driver no encontrado para el usuario autenticado.',
+        'messages' => [],
+    ], 401);
+}
+
+
+    \Log::info('CHAT_INDEX_AUTH', [
+        'auth_user_id' => $user?->id,
+        'auth_email'   => $user?->email,
+        'auth_tenant'  => $user?->tenant_id,
+        'has_driver_rel' => (bool) ($user?->driver),
+        'driver_rel_id'  => $user?->driver?->id,
+        'driver_rel_tenant' => $user?->driver?->tenant_id,
+        'header_tenant' => $request->header('X-Tenant-ID'),
+    ]);
+
+
 
         if (!$user || !$user->driver) {
             return response()->json([
@@ -24,8 +50,22 @@ class DriverChatController extends Controller
             ], 401);
         }
 
-        $driver   = $user->driver;
-        $tenantId = (int) ($request->header('X-Tenant-ID') ?? $driver->tenant_id);
+       $driver = DB::table('drivers')
+    ->where('user_id', $user->id)
+    ->first(['id','tenant_id']);
+
+if (!$driver) {
+    return response()->json([
+        'ok' => false,
+        'error' => 'Driver no encontrado para el usuario autenticado.',
+        'messages' => [],
+    ], 401);
+}
+
+
+
+
+       $tenantId = (int) $driver->tenant_id; 
         $afterId  = $request->query('after_id');
 
         $q = DriverMessage::query()
@@ -35,6 +75,12 @@ class DriverChatController extends Controller
         if (!empty($afterId)) {
             $q->where('id', '>', (int) $afterId);
         }
+
+        \Log::info('CHAT_INDEX_SCOPE', [
+    'using_driver_id' => $driver->id,
+    'using_tenant_id' => $driver->tenant_id,
+    'after_id' => $afterId,
+]);
 
         $messages = $q
             ->orderBy('id', 'asc')
@@ -84,7 +130,7 @@ class DriverChatController extends Controller
         'template_key' => 'nullable|string|max:64',
     ]);
 
-    $tenantId = (int) ($request->header('X-Tenant-ID') ?? $driver->tenant_id);
+   $tenantId = (int) $driver->tenant_id; 
 
     // ==========================
     //  KIND + META (ayuda)

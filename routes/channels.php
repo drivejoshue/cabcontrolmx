@@ -33,21 +33,41 @@ Broadcast::channel('tenant.{tenantId}.chat', function ($user, $tenantId) {
 Broadcast::channel('tenant.{tenantId}.driver.{driverId}', function ($user, $tenantId, $driverId) {
     if (!$user) return false;
 
+    // Si este user es driver-app, NO debe poder escuchar como staff.
+    $driver = DB::table('drivers')->where('user_id', $user->id)->first(['id','tenant_id']);
+
     // ✅ Staff del tenant (admin/dispatcher) puede escuchar driver.*
-    if ((int)($user->tenant_id ?? 0) === (int)$tenantId && (!empty($user->is_admin) || !empty($user->is_dispatcher))) {
-        return true;
+    if (!$driver) {
+        return (int)($user->tenant_id ?? 0) === (int)$tenantId
+            && (!empty($user->is_admin) || !empty($user->is_dispatcher));
     }
 
     // ✅ El propio driver (app) también
-    $driver = DB::table('drivers')->where('user_id', $user->id)->first(['id','tenant_id']);
-    if (!$driver) return false;
-
     return (int)$driver->tenant_id === (int)$tenantId
         && (int)$driver->id === (int)$driverId;
 });
 
 
 
-Broadcast::channel('tenant.{tenantId}.ride.{rideId}', function ($user = null, int $tenantId, int $rideId) {
-    return $user ? (int)($user->tenant_id ?? 0) === (int)$tenantId : false;
+
+Broadcast::channel('tenant.{tenantId}.ride.{rideId}', function ($user, int $tenantId, int $rideId) {
+    if (!$user) return false;
+
+    // staff del tenant
+    if ((int)($user->tenant_id ?? 0) === (int)$tenantId && (!empty($user->is_admin) || !empty($user->is_dispatcher))) {
+        return true;
+    }
+
+    // driver app: validar que sea SU ride
+    $driver = DB::table('drivers')->where('user_id', $user->id)->first(['id','tenant_id']);
+    if (!$driver) return false;
+    if ((int)$driver->tenant_id !== (int)$tenantId) return false;
+
+    $owns = DB::table('rides')
+        ->where('id', $rideId)
+        ->where('tenant_id', $tenantId)
+        ->where('driver_id', $driver->id)
+        ->exists();
+
+    return $owns;
 });
