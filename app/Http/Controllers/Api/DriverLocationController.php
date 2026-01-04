@@ -45,7 +45,7 @@ class DriverLocationController extends Controller
         $driver = DB::table('drivers')
             ->where('tenant_id', $tenantId)
             ->where('user_id', $user->id)
-            ->select('id', 'status', 'last_active_status')
+            ->select('id', 'status')
             ->first();
 
         if (!$driver) {
@@ -56,7 +56,7 @@ class DriverLocationController extends Controller
             return response()->json(['ok' => false, 'message' => 'Driver inválido'], 403);
         }
 
-        // ====== STATUS PREVIO (SIEMPRE DEFINIDO, ANTES DE CUALQUIER CÁLCULO) ======
+        // ====== STATUS PREVIO (solo para logging / transición AutoKick) ======
         $prevStatus = strtolower((string)($driver->status ?? 'offline'));
 
         // TZ tenant (para last_ping_at y reported_at)
@@ -66,6 +66,7 @@ class DriverLocationController extends Controller
         $nowLocal = now($tz);
         $nowUtc   = now('UTC');
 
+        // OJO: NO forzamos status por activeRide. Solo usamos para broadcast.
         $activeRide = DB::table('rides')
             ->where('tenant_id', $tenantId)
             ->where('driver_id', $driver->id)
@@ -96,7 +97,7 @@ class DriverLocationController extends Controller
             $heading = $b;
         }
 
-        // 1) Historial (si lo estás usando)
+        // 1) Historial
         DB::table('driver_locations')->insert([
             'tenant_id'   => $tenantId,
             'driver_id'   => $driver->id,
@@ -109,39 +110,18 @@ class DriverLocationController extends Controller
             'created_at'  => $nowLocal,
         ]);
 
-        // 2) Estado efectivo
+        // 2) Status: SOLO si viene busy explícito.
+        // - Nunca forzamos on_ride.
+        // - Nunca revivimos last_active_status.
+        $busyInPayload = array_key_exists('busy', $data);
+
         $effectiveStatus = $prevStatus;
-
-        if ($activeRide) {
-            $effectiveStatus = 'on_ride';
-            } elseif (array_key_exists('busy', $data)) {
-                $effectiveStatus = $data['busy'] ? 'busy' : 'idle';
-            } elseif ($prevStatus === 'offline') {
-        // ping sin busy: revive a last_active_status, PERO nunca on_ride sin ride activo
-             $lastActive = strtolower((string)($driver->last_active_status ?? ''));
-            if (in_array($lastActive, ['on_ride', 'offline', ''], true)) {
-                $effectiveStatus = 'idle';
-            } elseif (in_array($lastActive, ['busy', 'idle'], true)) {
-                $effectiveStatus = $lastActive;
-            } else {
-                $effectiveStatus = 'idle';
-            }
+        if ($busyInPayload) {
+            $effectiveStatus = ((bool)$data['busy']) ? 'busy' : 'idle';
         }
 
-        $lastActive = strtolower((string)($driver->last_active_status ?? ''));
-
-        $lastActiveWasOnRideButNoRide = ($lastActive === 'on_ride' && !$activeRide);
-
-        if ($lastActiveWasOnRideButNoRide) {
-            Log::warning('DriverLocation.reconcile_onride_to_idle', [
-                'tenant_id' => $tenantId,
-                'driver_id' => (int)$driver->id,
-                'prev_status' => $prevStatus,
-                'last_active_status' => $driver->last_active_status,
-            ]);
-        }
-
-        // 3) Update de drivers (lo que usa el panel)
+        // 3) Update drivers (panel)
+        // Siempre telemetría. Status solo si busy viene explícito.
         $update = [
             'last_lat'     => (float)$data['lat'],
             'last_lng'     => (float)$data['lng'],
@@ -149,21 +129,12 @@ class DriverLocationController extends Controller
             'last_bearing' => $bearing,
             'last_speed'   => $speed,
             'last_seen_at' => $nowUtc,   // UTC
-            'status'       => $effectiveStatus,
             'updated_at'   => $nowUtc,
         ];
 
-        if ($effectiveStatus !== 'offline') {
-            $update['last_active_status'] = $effectiveStatus;
-            $update['last_active_at']     = $nowLocal;
+        if ($busyInPayload) {
+            $update['status'] = $effectiveStatus;
         }
-        if ($lastActiveWasOnRideButNoRide) {
-            // Corrige snapshot para que no vuelva a revivir a on_ride sin ride
-            $update['last_active_status'] = 'idle';
-            $update['last_active_at']     = $nowLocal;
-        }
-
-
 
         DB::table('drivers')->where('id', $driver->id)->update($update);
 
@@ -173,21 +144,18 @@ class DriverLocationController extends Controller
             'driver_id'        => (int)$driver->id,
             'prev_status'      => $prevStatus,
             'effective_status' => $effectiveStatus,
-            'busy_in_payload'  => array_key_exists('busy', $data) ? (bool)$data['busy'] : null,
+            'busy_in_payload'  => $busyInPayload ? (bool)$data['busy'] : null,
             'active_ride_id'   => $activeRide ? (int)$activeRide->id : null,
             'speed_kmh'        => $speed,
             'bearing'          => $bearing,
+            'status_written'   => $busyInPayload ? 1 : 0,
         ]);
 
         // ===============================
         // AUTOKICK: TRANSICIÓN A IDLE
-        // Dispara cuando:
-        // - NO hay ride activo
-        // - antes NO estaba idle (offline/busy/on_ride)
-        // - ahora SÍ está idle
-        // - debounce por driver para no spamear
+        // Solo si NO hay ride activo y el payload trae busy=false (o sea, transición explícita).
         // ===============================
-        if (!$activeRide) {
+        if (!$activeRide && $busyInPayload) {
             $wasUnavailable = in_array($prevStatus, ['offline', 'busy', 'on_ride'], true);
             $becameIdle     = ($effectiveStatus === 'idle');
 
@@ -200,13 +168,11 @@ class DriverLocationController extends Controller
                     'driver_id'   => (int)$driver->id,
                     'prev_status' => $prevStatus,
                     'now_status'  => $effectiveStatus,
-                    'debounced'   => $debounced ? 0 : 1, // 0=se permitió, 1=bloqueado por debounce
+                    'debounced'   => $debounced ? 0 : 1,
                 ]);
 
                 if ($debounced) {
                     try {
-                        // IMPORTANTE: este método debe existir y hacer la wave sobre un ride cercano.
-                        // Si tu AutoKickService retorna data, la logueamos.
                         $kickRes = AutoKickService::kickNearestRideForDriver(
                             tenantId: $tenantId,
                             driverId: (int)$driver->id,
@@ -230,20 +196,7 @@ class DriverLocationController extends Controller
             }
         }
 
-        if (!$activeRide && $effectiveStatus === 'idle') {
-    $key = "autokick:tenant:$tenantId:driver:{$driver->id}";
-    if (\Cache::add($key, 1, 8)) { // 8s debounce
-        $res = \App\Services\AutoKickService::kickNearestRideForDriver(
-            tenantId: $tenantId,
-            driverId: (int)$driver->id,
-            lat: (float)$data['lat'],
-            lng: (float)$data['lng']
-        );
-        \Log::info('AutoKick.done', ['tenant_id'=>$tenantId,'driver_id'=>$driver->id,'res'=>$res]);
-    }
-}
-
-        // 4) Broadcast al pasajero si hay ride activo
+        // 4) Broadcast al pasajero si hay ride activo (solo ubicación, no status)
         if ($activeRide) {
             try {
                 RideBroadcaster::location(
