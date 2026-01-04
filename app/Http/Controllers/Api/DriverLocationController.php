@@ -88,22 +88,22 @@ class DriverLocationController extends Controller
     $bearing = null;
     $heading = null;
 
-    if (!$isStopped && $rawBearing !== null) {
-        $b = (float)$rawBearing;
-        $b = fmod($b, 360.0);
-        if ($b < 0) $b += 360.0; // normaliza [0,360)
+ if (!$isStopped && $rawBearing !== null) {
+    $b = (float)$rawBearing;
+    $b = fmod($b, 360.0);
+    if ($b < 0) $b += 360.0; // [0,360)
 
-        // ✅ OFFSET GLOBAL DEL ICONO (tu caso: +90°)
-        $offset = 90.0;
-        $b = fmod($b + $offset, 360.0);
-        if ($b < 0) $b += 360.0;
+    // ✅ PNG base apunta a la izquierda (Oeste=270)
+    // Rotación necesaria: bearing_real - 270  == bearing_real + 90
+    $offset = 90.0;
+    $b = fmod($b + $offset, 360.0);
+    if ($b < 0) $b += 360.0;
 
-        // evita 360 exacto
-        if ($b == 360.0) $b = 0.12;
+    if ($b == 360.0) $b = 0.12;
 
-        $bearing = $b;
-        $heading = $b;
-    }
+    $bearing = $b;
+    $heading = $b;
+}
 
 
         // 1) Historial
