@@ -1196,6 +1196,18 @@ class PassengerRideController extends Controller
                     ]);
             }
 
+            DB::table('ride_shares')
+              ->where('tenant_id', $tenantId)
+              ->where('ride_id', $ride)
+              ->where('status', 'active')
+              ->update([
+                  'status'     => 'ended',
+                  'ended_at'   => now(),
+                  'updated_at' => now(),
+              ]);
+
+
+
             DB::table('ride_status_history')->insert([
                 'tenant_id'   => $tenantId,
                 'ride_id'     => $ride,

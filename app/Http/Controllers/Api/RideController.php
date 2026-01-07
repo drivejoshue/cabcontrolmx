@@ -640,6 +640,18 @@ class RideController extends Controller
             $snap->total_amount ?? $snap->quoted_amount ?? null
         );
 
+        // 🔻 Matar share links del ride (si existen)
+            DB::table('ride_shares')
+              ->where('tenant_id', $tenantId)
+              ->where('ride_id', $ride)
+              ->where('status', 'active')
+              ->update([
+                  'status'     => 'ended',
+                  'ended_at'   => now(),
+                  'updated_at' => now(),
+              ]);
+
+
 
                // 3.b) AutoKick al terminar: usa driver_id del snap (canonical)
         $driverId = (int)($snap->driver_id ?? 0);
@@ -802,6 +814,17 @@ class RideController extends Controller
                 ->where('status', 'offered')
                 ->update(['status' => 'released', 'responded_at' => now(), 'updated_at' => now()]);
         });
+
+        DB::table('ride_shares')
+          ->where('tenant_id', $tenantId)
+          ->where('ride_id', $row->id)
+          ->where('status', 'active')
+          ->update([
+              'status'     => 'ended',
+              'ended_at'   => now(),
+              'updated_at' => now(),
+          ]);
+
 
         RideBroadcaster::canceled($tenantId, (int)$row->id, 'driver', $data['reason'] ?? null);
 

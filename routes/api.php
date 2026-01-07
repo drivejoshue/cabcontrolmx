@@ -36,6 +36,8 @@ use App\Http\Controllers\Api\PublicContactController;
 use App\Events\DriverEvent;
 use App\Http\Controllers\Webhooks\MercadoPagoWebhookController;
 use App\Http\Controllers\SysAdmin\ContactLeadController;
+use App\Http\Controllers\Public\RideShareController;
+use App\Http\Controllers\Api\PassengerRideShareController;
 
 
 /*
@@ -46,6 +48,9 @@ use App\Http\Controllers\SysAdmin\ContactLeadController;
 | (configurado en RouteServiceProvider).
 |--------------------------------------------------------------------------
 */
+
+
+
 
 /* ===================== DEBUG / TEST ===================== */
 
@@ -95,6 +100,12 @@ Route::get('/debug/reverb', function () {
     return ['ok' => true];
 });
 /* ===================== APP PASAJERO ===================== */
+
+
+Route::get('/public/ride-share/{token}/state', [RideShareController::class, 'state'])
+    ->where('token', '[A-Za-z0-9\-_]+')
+    ->middleware(['throttle:30,1']) // ajusta a gusto
+    ->name('public.ride-share.state');
 
 /**
  * Sincronización de identidad del pasajero desde Firebase
@@ -188,6 +199,9 @@ Route::prefix('passenger')->group(function () {
     Route::post('places/{id}/deactivate', [PassengerPlacesController::class, 'deactivate']);
 
     Route::get('nearby-drivers', [\App\Http\Controllers\Api\PassengerNearbyDriversController::class, 'nearby']);
+
+    Route::post('/rides/{ride}/share', [PassengerRideShareController::class, 'create']);
+    Route::post('/rides/{ride}/share/revoke', [PassengerRideShareController::class, 'revoke']);
 
 });
 

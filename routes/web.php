@@ -70,6 +70,8 @@ use App\Events\TestEvent;
 // Webhooks
 use App\Http\Controllers\Webhooks\MercadoPagoWebhookController;
 
+use App\Http\Controllers\Public\RideShareController;
+
 /*
 |--------------------------------------------------------------------------
 | Webhooks (sin CSRF)
@@ -103,6 +105,22 @@ Route::post('/logout', function (Request $request) {
 | Registro público (guest)
 |--------------------------------------------------------------------------
 */
+
+
+Route::get('/s/{token}', [RideShareController::class, 'show'])
+    ->where('token', '[A-Za-z0-9\-_]+')
+    ->name('public.ride-share.show');
+
+Route::get('/ride_share/{token}', [RideShareController::class, 'show'])
+    ->name('ride_share.show');
+
+Route::get('/ride_share/{token}/state', [RideShareController::class, 'state'])
+    ->name('ride_share.state');
+
+
+
+    
+
 Route::middleware('guest')->group(function () {
     Route::get('/signup', [TenantSignupController::class, 'show'])->name('public.signup');
 
