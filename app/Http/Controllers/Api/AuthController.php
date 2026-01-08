@@ -13,48 +13,69 @@ class AuthController extends Controller
      * Úsalo para paneles o clientes que sólo requieran user + token.
      */
     public function login(Request $r)
-    {
-        $data = $r->validate([
-            'email'          => 'required|email',
-            'password'       => 'required|string',
-            'single_session' => 'sometimes|boolean',
-        ]);
+{
+    $data = $r->validate([
+        'email'          => 'required|email',
+        'password'       => 'required|string',
+        'single_session' => 'sometimes|boolean',
+    ]);
 
-        if (!Auth::attempt([
-            'email'    => $data['email'],
-            'password' => $data['password'],
-        ])) {
-            return response()->json([
-                'ok'      => false,
-                'message' => 'Credenciales inválidas',
-            ], 401);
-        }
+    if (!Auth::attempt(['email'=>$data['email'], 'password'=>$data['password']])) {
+        return response()->json(['ok'=>false,'message'=>'Credenciales inválidas'], 401);
+    }
 
-        /** @var \App\Models\User $user */
-        $user     = $r->user();
-        $tenantId = $user->tenant_id ?? null;
+    /** @var User $user */
+    $user = Auth::user();
 
-        // Opcional: single-session (revoca otros tokens de este usuario)
-        if (!empty($data['single_session'])) {
-            $user->tokens()->delete();
-        }
+    // ¿Es driver?
+    $driver = DB::table('drivers')->where('user_id', $user->id)->first();
 
-        // Nombre genérico para el token de API "normal"
-        $token = $user->createToken('api-token')->plainTextToken;
+    if ($driver) {
+        // ✅ Driver app: SIEMPRE single-session (sin tablas nuevas)
+        $user->tokens()->whereIn('name', ['api-token','driver-app'])->delete();
+
+        $token = $user->createToken('driver-app')->plainTextToken;
 
         return response()->json([
             'ok'    => true,
             'token' => 'Bearer '.$token,
             'user'  => [
-                'id'         => $user->id,
-                'name'       => $user->name,
-                'email'      => $user->email,
-                'tenant_id'  => $tenantId,
-                'is_admin'   => (bool)($user->is_admin ?? false),
-                'is_sysadmin'=> (bool)($user->is_sysadmin ?? false),
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'tenant_id' => $user->tenant_id ?? null,
+                'is_admin' => (bool)($user->is_admin ?? false),
+                'is_sysadmin' => (bool)($user->is_sysadmin ?? false),
+            ],
+            // opcional: devolver driver mínimo si quieres
+            'driver' => [
+                'id' => $driver->id,
+                'name' => $driver->name,
+                'phone' => $driver->phone,
             ],
         ]);
     }
+
+    // NO driver: comportamiento actual
+    if (!empty($data['single_session'])) {
+        $user->tokens()->delete();
+    }
+
+    $token = $user->createToken('api-token')->plainTextToken;
+
+    return response()->json([
+        'ok'    => true,
+        'token' => 'Bearer '.$token,
+        'user'  => [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'tenant_id' => $user->tenant_id ?? null,
+            'is_admin' => (bool)($user->is_admin ?? false),
+            'is_sysadmin' => (bool)($user->is_sysadmin ?? false),
+        ],
+    ]);
+}
 
     /**
      * Logout genérico: revoca sólo el token actual.

@@ -6,41 +6,76 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Models\User; 
 
 class DriverAuthController extends Controller
 {
-    public function login(Request $r)
-    {
-        $data = $r->validate([
-            'email'    => 'required|email',
-            'password' => 'required|string',
-        ]);
+   public function login(Request $r)
+{
+    $data = $r->validate([
+        'email'    => 'required|email',
+        'password' => 'required|string',
+    ]);
 
-        if (!Auth::attempt($data)) {
-            return response()->json(['message'=>'Credenciales inválidas'], 401);
-        }
+    if (!Auth::attempt($data)) {
+        return response()->json(['message'=>'Credenciales inválidas'], 401);
+    }
 
-        /** @var \App\Models\User $user */
-        $user = $r->user();
+    /** @var User $user */
+    $user = Auth::user();
 
-        // Driver vinculado al user
-        $driver = DB::table('drivers')->where('user_id',$user->id)->first();
-        if (!$driver) {
-            return response()->json(['message'=>'Usuario no vinculado a conductor'], 403);
-        }
+    $driver = DB::table('drivers')->where('user_id',$user->id)->first();
+    if (!$driver) {
+        return response()->json(['message'=>'Usuario no vinculado a conductor'], 403);
+    }
 
-        $token = $user->createToken('driver-app')->plainTextToken;
+    // ✅ Revoca TODO lo del driver app (usa nombres consistentes)
+    DB::table('personal_access_tokens')
+        ->where('tokenable_type', User::class)
+        ->where('tokenable_id', $user->id)
+        ->whereIn('name', ['driver-app']) // aquí ajustas si antes usaste otro
+        ->delete();
+
+    // ✅ Crea token con nombre fijo
+    $token = $user->createToken('driver-app')->plainTextToken;
+
+    return response()->json([
+        'token'   => $token,
+        'driver'  => [
+            'id'    => $driver->id,
+            'name'  => $driver->name,
+            'phone' => $driver->phone,
+        ],
+        'tenant'  => $user->tenant_id ?? null,
+    ]);
+}
+private function enforceSingleDriverToken(Request $r)
+{
+    /** @var User $user */
+    $user = $r->user();
+    $current = $user?->currentAccessToken();
+
+    if (!$user || !$current) return null;
+
+    $latestId = DB::table('personal_access_tokens')
+        ->where('tokenable_type', User::class)
+        ->where('tokenable_id', $user->id)
+        ->where('name', 'driver-app')
+        ->max('id');
+
+    if ($latestId && (int)$current->id !== (int)$latestId) {
+        // este token ya no es el vigente
+        try { $current->delete(); } catch (\Throwable $e) {}
 
         return response()->json([
-            'token'   => $token,
-            'driver'  => [
-                'id'    => $driver->id,
-                'name'  => $driver->name,
-                'phone' => $driver->phone,
-            ],
-            'tenant'  => $user->tenant_id ?? null,
-        ]);
+            'ok' => false,
+            'message' => 'session_revoked',
+        ], 401);
     }
+
+    return null;
+}
+
 
     public function logout(Request $r)
     {
@@ -49,7 +84,7 @@ class DriverAuthController extends Controller
     }
 
  public function me(Request $r)
-{
+{ if ($resp = $this->enforceSingleDriverToken($r)) return $resp;
     // ============================================================
     // FASE 0) Usuario autenticado y tenant consistente
     // ============================================================
@@ -202,7 +237,7 @@ class DriverAuthController extends Controller
      * - { "status": "idle"|"busy" }
      */
    public function setStatus(Request $r)
-    {
+    { if ($resp = $this->enforceSingleDriverToken($r)) return $resp;
     $user = $r->user();
 
     $userTenant = (int)($user->tenant_id ?? 0);
