@@ -141,7 +141,7 @@
                   @else
                     @if($vs === 'pending')
                       <div class="small text-muted mt-1">
-                        Documentos en revisión por Orbana. El vehículo se activará cuando la verificación esté completa.
+                        Documentos en revisión por Orbana. Proceso de verificacion de identidad vehicular.
                       </div>
                     @elseif($vs === 'verified')
                       <div class="small text-muted mt-1">
@@ -149,7 +149,7 @@
                       </div>
                     @elseif($vs === 'rejected')
                       <div class="small text-muted mt-1">
-                        Verificación rechazada. Revisa los documentos y vuelve a subirlos desde la sección de Documentos.
+                        Verificación rechazada. el vehiculo no cumple cn la verificacion de identidad . Revisa los documentos y vuelve a subirlos desde la sección de Documentos.
                       </div>
                     @endif
                   @endif
@@ -202,11 +202,11 @@
                 <div class="small mb-2">
                   @if($vs === 'pending')
                     Documentos en proceso de revisión por Orbana.
-                    El taxi no debería operar hasta completar esta verificación.
+                    El taxi podra operar mientras la identidad  del vehiculo es verificada.
                   @elseif($vs === 'verified')
-                    Vehículo verificado por Orbana. Ya puede operar según las reglas del tenant.
+                    Vehículo verificado por Orbana. Identidad Verificada.
                   @elseif($vs === 'rejected')
-                    Verificación rechazada. Revisa las notas y vuelve a subir documentación corregida.
+                    Verificación rechazada. Revisa las notas y vuelve a subir documentación corregida .
                   @endif
                 </div>
                 <a href="{{ route('vehicles.documents.index',$v->id) }}" class="btn btn-sm btn-outline-dark">
