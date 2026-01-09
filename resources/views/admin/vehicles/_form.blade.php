@@ -201,8 +201,7 @@
               <label class="form-check-label">Activo</label>
             </div>
             <small class="text-muted">
-              La foto se guarda en <code>storage/app/public/vehicles</code> y se referencia en
-              <code>foto_path</code>. El vehículo será enviado a verificación de documentos
+            El vehículo será enviado a verificación de documentos
               inmediatamente después de guardarlo.
             </small>
           </div>
@@ -265,15 +264,13 @@ document.addEventListener('DOMContentLoaded', function () {
             const opt   = $('#catalog_id').find('option:selected');
             const brand = (opt.data('brand') || '').toString();
             const model = (opt.data('model') || '').toString();
-            const type  = (opt.data('type')  || '').toString().trim().toLowerCase();
+          
 
             if (brand) $('#brand_input').val(brand);
             if (model) $('#model_input').val(model);
 
             // Autoselecciona tipo si viene del catálogo (case-insensitive)
-            if (type) {
-                $('#type_select').val(type).trigger('change');
-            }
+           
         }
 
         // Al cambiar catálogo: set brand/model/type

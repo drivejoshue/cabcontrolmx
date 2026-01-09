@@ -226,12 +226,7 @@
                 </a>
               </div>
 
-              @if($v->foto_path)
-                <div class="mt-3">
-                  <div class="small text-muted">Imagen almacenada en:</div>
-                  <code class="small">storage/{{ $v->foto_path }}</code>
-                </div>
-              @endif
+             
             </div>
           </div>
         </div>
