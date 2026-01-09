@@ -89,21 +89,20 @@ public function store(Request $r)
     // 🔹 Cargar Tenant + perfil de billing
     $tenant = Tenant::with('billingProfile')->findOrFail($tenantId);
 
-    $data = $r->validate([
-        'economico'  => 'required|string|max:20',
-        'plate'      => 'required|string|max:20',
-        'capacity'   => 'nullable|integer|min:1|max:10',
-        'color'      => 'nullable|string|max:40',
-        'year'       => 'nullable|integer|min:1970|max:2100',
-        'policy_id'  => 'nullable|string|max:60',
-        //'active'     => 'nullable|boolean',
-        'foto'       => 'nullable|image|max:2048',
+   $data = $r->validate([
+    'economico'  => 'required|string|max:20',
+    'plate'      => 'required|string|max:20',
+    'type'       => 'nullable|in:sedan,vagoneta,van,premium',
+    'capacity'   => 'nullable|integer|min:1|max:10',
+    'color'      => 'nullable|string|max:40',
+    'year'       => 'nullable|integer|min:1970|max:2100',
+    'policy_id'  => 'nullable|string|max:60',
+    'foto'       => 'nullable|image|max:2048',
 
-        // Campos ligados al catálogo
-        'catalog_id' => 'nullable|integer|exists:vehicle_catalog,id',
-        'brand'      => 'nullable|string|max:60',
-        'model'      => 'nullable|string|max:80',
-    ]);
+    'catalog_id' => 'nullable|integer|exists:vehicle_catalog,id',
+    'brand'      => 'nullable|string|max:60',
+    'model'      => 'nullable|string|max:80',
+]);
 
     // ✅ Billing check ANTES de insertar (per_vehicle / trial / active / etc.)
     [$allowed, $reason] = app(TenantBillingService::class)
@@ -117,16 +116,14 @@ public function store(Request $r)
 
     // Si viene catalog_id, reforzamos brand/model desde el catálogo
     if (!empty($data['catalog_id'])) {
-        $cat = DB::table('vehicle_catalog')
-            ->where('id', $data['catalog_id'])
-            ->first();
-
-        if ($cat) {
-            $data['brand'] = $cat->brand;
-            $data['model'] = $cat->model;
-            // Si luego agregas columna vehicle_type en vehicles, aquí puedes usar $cat->type
-        }
+    $cat = DB::table('vehicle_catalog')->where('id', $data['catalog_id'])->first();
+    if ($cat) {
+        $data['brand'] = $cat->brand;
+        $data['model'] = $cat->model;
+        $data['type']  = $cat->type ?? ($data['type'] ?? null); // <-- importante
     }
+}
+
 
     return DB::transaction(function () use ($r, $data, $tenantId) {
 
@@ -165,6 +162,7 @@ public function store(Request $r)
             'economico' => $data['economico'],
             'plate'     => $data['plate'],
             'brand'     => $data['brand'] ?? null,
+            'type' => $data['type'] ?? null,
             'model'     => $data['model'] ?? null,
             'color'     => $data['color'] ?? null,
             'year'      => $data['year'] ?? null,
@@ -343,13 +341,14 @@ public function assignDriver(Request $r, int $id)
     ]);
 }
 
-   public function update(Request $r, int $id)
+ public function update(Request $r, int $id)
 {
     $tenantId = $this->tenantId();
 
     $data = $r->validate([
         'economico'  => 'required|string|max:20',
         'plate'      => 'required|string|max:20',
+        'type'       => 'nullable|in:sedan,vagoneta,van,premium',
         'capacity'   => 'nullable|integer|min:1|max:10',
         'color'      => 'nullable|string|max:40',
         'year'       => 'nullable|integer|min:1970|max:2100',
@@ -357,7 +356,6 @@ public function assignDriver(Request $r, int $id)
         'active'     => 'nullable|boolean',
         'foto'       => 'nullable|image|max:2048',
 
-        // catálogo
         'catalog_id' => 'nullable|integer|exists:vehicle_catalog,id',
         'brand'      => 'nullable|string|max:60',
         'model'      => 'nullable|string|max:80',
@@ -389,12 +387,18 @@ public function assignDriver(Request $r, int $id)
         return back()->withErrors(['plate' => 'Ya existe otro vehículo con esa placa.'])->withInput();
     }
 
-    // Si viene catalog_id, reforzamos brand/model
+    // Si viene catalog_id, reforzamos brand/model/type (normalizado)
     if (!empty($data['catalog_id'])) {
         $cat = DB::table('vehicle_catalog')->where('id', $data['catalog_id'])->first();
         if ($cat) {
             $data['brand'] = $cat->brand;
             $data['model'] = $cat->model;
+
+            $t = strtolower(trim((string)($cat->type ?? '')));
+            $allowed = ['sedan','vagoneta','van','premium'];
+            if (in_array($t, $allowed, true)) {
+                $data['type'] = $t;
+            }
         }
     }
 
@@ -415,6 +419,7 @@ public function assignDriver(Request $r, int $id)
             'plate'     => $data['plate'],
             'brand'     => $data['brand'] ?? null,
             'model'     => $data['model'] ?? null,
+            'type'      => $data['type'] ?? null,
             'color'     => $data['color'] ?? null,
             'year'      => $data['year'] ?? null,
             'capacity'  => $data['capacity'] ?? 4,
@@ -426,6 +431,7 @@ public function assignDriver(Request $r, int $id)
 
     return redirect()->route('vehicles.show', ['id' => $id])->with('ok', 'Vehículo actualizado.');
 }
+
 
 
     public function destroy(int $id)

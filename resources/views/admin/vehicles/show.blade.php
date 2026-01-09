@@ -114,6 +114,10 @@
 
                 <dt class="col-sm-4">Capacidad</dt>
                 <dd class="col-sm-8">{{ $v->capacity ?: '—' }}</dd>
+                
+                <dt class="col-sm-4">Tipo</dt>
+                <dd class="col-sm-8">{{ $v->type ? strtoupper($v->type) : '—' }}</dd>
+
 
                 <dt class="col-sm-4">Póliza / ID</dt>
                 <dd class="col-sm-8">{{ $v->policy_id ?: '—' }}</dd>

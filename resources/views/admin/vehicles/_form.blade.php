@@ -1,5 +1,28 @@
 @csrf
 
+@php
+  // 10 años hacia atrás incluyendo el actual (ej: 2026..2016)
+  $currentYear = now()->year;
+  $years10 = range($currentYear, $currentYear - 10);
+
+  // Colores comunes (taxis). Guardamos el NOMBRE en DB.
+  // Puedes ajustar el catálogo si tu ciudad usa otros.
+  $colorOptions = [
+    'Blanco',
+    'Amarillo',
+    'Negro',
+    'Gris',
+    'Plata',
+    'Azul',
+    'Rojo',
+    'Verde',
+    'Naranja',
+    'Dorado',
+  ];
+
+  $selectedColor = old('color', $v->color ?? '');
+@endphp
+
 <div class="row g-3">
 
   {{-- RESUMEN DE PLAN / BILLING --}}
@@ -64,64 +87,99 @@
                 <input type="text" name="economico" class="form-control" required
                        value="{{ old('economico', $v->economico ?? '') }}">
               </div>
-              <div class="col-sm-4">
+
+              <div class="col-sm-3">
                 <label class="form-label">Placa</label>
                 <input type="text" name="plate" class="form-control" required
                        value="{{ old('plate', $v->plate ?? '') }}">
               </div>
-              <div class="col-sm-4">
+
+              <div class="col-sm-3">
+                <label class="form-label">Tipo</label>
+                @php $typeValue = old('type', $v->type ?? ''); @endphp
+                <select name="type" id="type_select" class="form-select">
+                  <option value="">— Selecciona —</option>
+                  <option value="sedan"    {{ $typeValue==='sedan' ? 'selected' : '' }}>Sedán</option>
+                  <option value="vagoneta" {{ $typeValue==='vagoneta' ? 'selected' : '' }}>Vagoneta</option>
+                  <option value="van"      {{ $typeValue==='van' ? 'selected' : '' }}>Van</option>
+                  <option value="premium"  {{ $typeValue==='premium' ? 'selected' : '' }}>Premium</option>
+                </select>
+                <small class="text-muted">Se guarda en el campo <code>vehicles.type</code>.</small>
+              </div>
+
+              <div class="col-sm-2">
                 <label class="form-label">Capacidad</label>
                 <input type="number" name="capacity" class="form-control" min="1" max="10"
                        value="{{ old('capacity', $v->capacity ?? 4) }}">
               </div>
             </div>
 
-          <div class="row g-2 mt-2">
-    <div class="col-sm-8">
-        <label class="form-label">Marca y modelo</label>
-        <select name="catalog_id" id="catalog_id" class="form-select js-vehicle-catalog">
-            <option value="">Escribe para buscar...</option>
-            @foreach($vehicleCatalog as $item)
-                <option value="{{ $item->id }}"
-                        data-brand="{{ $item->brand }}"
-                        data-model="{{ $item->model }}">
-                    {{ $item->brand }} - {{ $item->model }} ({{ strtoupper($item->type) }})
-                </option>
-            @endforeach
-        </select>
-        <small class="text-muted">
-            Empieza a escribir “Versa”, “Tsuru”, “Jetta”, etc. para encontrar rápido.
-        </small>
-    </div>
+            <div class="row g-2 mt-2">
+              <div class="col-sm-8">
+                <label class="form-label">Marca y modelo</label>
 
-    <div class="col-sm-4">
-        <label class="form-label">Color</label>
-        <input type="text" name="color" class="form-control"
-               value="{{ old('color', $v->color ?? '') }}">
-    </div>
-</div>
+                {{-- Importante: preseleccionar catalog_id si existe old() --}}
+                @php $catalogSelected = old('catalog_id', ''); @endphp
 
-{{-- Campos ocultos/fijos donde realmente guardamos brand/model en vehicles --}}
-<input type="hidden" name="brand"  id="brand_input"  value="{{ old('brand', $v->brand ?? '') }}">
-<input type="hidden" name="model"  id="model_input"  value="{{ old('model', $v->model ?? '') }}">
+                <select name="catalog_id" id="catalog_id" class="form-select js-vehicle-catalog">
+                  <option value="">Escribe para buscar...</option>
+                  @foreach($vehicleCatalog as $item)
+                    @php
+                      $catType = strtolower(trim((string)($item->type ?? '')));
+                    @endphp
+                    <option value="{{ $item->id }}"
+                            data-brand="{{ $item->brand }}"
+                            data-model="{{ $item->model }}"
+                            data-type="{{ $catType }}"
+                            {{ (string)$catalogSelected === (string)$item->id ? 'selected' : '' }}>
+                      {{ $item->brand }} - {{ $item->model }} ({{ strtoupper($catType) }})
+                    </option>
+                  @endforeach
+                </select>
 
+                <small class="text-muted">
+                  Empieza a escribir “Versa”, “Tsuru”, “Jetta”, etc. para encontrar rápido.
+                </small>
+              </div>
+
+              <div class="col-sm-4">
+                <label class="form-label">Color</label>
+
+                {{-- Select de colores comunes: guarda el nombre en "color" --}}
+                <select name="color" id="color_select" class="form-select">
+                  <option value="">— Selecciona —</option>
+                  @foreach($colorOptions as $c)
+                    <option value="{{ $c }}" {{ (string)$selectedColor === (string)$c ? 'selected' : '' }}>
+                      {{ $c }}
+                    </option>
+                  @endforeach
+                </select>
+
+                <small class="text-muted">Catálogo cerrado para evitar variantes (“blanquito”, “white”, etc.).</small>
+              </div>
+            </div>
+
+            {{-- Campos ocultos donde realmente guardamos brand/model --}}
+            <input type="hidden" name="brand" id="brand_input" value="{{ old('brand', $v->brand ?? '') }}">
+            <input type="hidden" name="model" id="model_input" value="{{ old('model', $v->model ?? '') }}">
 
             <div class="row g-2 mt-2">
-              {{-- Año como dropdown de años recientes --}}
+              {{-- Año: limitar a últimos 10 --}}
               <div class="col-sm-4">
                 <label class="form-label">Año</label>
-                @php
-                  $currentYearValue = old('year', $v->year ?? '');
-                @endphp
+                @php $currentYearValue = old('year', $v->year ?? ''); @endphp
+
                 <select name="year" class="form-select">
                   <option value="">Seleccione año...</option>
-                  @foreach($years as $y)
+                  @foreach($years10 as $y)
                     <option value="{{ $y }}"
                       {{ (string)$currentYearValue === (string)$y ? 'selected' : '' }}>
                       {{ $y }}
                     </option>
                   @endforeach
                 </select>
+
+                <small class="text-muted">Solo permite los últimos 10 años.</small>
               </div>
 
               <div class="col-sm-8">
@@ -148,6 +206,7 @@
               inmediatamente después de guardarlo.
             </small>
           </div>
+
         </div>
       </div>
     </div>
@@ -187,6 +246,7 @@
     </div>
   </div>
 </div>
+
 @push('scripts')
 <script>
 document.addEventListener('DOMContentLoaded', function () {
@@ -199,14 +259,30 @@ document.addEventListener('DOMContentLoaded', function () {
             width: '100%'
         });
 
-        $('#catalog_id').on('change', function () {
-            const opt = $(this).find('option:selected');
-            const brand = opt.data('brand') || '';
-            const model = opt.data('model') || '';
+        // Si el form viene con catalog_id seleccionado (edit o validation error),
+        // sincronizamos brand/model/type desde el option selected.
+        function syncFromCatalogSelected() {
+            const opt   = $('#catalog_id').find('option:selected');
+            const brand = (opt.data('brand') || '').toString();
+            const model = (opt.data('model') || '').toString();
+            const type  = (opt.data('type')  || '').toString().trim().toLowerCase();
 
-            $('#brand_input').val(brand);
-            $('#model_input').val(model);
+            if (brand) $('#brand_input').val(brand);
+            if (model) $('#model_input').val(model);
+
+            // Autoselecciona tipo si viene del catálogo (case-insensitive)
+            if (type) {
+                $('#type_select').val(type).trigger('change');
+            }
+        }
+
+        // Al cambiar catálogo: set brand/model/type
+        $('#catalog_id').on('change', function () {
+            syncFromCatalogSelected();
         });
+
+        // Al cargar: si ya venía seleccionado (edit), sincronizar
+        syncFromCatalogSelected();
     }
 });
 </script>

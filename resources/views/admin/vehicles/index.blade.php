@@ -21,7 +21,7 @@
     <table class="table align-middle">
       <thead>
         <tr>
-          <th>Foto</th><th>Económico</th><th>Placa</th><th>Marca/Modelo</th><th>Año</th><th>Cap.</th><th>Activo</th><th class="text-end">Acciones</th>
+          <th>Foto</th><th>Económico</th><th>Placa</th><th>Marca/Modelo</th><th>Año</th><th>Cap.</th><th>Tipo</th><th>Activo</th><th class="text-end">Acciones</th>
         </tr>
       </thead>
       <tbody>
@@ -39,6 +39,7 @@
           <td>{{ trim(($v->brand ?? '').' '.($v->model ?? '')) ?: '—' }}</td>
           <td>{{ $v->year ?? '—' }}</td>
           <td>{{ $v->capacity }}</td>
+          <td>{{ $v->type ? strtoupper($v->type) : '—' }}</td>
           <td>@if($v->active) <span class="badge bg-success">Sí</span> @else <span class="badge bg-secondary">No</span> @endif</td>
           <td class="text-end">
             <a href="{{ route('vehicles.show',$v->id) }}" class="btn btn-sm btn-outline-secondary">Ver</a>
