@@ -13,7 +13,7 @@ use App\Services\OfferBroadcaster;
 // =====================================================
 Schedule::call(function () {
    
-$cut = now()->subMinutes(30);
+$cut = now()->subMinutes(10);
 
 $activeDriverIds = DB::table('driver_locations')
     ->whereNotNull('reported_at')

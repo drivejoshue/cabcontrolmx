@@ -955,6 +955,16 @@ class PassengerRideController extends Controller
                     'updated_at'   => now(),
                 ]);
 
+                // 1) Capturar losers (antes de update masivo)
+            $losers = DB::table('ride_offers')
+                ->where('tenant_id', $tenantId)
+                ->where('ride_id', $ride)
+                ->where('id', '!=', $o->id)
+                ->whereIn('status', ['offered', 'pending_passenger', 'queued']) // por si aplica
+                ->get(['id','driver_id']);
+
+
+
             // liberar las demás (offered + pending_passenger)
             DB::table('ride_offers')
                 ->where('tenant_id', $tenantId)
@@ -982,6 +992,23 @@ class PassengerRideController extends Controller
             (int)$o->id,
             'accepted'
         );
+
+        foreach ($losers as $lo) {
+            OfferBroadcaster::emitStatus(
+                $tenantId,
+                (int)$lo->driver_id,
+                (int)$ride,
+                (int)$lo->id,
+                'released'
+            );
+
+            // opcional pero recomendado si tu UI maneja cola visual separada
+            OfferBroadcaster::queueRemove(
+                $tenantId,
+                (int)$lo->driver_id,
+                (int)$ride
+            );
+        }
 
         RideBroadcaster::bidResult(
             tenantId:     $tenantId,

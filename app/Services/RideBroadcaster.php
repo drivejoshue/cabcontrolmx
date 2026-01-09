@@ -240,7 +240,8 @@ public static function bootstrapLocationAndRoute(
     }
 
     // 2) Obtener driver asignado
-    $driverId = $forcedDriverId ?: self::rideDriverId($rideId);
+   $driverId = $forcedDriverId ?: self::rideDriverId($tenantId, $rideId);
+
     if (! $driverId) {
         \Log::warning('bootstrapLocationAndRoute: ride sin driver asignado', [
             'tenant_id' => $tenantId,

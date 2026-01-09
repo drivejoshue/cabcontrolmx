@@ -327,12 +327,18 @@
     <strong>Viajes activos</strong>
     <span class="badge bg-primary ms-2" id="badgeActivosDock">0</span>
   </div>
-  <div class="right">
-    <button class="btn btn-sm btn-outline-secondary" id="btnDockToggle">
-      <span class="when-collapsed">Expandir</span>
-      <span class="when-expanded">Colapsar</span>
-    </button>
-  </div>
+ <div class="right d-flex align-items-center gap-2">
+  <div id="dock-active-badges" class="d-flex align-items-center gap-1"></div>
+
+  <button class="btn btn-sm btn-outline-primary" id="btnDockOpenModal">
+    Ver lista
+  </button>
+
+  <button class="btn btn-sm btn-outline-secondary" id="btnDockToggle">
+    <span class="when-collapsed">Expandir</span>
+    <span class="when-expanded">Colapsar</span>
+  </button>
+</div>
 </div>
 
   <div class="dock-body">

@@ -222,6 +222,8 @@ Route::get ('/dispatch/runtime', [DispatchController::class, 'runtime']);
 Route::get ('/dispatch/active',  [DispatchController::class, 'active']);
 Route::get ('/dispatch/drivers', [DispatchController::class, 'driversLive']);
 Route::post('/dispatch/assign',  [DispatchController::class, 'assign']);
+Route::post('/dispatch/rides/{ride}/reassign',  [DispatchController::class, 'reassign']);
+
 Route::post('/dispatch/rides/{ride}/cancel', [DispatchController::class,'cancel']);
 Route::get ('/dispatch/nearby-drivers',      [DispatchController::class,'nearbyDrivers']);
 
@@ -270,6 +272,7 @@ Route::prefix('rides')->group(function () {
 
     // Acciones desde el panel
     Route::post('{ride}/assign', [RideController::class, 'assign']);
+
     Route::post('{ride}/start',  [RideController::class, 'start']);
     Route::post('{ride}/pickup', [RideController::class, 'pickup']);
     Route::post('{ride}/drop',   [RideController::class, 'drop']);

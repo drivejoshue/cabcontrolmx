@@ -447,6 +447,12 @@ public function index(Request $req)
                 (int) $lo->id,
                 'released'
             );
+            OfferBroadcaster::queueRemove(
+                (int) $lo->tenant_id,
+                (int) $lo->driver_id,
+                $rideId
+            );
+
         }
 
         // señal RT al driver + pasajero
@@ -738,6 +744,39 @@ public function index(Request $req)
                     (int) $offerId,
                     'rejected'
                 );
+
+                  $rideId = (int)$row->ride_id;
+
+    $hasAlive = DB::table('ride_offers')
+        ->where('tenant_id', $tenantId)
+        ->where('ride_id', $rideId)
+        ->whereIn('status', ['offered','pending_passenger','queued'])
+        ->where('expires_at','>', now())
+        ->exists();
+
+    $hasDriver = DB::table('rides')
+        ->where('tenant_id',$tenantId)
+        ->where('id',$rideId)
+        ->whereNotNull('driver_id')
+        ->exists();
+
+    if (!$hasAlive && !$hasDriver) {
+        $r = DB::table('rides')->where('tenant_id',$tenantId)->where('id',$rideId)
+            ->first(['origin_lat','origin_lng']);
+        if ($r) {
+            $cfg = \App\Services\DispatchSettingsService::forTenant($tenantId);
+            \App\Services\AutoDispatchService::kickoff(
+                tenantId: $tenantId,
+                rideId:   $rideId,
+                lat:      (float)$r->origin_lat,
+                lng:      (float)$r->origin_lng,
+                km:       (float)($cfg->radius_km ?? 3.0),
+                expires:  (int)  ($cfg->expires_s ?? 30),
+                limitN:   (int)  ($cfg->limit_n ?? 8),
+                autoAssignIfSingle: (bool)($cfg->auto_assign_if_single ?? false)
+            );
+        }
+    }
             }
 
             return response()->json(['ok' => true]);

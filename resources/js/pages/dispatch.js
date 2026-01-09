@@ -3574,8 +3574,8 @@ function statusBadgeClass(s){
 
 // === Dock expandible =========================================================
 (function setupDockToggle(){
-  const dock   = document.querySelector('#dispatchDock'); // contenedor dock
-  const toggle = document.querySelector('#dockToggle, [data-act="dock-toggle"]'); // botón expandir
+  const dock   = document.querySelector('#dock-active');
+  const toggle = document.querySelector('#btnDockToggle');
   if (!dock || !toggle) return;
 
   const saved = localStorage.getItem('dispatchDockExpanded');
@@ -3587,119 +3587,60 @@ function statusBadgeClass(s){
     localStorage.setItem('dispatchDockExpanded', dock.classList.contains('is-expanded') ? '1' : '0');
   });
 })();
+function _countByStatus(active){
+  const out = { accepted:0, en_route:0, arrived:0, on_board:0, other:0 };
+  for (const r of active){
+    const st = _lc(_canonStatus(r.status));
+    if (st === 'accepted' || st === 'assigned') out.accepted++;
+    else if (st === 'en_route' || st === 'enroute') out.en_route++;
+    else if (st === 'arrived') out.arrived++;
+    else if (st === 'on_board' || st === 'onboard' || st === 'boarding') out.on_board++;
+    else out.other++;
+  }
+  return out;
+}
+
+function renderDockBadges(active){
+  const host = document.getElementById('dock-active-badges');
+  if (!host) return;
+
+  const c = _countByStatus(active);
+  host.innerHTML = `
+    <span class="badge bg-secondary-subtle text-secondary" title="Aceptados">${c.accepted} Acept.</span>
+    <span class="badge bg-primary-subtle text-primary" title="En ruta">${c.en_route} En ruta</span>
+    <span class="badge bg-warning-subtle text-warning" title="Llegó">${c.arrived} Llegó</span>
+    <span class="badge bg-success-subtle text-success" title="A bordo">${c.on_board} A bordo</span>
+  `;
+}
 
 function renderDockActive(rides){
-  const active = (rides||[]).filter(_isActive);
+  const active = (rides || []).filter(_isActive);
 
-  const b1 = document.getElementById('badgeActivos');      // badge panel derecho
-  const b2 = document.getElementById('badgeActivosDock');  // badge dock
+  // badges simples (panel y dock)
+  const b1 = document.getElementById('badgeActivos');      // panel derecho
+  const b2 = document.getElementById('badgeActivosDock');  // dock
   if (b1) b1.textContent = active.length;
   if (b2) b2.textContent = active.length;
 
-  const host = document.getElementById('dock-active-table');
-  if (!host) return;
+  // índice por id (antes de render/binds)
+  window._ridesIndex = new Map(active.map(r => [Number(r.id), r]));
 
-  // índice por id
-  window._ridesIndex = new Map(active.map(r=>[r.id,r]));
+  // asegurar modales + badges friendly
+  ensureDockModals();
+  renderDockBadges(active);
 
-  // helpers
-  const esc = (s)=>String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  const fmtKm  = (m)=> Number.isFinite(m) ? (m/1000).toFixed(1) : '–';
-  const fmtMin = (s)=> Number.isFinite(s) ? Math.round(s/60) : '–';
-  const parseStops = (r)=>{
-    if (Array.isArray(r.stops)) return r.stops;
-    if (Array.isArray(r.stops_json)) return r.stops_json;
-    if (typeof r.stops_json === 'string' && r.stops_json.trim()!==''){
-      try { const a = JSON.parse(r.stops_json); return Array.isArray(a) ? a : []; } catch {}
-    }
-    return [];
-  };
-  const short = (t,max=60)=> (t||'').length>max ? t.slice(0,max-1)+'…' : (t||'');
+  // render tabla en dock (si existe)
+  const dockHost = document.getElementById('dock-active-table');
+  if (dockHost) renderActiveRidesTableInto(dockHost, active);
 
-  const rows = active.map(r=>{
-    const km   = fmtKm(r.distance_m);
-    const min  = fmtMin(r.duration_s);
-    const st   = String(_canonStatus(r.status) || '').toUpperCase();
-    const badge= statusBadgeClass(r.status);
-    const dvr  = r.driver_name || r.driver?.name || '—';
-    const unit = r.vehicle_economico || r.vehicle_plate || r.vehicle_id || '—';
-    const eta  = (r.pickup_eta_min ?? '—');
+  // render tabla en modal (si ya existe el modal)
+  const modalHost = document.getElementById('modal-active-table');
+  if (modalHost) renderActiveRidesTableInto(modalHost, active);
 
-    const stops = parseStops(r);
-    const sc    = stops.length || Number(r.stops_count||0);
-
-    // Tooltip con labels o coords; \n -> &#10; para title HTML
-    const tipRaw = stops.map((s,i)=>{
-      const label = (s && typeof s.label==='string' && s.label.trim()!=='')
-        ? s.label.trim()
-        : (Number.isFinite(+s.lat)&&Number.isFinite(+s.lng) ? `${(+s.lat).toFixed(5)}, ${(+s.lng).toFixed(5)}` : '—');
-      return `S${i+1}: ${label}`;
-    }).join('\n');
-    const tipHtml = esc(tipRaw).replace(/\n/g,'&#10;');
-
-    const stopsCell = sc
-      ? `<span class="badge bg-secondary-subtle text-secondary" title="${tipHtml}">${sc}</span>`
-      : '—';
-
-    return `
-      <tr class="cc-row" data-ride-id="${r.id}">
-        <td class="cc-dock-unit">${esc(unit)}</td>
-        <td class="cc-dock-driver">${esc(dvr)}</td>
-        <td class="cc-dock-eta">${esc(String(eta))}</td>
-        <td class="small" title="${esc(r.origin_label||'')}">${esc(short(r.origin_label,50))}</td>
-        <td class="small" title="${esc(r.dest_label||'')}">${esc(short(r.dest_label,50))}</td>
-        <td class="cc-dock-stops">${stopsCell}</td>
-        <td class="cc-dock-num">${km}</td>
-        <td class="cc-dock-num">${min}</td>
-        <td><span class="badge ${badge}">${st}</span></td>
-        <td class="text-end"><button class="btn btn-xs btn-outline-secondary" data-act="view">Ver</button></td>
-      </tr>`;
-  }).join('');
-
-  host.innerHTML = `
-    <div class="table-responsive">
-      <table class="table table-sm table-hover align-middle mb-0 cc-dock-table">
-        <thead>
-          <tr>
-            <th>Unidad</th>
-            <th>Conductor</th>
-            <th class="cc-dock-eta">ETA</th>
-            <th>Origen</th>
-            <th>Destino</th>
-            <th class="cc-dock-stops">Paradas</th>
-            <th class="cc-dock-num">Km</th>
-            <th class="cc-dock-num">Min</th>
-            <th>Estado</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
-
-  // Ver (ruta en mapa) + centrar conductor
-  host.querySelectorAll('button[data-act="view"]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const tr = btn.closest('tr');
-      const id = Number(tr?.dataset?.rideId);
-      const r  = window._ridesIndex.get(id);
-      if (r){
-        highlightRideOnMap(r); // deja ruta/markers
-        focusDriverOnMap(r);   // centra conductor
-      }
-    });
-  });
-
-  // Click en fila -> centra conductor (sin dibujar ruta)
-  host.querySelectorAll('tr.cc-row').forEach(tr=>{
-    tr.addEventListener('click', (e)=>{
-      if (e.target.closest('button')) return;
-      const id = Number(tr.dataset.rideId);
-      const r  = window._ridesIndex.get(id);
-      if (r) focusDriverOnMap(r);
-    });
-  });
+  // guarda lista global para openActiveRidesModal()
+  window._lastActiveRides = rides || [];
 }
+
 
 
 // Centra el mapa en la última ubicación conocida del driver (si existe). Mantiene la ruta.
@@ -3711,7 +3652,282 @@ function getRideById(id){
   return list.find(x => Number(x.id) === Number(id)) || null;
 }
 
+function ensureDockModals(){
+  if (document.getElementById('modalActiveRides')) return;
 
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+  <div class="modal fade" id="modalActiveRides" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Viajes activos</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <div id="modal-active-table"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="modalReassignRide" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Reasignar servicio</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <div class="small text-muted mb-2" id="reassignRideInfo">—</div>
+
+          <label class="form-label">Nuevo conductor</label>
+          <select class="form-select" id="reassignDriverSelect"></select>
+
+          <label class="form-label mt-2">Motivo (opcional)</label>
+          <input class="form-control" id="reassignReason" placeholder="Ej. tráfico / accidente / unidad sin señal" />
+
+          <div class="form-check mt-2">
+          
+          </div>
+
+          <div class="alert alert-danger mt-3 d-none" id="reassignErr"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-primary" id="btnReassignConfirm">Reasignar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  `;
+  document.body.appendChild(wrap);
+
+  // Botón global: abrir lista
+  const btn = document.getElementById('btnDockOpenModal');
+  if (btn){
+    btn.addEventListener('click', ()=>{
+      openActiveRidesModal();
+    });
+  }
+}
+function renderActiveRidesTableInto(hostEl, active){
+  if (!hostEl) return;
+
+  const esc = (s)=>String(s??'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const fmtKm  = (m)=> Number.isFinite(m) ? (m/1000).toFixed(1) : '–';
+  const fmtMin = (s)=> Number.isFinite(s) ? Math.round(s/60) : '–';
+  const short = (t,max=60)=> (t||'').length>max ? t.slice(0,max-1)+'…' : (t||'');
+
+  const rows = active.map(r=>{
+    const km   = fmtKm(r.distance_m);
+    const min  = fmtMin(r.duration_s);
+    const st   = String(_canonStatus(r.status) || '').toUpperCase();
+    const badge= statusBadgeClass(r.status);
+    const dvr  = r.driver_name || r.driver?.name || '—';
+    const unit = r.vehicle_economico || r.vehicle_plate || r.vehicle_id || '—';
+    const eta  = (r.pickup_eta_min ?? '—');
+
+    return `
+      <tr class="cc-row" data-ride-id="${r.id}">
+        <td class="cc-dock-unit">${esc(unit)}</td>
+        <td class="cc-dock-driver">${esc(dvr)}</td>
+        <td class="cc-dock-eta">${esc(String(eta))}</td>
+        <td class="small" title="${esc(r.origin_label||'')}">${esc(short(r.origin_label,50))}</td>
+        <td class="small" title="${esc(r.dest_label||'')}">${esc(short(r.dest_label,50))}</td>
+        <td class="cc-dock-num">${km}</td>
+        <td class="cc-dock-num">${min}</td>
+        <td><span class="badge ${badge}">${st}</span></td>
+        <td class="text-end">
+          <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary" data-act="view">Ver</button>
+            <button class="btn btn-outline-primary" data-act="reassign">Reasignar</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  hostEl.innerHTML = `
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0 cc-dock-table">
+        <thead>
+          <tr>
+            <th>Unidad</th>
+            <th>Conductor</th>
+            <th class="cc-dock-eta">ETA</th>
+            <th>Origen</th>
+            <th>Destino</th>
+            <th class="cc-dock-num">Km</th>
+            <th class="cc-dock-num">Min</th>
+            <th>Estado</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  // Ver
+  hostEl.querySelectorAll('button[data-act="view"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const tr = btn.closest('tr');
+      const id = Number(tr?.dataset?.rideId);
+      const r  = window._ridesIndex.get(id);
+      if (r){
+        highlightRideOnMap(r);
+        focusDriverOnMap(r);
+      }
+    });
+  });
+
+  // Reasignar
+  hostEl.querySelectorAll('button[data-act="reassign"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const tr = btn.closest('tr');
+      const id = Number(tr?.dataset?.rideId);
+      const r  = window._ridesIndex.get(id);
+      if (r) openReassignModal(r);
+    });
+  });
+
+  // Click fila -> focus driver
+  hostEl.querySelectorAll('tr.cc-row').forEach(tr=>{
+    tr.addEventListener('click', (e)=>{
+      if (e.target.closest('button')) return;
+      const id = Number(tr.dataset.rideId);
+      const r  = window._ridesIndex.get(id);
+      if (r) focusDriverOnMap(r);
+    });
+  });
+}
+
+function openActiveRidesModal(){
+  ensureDockModals();
+  const active = (Array.isArray(window._lastActiveRides) ? window._lastActiveRides : []).filter(_isActive);
+  const modalHost = document.getElementById('modal-active-table');
+  renderActiveRidesTableInto(modalHost, active);
+
+  const m = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalActiveRides'));
+  m.show();
+}
+
+
+function getReassignCandidates(excludeDriverId){
+  const drivers = Array.isArray(window._lastDrivers) ? window._lastDrivers : [];
+  const out = drivers.filter(d => {
+    const id = Number(d.id || d.driver_id || 0);
+    if (!id || id === Number(excludeDriverId||0)) return false;
+
+    if (Number(d.shift_open||0) !== 1) return false;
+    if (Number(d.is_fresh||0) !== 1) return false;
+    if (String(d.driver_status||'').toLowerCase() !== 'idle') return false;
+
+    // si viene con ride_status, evita offered/accepted/on_board...
+    const rs = String(d.ride_status||'').toLowerCase();
+    if (rs && rs !== 'requested' && rs !== 'scheduled') return false;
+
+    return true;
+  });
+
+  // orden por económico / nombre
+  out.sort((a,b)=>{
+    const ea = String(a.vehicle_economico||'');
+    const eb = String(b.vehicle_economico||'');
+    const c1 = ea.localeCompare(eb);
+    if (c1) return c1;
+    return String(a.name||'').localeCompare(String(b.name||''));
+  });
+
+  return out;
+}
+
+
+function openReassignModal(ride){
+  ensureDockModals();
+
+  const oldDriver = Number(ride.driver_id||0);
+  const info = document.getElementById('reassignRideInfo');
+  if (info){
+    const unit = ride.vehicle_economico || ride.vehicle_plate || '—';
+    const dvr  = ride.driver_name || '—';
+    info.textContent = `Ride #${ride.id} | Unidad: ${unit} | Actual: ${dvr}`;
+  }
+
+  const sel = document.getElementById('reassignDriverSelect');
+  const err = document.getElementById('reassignErr');
+  if (err){ err.classList.add('d-none'); err.textContent = ''; }
+
+  const candidates = getReassignCandidates(oldDriver);
+
+  if (sel){
+    sel.innerHTML = candidates.length
+      ? candidates.map(d=>{
+          const id  = Number(d.id || d.driver_id);
+          const eco = d.vehicle_economico || '—';
+          const nm  = d.name || '—';
+          return `<option value="${id}">${eco} — ${nm}</option>`;
+        }).join('')
+      : `<option value="">Sin conductores disponibles</option>`;
+    sel.disabled = candidates.length === 0;
+  }
+
+  const btnOk = document.getElementById('btnReassignConfirm');
+  btnOk.onclick = async ()=>{
+    const newDriverId = Number(sel.value||0);
+    const reason = String(document.getElementById('reassignReason')?.value||'').trim();
+    const force  = !!document.getElementById('reassignForce')?.checked;
+
+    if (!newDriverId){
+      if (err){ err.textContent = 'Selecciona un conductor disponible.'; err.classList.remove('d-none'); }
+      return;
+    }
+
+    btnOk.disabled = true;
+    try {
+      await postReassignRide(ride.id, newDriverId, reason, force);
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('modalReassignRide')).hide();
+    } catch (e){
+      if (err){ err.textContent = e?.message || 'Error al reasignar'; err.classList.remove('d-none'); }
+    } finally {
+      btnOk.disabled = false;
+    }
+  };
+
+  const m = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalReassignRide'));
+  m.show();
+}
+
+
+async function postReassignRide(rideId, driverId, reason, force){
+  const ride = Number(rideId);
+  if (!ride) throw new Error('rideId inválido');
+
+  const res = await fetch(`/api/dispatch/rides/${ride}/reassign`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+      'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+    },
+    body: JSON.stringify({
+      driver_id: Number(driverId),
+      reason: reason || null,
+      force: false
+    })
+  });
+
+  const data = await res.json().catch(()=>null);
+  if (!res.ok || !data?.ok){
+    const msg = data?.msg || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+
+  return data;
+}
+
+
+
+// termina dockbar activos 
 
 // Orquestador: separa y pinta todo
 function renderRightPanels(rides){
@@ -3869,12 +4085,9 @@ function upsertQueuesAccordion(acc, list, driversByStand, opts = {}){
       // persistir "último abierto" solo una vez
       const col = item.querySelector('.accordion-collapse');
       col.addEventListener('shown.bs.collapse', () => {
-        const m = (col.id || '').match(/^qcol-(.+)$/);
-        if (m && m[1]) {
-          window._queuesUI = window._queuesUI || {};
-          window._queuesUI.lastOpenStandId = String(m[1]);
-        }
-      });
+  window._queuesUI = window._queuesUI || {};
+  window._queuesUI.lastShownStandId = sid; // no lo uses para auto-open
+});
     }
 
     // update textos
