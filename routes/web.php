@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Http\Request;
 use Illuminate\Foundation\Auth\EmailVerificationRequest;
+use App\Http\Controllers\Auth\EmailVerificationResendController;
 
 use App\Models\Tenant;
 
@@ -172,10 +173,9 @@ Route::get('/email/verify/{id}/{hash}', function (EmailVerificationRequest $requ
     return redirect()->route('admin.dashboard');
 })->middleware(['auth', 'signed', 'throttle:6,1'])->name('verification.verify');
 
-Route::post('/email/verification-notification', function (Request $request) {
-    $request->user()->sendEmailVerificationNotification();
-    return back()->with('status', 'verification-link-sent');
-})->middleware(['auth', 'throttle:6,1'])->name('verification.send');
+Route::post('/email/verification-notification', EmailVerificationResendController::class)
+    ->middleware(['auth', 'throttle:6,1'])
+    ->name('verification.send');
 
 /*
 |--------------------------------------------------------------------------

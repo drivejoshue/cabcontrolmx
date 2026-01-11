@@ -22,12 +22,39 @@
       <div class="card shadow-sm border-0" style="border-radius: 18px;">
         <div class="card-body p-4 p-md-5">
 
-          @if (session('status') === 'verification-link-sent')
-            <div class="alert alert-success d-flex gap-2 align-items-start">
-              <i class="bi bi-check-circle mt-1"></i>
-              <div>Enlace de verificación reenviado.</div>
-            </div>
-          @endif
+         @php
+  $raw = session('sent_to') ?: (auth()->user()->email ?? '');
+  $masked = $raw;
+
+  if ($raw && str_contains($raw,'@')) {
+    [$local,$domain] = explode('@', $raw, 2);
+    $maskedLocal = strlen($local) <= 2
+      ? substr($local,0,1).'*'
+      : substr($local,0,1).str_repeat('*', max(strlen($local)-2, 2)).substr($local,-1);
+    $masked = $maskedLocal.'@'.$domain;
+  }
+@endphp
+
+<div class="alert alert-light border d-flex gap-2 align-items-start">
+  <i class="bi bi-envelope-at mt-1"></i>
+  <div>
+    <div class="fw-semibold">Correo de verificación</div>
+    <div class="small text-muted">Enviaremos el enlace a: <span class="fw-semibold">{{ $masked }}</span></div>
+  </div>
+</div>
+
+@if (session('status') === 'verification-link-sent')
+  <div class="alert alert-success">Enlace reenviado.</div>
+@endif
+
+@if (session('status') === 'already-verified')
+  <div class="alert alert-success">Este correo ya está verificado.</div>
+@endif
+
+@if ($errors->has('email'))
+  <div class="alert alert-danger">{{ $errors->first('email') }}</div>
+@endif
+
 
           <div class="d-flex gap-3 align-items-start">
             <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
