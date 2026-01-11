@@ -122,26 +122,6 @@ Route::middleware('throttle:public-contact')->group(function () {
         ->name('public.contact.store');
 });
 
-Route::prefix('dispatch/chats')->group(function () {
-
-    // 1) Lista de hilos (drivers con mensajes)
-    Route::get('/threads', [DispatchChatController::class, 'threads'])
-        ->name('api.dispatch.chats.threads');
-
-    // 2) Obtener mensajes de un driver
-    Route::get('/{driverId}/messages', [DispatchChatController::class, 'messages'])
-        ->name('api.dispatch.chats.messages');
-
-    // 3) Enviar mensaje desde Dispatch → Driver
-    Route::post('/{driverId}/messages', [DispatchChatController::class, 'send'])
-        ->name('api.dispatch.chats.send');
-
-    // 4) Marcar mensajes como leídos (opcional)
-    Route::post('/{driverId}/read', [DispatchChatController::class, 'markRead'])
-        ->name('api.dispatch.chats.read');
-
-});
-
 
 
 
@@ -213,6 +193,26 @@ Route::post('/ratings', [RatingController::class, 'store']);
     Route::get('/ratings/ride/{ride}', [RatingController::class, 'getRideRatings']);;
 
 /* ===================== DISPATCH (PANEL WEB) ===================== */
+Route::prefix('dispatch/chats')->group(function () {
+
+    // 1) Lista de hilos (drivers con mensajes)
+    Route::get('/threads', [DispatchChatController::class, 'threads'])
+        ->name('api.dispatch.chats.threads');
+
+    // 2) Obtener mensajes de un driver
+    Route::get('/{driverId}/messages', [DispatchChatController::class, 'messages'])
+        ->name('api.dispatch.chats.messages');
+
+    // 3) Enviar mensaje desde Dispatch → Driver
+    Route::post('/{driverId}/messages', [DispatchChatController::class, 'send'])
+        ->name('api.dispatch.chats.send');
+
+    // 4) Marcar mensajes como leídos (opcional)
+    Route::post('/{driverId}/read', [DispatchChatController::class, 'markRead'])
+        ->name('api.dispatch.chats.read');
+
+});
+
 
 Route::post('/dispatch/quote',   [DispatchController::class, 'quote'])->name('api.dispatch.quote');
 Route::post('/dispatch/tick',    [DispatchController::class, 'tick']);
@@ -228,12 +228,13 @@ Route::post('/dispatch/rides/{ride}/cancel', [DispatchController::class,'cancel'
 Route::get ('/dispatch/nearby-drivers',      [DispatchController::class,'nearbyDrivers']);
 
 
-
-
 /* ===================== GEO (PANEL / GENERIC) ===================== */
 
 // Ruta de cálculo de ruta para el panel de despacho
 Route::post('/geo/route', [GeoController::class, 'route'])->name('api.geo.route');
+
+
+
 
 /* ===================== CAPAS PARA MAPA (panel/app) ===================== */
 

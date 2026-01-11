@@ -45,7 +45,7 @@
         
         <div class="card">
             <div class="card-body">
-<form method="GET" action="{{ route('reports.drivers.activity') }}" class="row g-3">
+<form method="GET" action="{{ route('admin.reports.drivers.activity') }}" class="row g-3">
                     <div class="col-md-3">
                         <label class="form-label">Conductor</label>
                         <select name="driver_id" class="form-select">

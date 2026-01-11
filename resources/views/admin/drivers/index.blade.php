@@ -4,7 +4,7 @@
 @section('content')
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3 class="mb-0">Conductores</h3>
-  <a href="{{ route('drivers.create') }}" class="btn btn-primary"><i data-feather="plus"></i> Nuevo</a>
+  <a href="{{ route('admin.drivers.create') }}" class="btn btn-primary"><i data-feather="plus"></i> Nuevo</a>
 </div>
 
 <form class="mb-3" method="get">
@@ -44,8 +44,8 @@
             </span>
           </td>
           <td class="text-end">
-            <a href="{{ route('drivers.show',$d->id) }}" class="btn btn-sm btn-outline-secondary">Ver</a>
-            <a href="{{ route('drivers.edit',$d->id) }}" class="btn btn-sm btn-primary">Editar</a>
+            <a href="{{ route('admin.drivers.show',$d->id) }}" class="btn btn-sm btn-outline-secondary">Ver</a>
+            <a href="{{ route('admin.drivers.edit',$d->id) }}" class="btn btn-sm btn-primary">Editar</a>
           </td>
         </tr>
       @empty

@@ -160,7 +160,7 @@
       @endif
     </div>
     <div class="d-flex gap-2">
-      <a href="{{ route('drivers.index') }}" class="btn btn-outline-secondary">Cancelar</a>
+      <a href="{{ route('admin.drivers.index') }}" class="btn btn-outline-secondary">Cancelar</a>
       <button class="btn btn-primary" type="submit">Guardar</button>
     </div>
   </div>

@@ -294,6 +294,51 @@
   }
 
   .leaflet-control-attribution{ font-size: 11px; }
+
+/* ===== TomSelect legible (Tabler/Bootstrap) ===== */
+.ts-wrapper { position: relative; }
+
+.ts-control{
+  background: var(--tblr-bg-surface, #fff) !important;
+  color: var(--tblr-body-color, #1f2937) !important;
+  border-color: var(--tblr-border-color, rgba(0,0,0,.12)) !important;
+}
+
+.ts-control input{
+  color: inherit !important;
+}
+
+.ts-dropdown{
+  z-index: 3000 !important; /* por si algo se cruza con el mapa */
+  background: var(--tblr-bg-surface, #fff) !important;
+  color: var(--tblr-body-color, #1f2937) !important;
+  border: 1px solid var(--tblr-border-color, rgba(0,0,0,.12)) !important;
+  box-shadow: 0 10px 24px rgba(0,0,0,.12);
+}
+
+.ts-dropdown .option{
+  background: transparent !important;
+  color: inherit !important;
+}
+
+.ts-dropdown .option:hover,
+.ts-dropdown .active{
+  background: rgba(13,110,253,.12) !important;
+}
+
+/* Dark theme (si Tabler pone data-theme="dark") */
+[data-theme="dark"] .ts-control{
+  background: rgba(17,24,39,.92) !important;
+  color: rgba(255,255,255,.92) !important;
+  border-color: rgba(255,255,255,.14) !important;
+}
+[data-theme="dark"] .ts-dropdown{
+  background: rgba(17,24,39,.98) !important;
+  color: rgba(255,255,255,.92) !important;
+  border-color: rgba(255,255,255,.14) !important;
+}
+
+  
 </style>
 @endpush
 
@@ -380,39 +425,37 @@
       circle.setLatLng(c);
     }
 
-    function setRadiusKm(km, opts = {}) {
-      const rkm = Math.max(1, Number(km) || 8);
-      if (radiusLabel) radiusLabel.textContent = rkm + ' km';
-      circle.setRadius(rkm * 1000);
-
-      // Opcional (recomendado): que el mapa “se adapte” al radio para percepción correcta.
-      // Para radios grandes, se aleja; para chicos, se acerca un poco.
-      if (opts.fit === true) {
-        const b = circle.getBounds();
-        map.fitBounds(b, { padding: [40, 40], maxZoom: 14 });
-      }
-    }
+ function setRadiusKm(km) {
+  const rkm = Math.max(1, Number(km) || 8);
+  if (radiusLabel) radiusLabel.textContent = rkm + ' km';
+  circle.setRadius(rkm * 1000);
+}
 
     map.on('move',   () => syncCenterToInputs(false));
     map.on('moveend',() => syncCenterToInputs(true));
     map.on('zoomend',() => syncCenterToInputs(true));
 
     // Init
-    setRadiusKm(radiusInput?.value, { fit: true });
-    syncCenterToInputs(true);
+    setRadiusKm(radiusInput?.value);
+syncCenterToInputs(true);
 
-    radiusInput?.addEventListener('input', function () {
-      // mientras arrastras: no fitBounds para que no “brinque”
-      setRadiusKm(this.value, { fit: false });
-    });
-    radiusInput?.addEventListener('change', function () {
-      // al soltar: sí ajusta bounds
-      setRadiusKm(this.value, { fit: true });
-    });
+radiusInput?.addEventListener('input', function () {
+  setRadiusKm(this.value); // no fitBounds
+});
+
+radiusInput?.addEventListener('change', function () {
+  setRadiusKm(this.value); // no fitBounds
+});
 
     document.getElementById('btnResetCenter')?.addEventListener('click', function () {
-      map.setView([defaultLat, defaultLng], 13);
-      setTimeout(() => syncCenterToInputs(true), 0);
+     map.setView([Number(item.lat), Number(item.lng)], 13);
+setTimeout(() => {
+  syncCenterToInputs(true);
+
+  // opcional: encuadre ligero, sin alejar demasiado
+  const b = circle.getBounds();
+  map.fitBounds(b, { padding: [40, 40], maxZoom: 13 }); // baja maxZoom si quieres
+}, 0);
     });
 
     document.getElementById('btnMyLocation')?.addEventListener('click', function () {

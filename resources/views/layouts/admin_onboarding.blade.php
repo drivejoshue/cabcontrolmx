@@ -1,133 +1,112 @@
-
 <!doctype html>
-<html lang="es" data-theme="default" data-layout="fluid">
+<html lang="es" data-bs-theme="dark" data-theme="dark">
 <head>
   <meta charset="utf-8">
+  <meta name="page-id" content="@yield('page-id','admin')">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="page-id" content="@yield('page-id','onboarding')">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
 
-  <title>{{ config('app.name') }} · @yield('title','Onboarding')</title>
+  <title>{{ config('app.name') }} · @yield('title','Admin')</title>
 
+  {{-- Inter --}}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
 
+  {{-- FontAwesome + Bootstrap Icons (compat) --}}
   <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
         referrerpolicy="no-referrer" />
   <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"/>
+        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" />
 
-  <link id="themeStylesheet"
-        rel="stylesheet"
-        href="{{ asset('assets/adminkit/light.css') }}"
-        data-light="{{ asset('assets/adminkit/light.css') }}"
-        data-dark="{{ asset('assets/adminkit/dark.css') }}">
+  {{-- Tabler Core (UNA SOLA VEZ) --}}
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta21/dist/css/tabler.min.css">
 
-  @vite(['resources/css/app.css','resources/js/app.js','resources/js/adminkit.js'])
+  {{-- Tabler Icons (iconfont) - para clases: ti ti-... --}}
+ <link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
+<style>
+    /* Fuerza el texto blanco en badges con bg-* */
+    .badge.bg-primary,
+    .badge.bg-secondary,
+    .badge.bg-success,
+    .badge.bg-danger,
+    .badge.bg-warning,
+    .badge.bg-info,
+    .badge.bg-dark {
+      color: #fff !important;
+      --tblr-badge-color: #fff;
+    }
+
+    /* Si algún badge trae links o iconos dentro */
+    .badge.bg-primary *,
+    .badge.bg-secondary *,
+    .badge.bg-success *,
+    .badge.bg-danger *,
+    .badge.bg-warning *,
+    .badge.bg-info *,
+    .badge.bg-dark * {
+      color: inherit !important;
+    }
+
+    /* Excepción: bg-light debe ser oscuro */
+    .badge.bg-light {
+      color: #111827 !important;
+      --tblr-badge-color: #111827;
+    }
+    .badge.bg-light * { color: inherit !important; }
+  </style>
 
   @stack('styles')
-
-  <style>
-    html, body { height: 100%; }
-    body { opacity: 1 !important; visibility: visible !important; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-
-    /* Shell full height: footer al fondo */
-    .onb-shell{
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      background: var(--bs-body-bg);
-    }
-
-    .onb-topbar{
-      position: sticky;
-      top: 0;
-      z-index: 1020;
-      background: var(--bs-body-bg);
-      border-bottom: 1px solid rgba(0,0,0,.08);
-    }
-    [data-theme="dark"] .onb-topbar{ border-bottom-color: rgba(255,255,255,.08); }
-
-    .onb-main{
-      flex: 1 1 auto;
-      padding: 1.25rem 0;
-    }
-
-    /* Contenedor: ya no “boxed” */
-    .onb-container{
-      width: 100%;
-      max-width: 100%;
-      padding-left: 1.25rem;
-      padding-right: 1.25rem;
-    }
-    @media (min-width: 1400px){
-      .onb-container{ padding-left: 2rem; padding-right: 2rem; }
-    }
-
-    /* Footer */
-    .onb-footer{
-      flex: 0 0 auto;
-      border-top: 1px solid rgba(0,0,0,.08);
-    }
-    [data-theme="dark"] .onb-footer{ border-top-color: rgba(255,255,255,.08); }
-
-    /* Brand */
-    .onb-brand{
-      display:flex; align-items:center; gap:.6rem;
-      font-weight: 700;
-      letter-spacing: .02em;
-    }
-    .onb-logo{
-      width: 28px; height: 28px; object-fit: contain;
-    }
-
-    /* Evitar que Leaflet se meta debajo de overlays */
-    .leaflet-container { font-family: inherit; }
-  </style>
 </head>
 
-<body class="onboarding-page">
-<div class="onb-shell">
+<body class="layout-fluid">
+  <div class="page">
+  
 
-  <div class="onb-topbar">
-    <div class="onb-container py-2 d-flex align-items-center justify-content-between">
-      <div class="d-flex align-items-center gap-2">
-        <div class="onb-brand">
-          <img class="onb-logo" src="{{ asset('images/logo.png') }}" alt="Orbana">
-          <span>Orbana</span>
+    <div class="page-wrapper">
+      @include('partials.topbar_tabler')
+
+      <div class="page-body">
+        <div class="container-xl">
+          @yield('content')
         </div>
-        <span class="text-muted small d-none d-md-inline">· Configuración inicial</span>
       </div>
 
-      <div class="small text-muted text-truncate" style="max-width: 45vw;">
-        {{ auth()->user()->email ?? '' }}
-      </div>
+      <footer class="footer footer-transparent d-print-none">
+        <div class="container-xl">
+          <div class="row text-center align-items-center flex-row-reverse">
+            <div class="col-lg-auto ms-lg-auto">
+              <ul class="list-inline list-inline-dots mb-0">
+                <li class="list-inline-item"><span class="text-muted">v1</span></li>
+              </ul>
+            </div>
+            <div class="col-12 col-lg-auto mt-3 mt-lg-0">
+              <ul class="list-inline list-inline-dots mb-0">
+                <li class="list-inline-item">
+                  <strong>{{ config('app.name') }}</strong> &copy; {{ date('Y') }}
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   </div>
 
-  <main class="onb-main">
-    <div class="onb-container">
-      @yield('content')
-    </div>
-  </main>
+  {{-- Tabler JS (UNA SOLA VEZ) --}}
+  <script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta21/dist/js/tabler.min.js"></script>
 
-  <footer class="onb-footer py-3">
-    <div class="onb-container d-flex justify-content-between text-muted small">
-      <div><strong>{{ config('app.name') }}</strong> &copy; {{ date('Y') }}</div>
-      <div>v1</div>
-    </div>
-  </footer>
+  {{-- Feather (si aún usas data-feather en algunas vistas) --}}
+  <script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      if (window.feather) window.feather.replace();
+    });
+  </script>
 
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-  if (window.feather) window.feather.replace();
-});
-</script>
-
-@stack('scripts')
+  @stack('scripts')
 </body>
 </html>

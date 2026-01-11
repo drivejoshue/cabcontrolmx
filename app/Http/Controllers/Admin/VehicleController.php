@@ -199,7 +199,7 @@ class VehicleController extends Controller
             ]);
 
             return redirect()
-                ->route('vehicles.documents.index', ['id' => $id])
+                ->route('admin.vehicles.documents.index', ['id' => $id])
                 ->with('ok', 'Vehículo creado. Ahora sube los documentos requeridos para verificación.');
         });
     }
@@ -307,7 +307,7 @@ class VehicleController extends Controller
             return back()->withErrors(['assign' => 'No se pudo asignar: ' . $e->getMessage()])->withInput();
         }
 
-        return redirect()->route('vehicles.show', ['id' => $id])->with('ok', 'Chofer asignado.');
+        return redirect()->route('admin.vehicles.show', ['id' => $id])->with('ok', 'Chofer asignado.');
     }
 
     public function edit(int $id)
@@ -448,7 +448,7 @@ class VehicleController extends Controller
                 'updated_at'=> now(),
             ]);
 
-        return redirect()->route('vehicles.show', ['id' => $id])->with('ok', 'Vehículo actualizado.');
+        return redirect()->route('admin.vehicles.show', ['id' => $id])->with('ok', 'Vehículo actualizado.');
     }
 
     public function destroy(int $id)
@@ -470,6 +470,6 @@ class VehicleController extends Controller
                 'updated_at' => now(),
             ]);
 
-        return redirect()->route('vehicles.index')->with('ok', 'Vehículo desactivado.');
+        return redirect()->route('admin.vehicles.index')->with('ok', 'Vehículo desactivado.');
     }
 }

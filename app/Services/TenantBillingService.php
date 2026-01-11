@@ -135,7 +135,7 @@ class TenantBillingService
         $amount  = $this->prorateMonthly($monthly, $from, $to, $mStart, $mEnd);
 
         //$status = $p->accepted_terms_at ? 'pending' : 'draft';
-        $status = 'pending';
+        $status = $p->accepted_terms_at ? 'pending' : 'draft';
 
 
         return DB::transaction(function () use ($tenant, $p, $now, $from, $to, $activeCount, $amount, $status) {
@@ -493,28 +493,24 @@ public function recheckTenantBillingState(
     }
 
     // 4) Overdue => marcar invoice overdue (si aplica) y pausar
-    if ($state === 'overdue') {
-        if ($inv && strtolower((string)$inv->status) === 'pending') {
-            // Marcar overdue al vencimiento (idempotente)
-            $inv->status = 'overdue';
-            $inv->save();
-        }
+   // 4) Overdue => pausar (NO escribir invoice.status='overdue' porque no existe en enum)
+if ($state === 'overdue') {
 
-        if (strtolower((string)$p->status) !== 'paused') {
-            $p->status = 'paused';
-            $p->suspended_at = now();
+    if (strtolower((string)$p->status) !== 'paused') {
+        $p->status = 'paused';
+        $p->suspended_at = now();
+        $p->suspension_reason = 'overdue';
+        $p->save();
+    } else {
+        if (empty($p->suspension_reason)) {
             $p->suspension_reason = 'overdue';
             $p->save();
-        } else {
-            // Si ya estaba paused, normalizamos reason si venía vacío
-            if (empty($p->suspension_reason)) {
-                $p->suspension_reason = 'overdue';
-                $p->save();
-            }
         }
-
-        return;
     }
+
+    return;
+}
+
 
     // Fallback conservador: si algo raro ocurre, no tocar estado.
 }
@@ -783,5 +779,72 @@ public function runMonthlyCycle(int $tenantId, ?Carbon $now = null): array
         'due_date' => $ui['due_date'] ?? null,
     ];
 }
+
+
+
+public function billingGateState(Tenant $tenant, TenantWalletService $wallet, ?Carbon $date = null): array
+{
+    $now = $date ?: Carbon::now();
+    $p = $tenant->billingProfile;
+
+    // Default
+    $out = [
+        'show_modal' => false,
+        'modal_kind' => null,   // terms | trial_ending | overdue
+        'title' => null,
+        'message' => null,
+        'trial_days_left' => null,
+        'ui' => null,
+    ];
+
+    if (!$p || ($p->billing_model ?? '') !== 'per_vehicle') {
+        return $out;
+    }
+
+    // 1) UI canónico
+    $ui = $this->billingUiState($tenant, $wallet, $now);
+    $out['ui'] = $ui;
+
+    // 2) Trial countdown (para aviso 1 día antes)
+    if (strtolower((string)$p->status) === 'trial' && !$this->isTrialExpired($p, $now)) {
+        $ends = $this->trialEndsAt($p);
+        if ($ends) {
+            $daysLeft = max(0, $now->copy()->startOfDay()->diffInDays($ends->copy()->startOfDay(), false));
+            $out['trial_days_left'] = $daysLeft;
+
+            // Aviso: 1 día antes (NO bloqueante; puedes mostrar modal o banner)
+            if ($daysLeft <= 1) {
+                $out['show_modal'] = true;
+                $out['modal_kind'] = 'trial_ending';
+                $out['title'] = 'Tu periodo de prueba está por terminar';
+                $out['message'] = $daysLeft === 0
+                    ? 'Tu trial termina hoy. Para continuar operando, acepta términos y configura tu recarga.'
+                    : 'Tu trial termina mañana. Te recomendamos aceptar términos y preparar tu recarga.';
+                return $out;
+            }
+        }
+    }
+
+    // 3) Falta aceptar términos (bloqueante)
+    if (($ui['billing_state'] ?? null) === 'action_required') {
+        $out['show_modal'] = true;
+        $out['modal_kind'] = 'terms';
+        $out['title'] = 'Acepta términos para continuar';
+        $out['message'] = $ui['billing_message'] ?? 'Necesitas aceptar términos para habilitar el cobro y continuar.';
+        return $out;
+    }
+
+    // 4) Overdue (bloqueante)
+    if (in_array(($ui['billing_state'] ?? null), ['overdue'], true)) {
+        $out['show_modal'] = true;
+        $out['modal_kind'] = 'overdue';
+        $out['title'] = 'Servicio pausado por falta de pago';
+        $out['message'] = $ui['billing_message'] ?? 'Recarga tu wallet para reactivar.';
+        return $out;
+    }
+
+    return $out;
+}
+
 
 }

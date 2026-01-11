@@ -16,7 +16,7 @@
       <h3 class="mb-0">Editar QR Point</h3>
       <div class="text-muted small">Código: <span class="mono">{{ $item->code }}</span></div>
     </div>
-    <a href="{{ route('qr-points.index') }}" class="btn btn-outline-secondary">
+    <a href="{{ route('admin.qr-points.index') }}" class="btn btn-outline-secondary">
       <i data-feather="arrow-left"></i> Volver
     </a>
   </div>
@@ -30,7 +30,7 @@
     </div>
   @endif
 
-  <form method="POST" action="{{ route('qr-points.update', $item) }}" autocomplete="off" class="card">
+  <form method="POST" action="{{ route('admin.qr-points.update', $item) }}" autocomplete="off" class="card">
     @csrf @method('PUT')
     <div class="card-body">
 

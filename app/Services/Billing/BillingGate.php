@@ -10,7 +10,7 @@ use Carbon\Carbon;
 class BillingGate
 {
     // tolerancia después de due_date (en días)
-    public const GRACE_DAYS = 5;
+    public const GRACE_DAYS = 0;
 
     /**
      * Determina si el tenant puede operar (dispatch/driver/passenger).

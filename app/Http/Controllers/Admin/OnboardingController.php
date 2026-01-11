@@ -56,28 +56,29 @@ public function complete(Request $request)
 public function cities(Request $request)
 {
     $q = trim((string)$request->query('q',''));
-    if ($q === '') return response()->json(['items'=>[]]);
+    if (mb_strlen($q) < 2) {
+        return response()->json(['items' => []]);
+    }
 
-    // tabla: mx  (la que importaste)
-    // OJO: ajusta nombres reales después de renombrar columnas (abajo te doy SQL).
     $rows = \DB::table('mx_cities_simplemaps')
-        ->where('city', 'like', "%{$q}%")
-        ->orWhere('state', 'like', "%{$q}%")
-        ->limit(30)
-        ->get(['city','state','lat','lng']);
+        ->where('city', 'like', $q.'%')
+        ->orWhere('state', 'like', '%'.$q.'%')
+        ->orderByDesc('population')
+        ->limit(12)
+        ->get(['city','state','lat','lng','timezone']);
 
-    $items = $rows->map(function($r){
+    $items = $rows->map(function ($r) {
         return [
             'label' => trim($r->city . ', ' . $r->state),
-            'city'  => (string)$r->city,
-            'state' => (string)$r->state,
             'lat'   => (float)$r->lat,
             'lng'   => (float)$r->lng,
+            'tz'    => $r->timezone,
         ];
     });
 
     return response()->json(['items' => $items]);
 }
+
 
 
 

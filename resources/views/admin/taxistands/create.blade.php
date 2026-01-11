@@ -23,7 +23,7 @@
 <div class="container-fluid px-0">
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h3 class="mb-0">Nuevo paradero</h3>
-    <a href="{{ route('taxistands.index') }}" class="btn btn-outline-secondary">
+    <a href="{{ route('admin.taxistands.index') }}" class="btn btn-outline-secondary">
       <i data-feather="arrow-left"></i> Volver
     </a>
   </div>
@@ -37,7 +37,7 @@
     </div>
   @endif
 
-  <form method="POST" action="{{ route('taxistands.store') }}" autocomplete="off">
+  <form method="POST" action="{{ route('admin.taxistands.store') }}" autocomplete="off">
     @csrf
 
     <div class="row g-3">
@@ -79,7 +79,7 @@
             </div>
 
             <div class="d-grid gap-2 mt-4">
-              <a href="{{ route('taxistands.index') }}" class="btn btn-outline-secondary">Cancelar</a>
+              <a href="{{ route('admin.taxistands.index') }}" class="btn btn-outline-secondary">Cancelar</a>
               <button class="btn btn-primary" type="submit">
                 <i data-feather="save"></i> Guardar
               </button>

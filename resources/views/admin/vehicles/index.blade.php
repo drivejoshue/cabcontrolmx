@@ -6,7 +6,7 @@
 @section('content')
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3 class="mb-0">Vehículos</h3>
-  <a href="{{ route('vehicles.create') }}" class="btn btn-primary"><i data-feather="plus"></i> Nuevo</a>
+  <a href="{{ route('admin.vehicles.create') }}" class="btn btn-primary"><i data-feather="plus"></i> Nuevo</a>
 </div>
 
 <form class="mb-3" method="get">
@@ -42,8 +42,8 @@
           <td>{{ $v->type ? strtoupper($v->type) : '—' }}</td>
           <td>@if($v->active) <span class="badge bg-success">Sí</span> @else <span class="badge bg-secondary">No</span> @endif</td>
           <td class="text-end">
-            <a href="{{ route('vehicles.show',$v->id) }}" class="btn btn-sm btn-outline-secondary">Ver</a>
-            <a href="{{ route('vehicles.edit',$v->id) }}" class="btn btn-sm btn-primary">Editar</a>
+            <a href="{{ route('admin.vehicles.show',$v->id) }}" class="btn btn-sm btn-outline-secondary">Ver</a>
+            <a href="{{ route('admin.vehicles.edit',$v->id) }}" class="btn btn-sm btn-primary">Editar</a>
           </td>
         </tr>
       @empty

@@ -96,15 +96,25 @@ $isActive = function ($patterns): bool {
         </li>
 
         {{-- REPORTES --}}
-        <li class="nav-item mt-3">
-          <div class="nav-link text-uppercase text-muted fw-semibold small">Reportes</div>
-        </li>
-        <li class="nav-item">
-          <a class="nav-link disabled" href="javascript:void(0)" aria-disabled="true" tabindex="-1">
-            <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-chart-bar"></i></span>
-            <span class="nav-link-title">Comisiones (próx.)</span>
-          </a>
-        </li>
+<li class="nav-item mt-3">
+  <div class="nav-link text-uppercase text-muted fw-semibold small">Reportes</div>
+</li>
+
+<li class="nav-item {{ $isActive('sysadmin.rides.generation.*') ? 'active' : '' }}">
+  <a class="nav-link" href="{{ route('sysadmin.rides.generation.index') }}"
+     aria-current="{{ $isActive('sysadmin.rides.generation.*') ? 'page' : 'false' }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-cash"></i></span>
+    <span class="nav-link-title">Generación (GMV)</span>
+  </a>
+</li>
+
+<li class="nav-item">
+  <a class="nav-link disabled" href="javascript:void(0)" aria-disabled="true" tabindex="-1">
+    <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-chart-bar"></i></span>
+    <span class="nav-link-title">Comisiones (próx.)</span>
+  </a>
+</li>
+
 
        {{-- UBICACIONES (SYSADMIN) --}}
 <li class="nav-item mt-3">

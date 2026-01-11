@@ -100,7 +100,7 @@ $centerZoom = 13;
             <button class="btn btn-success" type="submit">
               <i data-feather="save"></i> Guardar
             </button>
-            <a href="{{ route('taxistands.index') }}" class="btn btn-outline-secondary">Volver</a>
+            <a href="{{ route('admin.taxistands.index') }}" class="btn btn-outline-secondary">Volver</a>
           </div>
         </div>
       </div>

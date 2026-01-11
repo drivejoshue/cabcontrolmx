@@ -109,6 +109,96 @@
   </script>
 
   @stack('scripts')
+
+
+
+@if(!empty($billingGate['show_modal']))
+<div class="modal fade" id="billingGateModal" tabindex="-1" aria-hidden="true"
+     data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">{{ $billingGate['title'] ?? 'Aviso' }}</h5>
+
+        {{-- Solo permitir cerrar si NO es bloqueante --}}
+        @if(($billingGate['modal_kind'] ?? '') === 'trial_ending')
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        @endif
+      </div>
+
+      <div class="modal-body">
+        @php
+  $ui = $billingGate['ui'] ?? [];
+  $msg =
+      $billingGate['message']
+      ?? $billingGate['billing_message']
+      ?? $ui['message']
+      ?? $ui['billing_message']
+      ?? '';
+@endphp
+
+<p class="mb-2">{{ $msg }}</p>
+        @if(!empty($ui['required_amount']))
+          <div class="small text-muted">
+            Requerido: <strong>${{ number_format((float)$ui['required_amount'], 2) }}</strong>
+            | Saldo: <strong>${{ number_format((float)($ui['balance'] ?? 0), 2) }}</strong>
+            @if(!empty($ui['due_date'])) | Vence: <strong>{{ $ui['due_date'] }}</strong> @endif
+          </div>
+        @endif
+      </div>
+
+      <div class="modal-footer">
+        <a href="{{ route('admin.billing.plan') }}" class="btn btn-outline-secondary">
+          Ver facturación
+        </a>
+
+        @if(($billingGate['modal_kind'] ?? '') === 'terms')
+          <form method="POST" action="{{ route('admin.billing.accept_terms') }}" class="d-inline">
+            @csrf
+            <button type="submit" class="btn btn-primary">
+              Aceptar términos
+            </button>
+          </form>
+        @elseif(($billingGate['modal_kind'] ?? '') === 'overdue')
+          <a href="{{ route('admin.billing.plan') }}" class="btn btn-primary">
+            Recargar wallet
+          </a>
+        @else
+          <button type="button" class="btn btn-primary" data-bs-dismiss="modal">
+            Entendido
+          </button>
+        @endif
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  // Evitar que se abra cada refresh SOLO para el aviso (trial_ending).
+  // Para terms/overdue sí conviene que sea insistente.
+  const kind = @json($billingGate['modal_kind'] ?? null);
+
+  if (kind === 'trial_ending') {
+    const key = 'billing_trial_modal_seen_v1';
+    const today = (new Date()).toISOString().slice(0,10);
+    if (localStorage.getItem(key) === today) return;
+    localStorage.setItem(key, today);
+  }
+
+  const el = document.getElementById('billingGateModal');
+  if (!el || !window.bootstrap) return;
+  const m = new bootstrap.Modal(el);
+  m.show();
+});
+
+
+</script>
+@endif
+
+
+
+  
 </body>
 
 

@@ -26,16 +26,16 @@
     </div>
 
     <div class="d-flex gap-2">
-  <a href="{{ route('drivers.documents.index',['id'=>$driver->id]) }}" class="btn btn-outline-primary">
+  <a href="{{ route('admin.drivers.documents.index',['id'=>$driver->id]) }}" class="btn btn-outline-primary">
     <i data-feather="file-text"></i> Documentos y verificación
   </a>
-  <a href="{{ route('drivers.edit',$driver->id) }}" class="btn btn-primary">
+  <a href="{{ route('admin.drivers.edit',$driver->id) }}" class="btn btn-primary">
     <i data-feather="edit-2"></i> Editar
   </a>
-  <a href="{{ route('drivers.index') }}" class="btn btn-outline-secondary">
+  <a href="{{ route('admin.drivers.index') }}" class="btn btn-outline-secondary">
     <i data-feather="arrow-left"></i> Volver
   </a>
-  <form method="post" action="{{ route('drivers.destroy',$driver->id) }}" onsubmit="return confirm('¿Eliminar definitivamente?');">
+  <form method="post" action="{{ route('admin.drivers.destroy',$driver->id) }}" onsubmit="return confirm('¿Eliminar definitivamente?');">
     @csrf @method('DELETE')
     <button class="btn btn-outline-danger">
       <i data-feather="trash-2"></i> Eliminar
@@ -164,7 +164,7 @@
       </div>
 
       <div class="text-end">
-        <a href="{{ route('drivers.documents.index', ['id' => $driver->id]) }}"
+        <a href="{{ route('admin.drivers.documents.index', ['id' => $driver->id]) }}"
            class="btn btn-outline-primary">
           <i data-feather="file-text"></i> Ver / subir documentos
         </a>
@@ -213,7 +213,7 @@
     </div>
   @endif
   <div class="mt-2">
-    <a href="{{ route('drivers.documents.index',['id'=>$driver->id]) }}" class="btn btn-sm btn-outline-primary">
+    <a href="{{ route('admin.drivers.documents.index',['id'=>$driver->id]) }}" class="btn btn-sm btn-outline-primary">
       Ver / subir documentos
     </a>
   </div>
@@ -267,7 +267,7 @@
         <i data-feather="key"></i> Reset password
       </button>
     @else
-      <a class="btn btn-sm btn-outline-primary" href="{{ route('drivers.edit',$driver->id) }}">
+      <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.drivers.edit',$driver->id) }}">
         <i data-feather="user-plus"></i> Crear usuario
       </a>
     @endif
@@ -348,7 +348,7 @@
 {{-- Modal: asignar vehículo --}}
 <div class="modal fade" id="modalAssignVehicle" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
-    <form class="modal-content" method="post" action="{{ route('drivers.assignVehicle',['id'=>$driver->id]) }}">
+    <form class="modal-content" method="post" action="{{ route('admin.drivers.assignVehicle',['id'=>$driver->id]) }}">
       @csrf
       <div class="modal-header">
         <h5 class="modal-title">Asignar vehículo a {{ $driver->nombre ?? $driver->name ?? 'Conductor' }}</h5>
@@ -387,7 +387,7 @@
 @if(!empty($linkedUser))
 <div class="modal fade" id="modalResetPwd" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
-    <form class="modal-content" method="post" action="{{ route('drivers.resetPassword', ['id'=>$driver->id]) }}">
+    <form class="modal-content" method="post" action="{{ route('admin.drivers.resetPassword', ['id'=>$driver->id]) }}">
       @csrf
       <div class="modal-header">
         <h5 class="modal-title">Resetear contraseña</h5>

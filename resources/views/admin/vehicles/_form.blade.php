@@ -240,7 +240,7 @@
         <button class="btn btn-primary" type="submit" {{ !($canRegister ?? true) ? 'disabled' : '' }}>
           Guardar y continuar con documentos
         </button>
-        <a href="{{ route('vehicles.index') }}" class="btn btn-outline-secondary">Cancelar</a>
+        <a href="{{ route('admin.vehicles.index') }}" class="btn btn-outline-secondary">Cancelar</a>
       </div>
     </div>
   </div>

@@ -36,7 +36,7 @@
                 </div>
             </div>
         </div>
-        
+
         <div class="col-lg-3 col-md-6 mb-3">
             <div class="card">
                 <div class="card-body">
@@ -53,7 +53,7 @@
                 </div>
             </div>
         </div>
-        
+
         <div class="col-lg-3 col-md-6 mb-3">
             <div class="card">
                 <div class="card-body">
@@ -70,7 +70,7 @@
                 </div>
             </div>
         </div>
-        
+
         <div class="col-lg-3 col-md-6 mb-3">
             <div class="card">
                 <div class="card-body">
@@ -102,17 +102,17 @@
                 <div class="card-body">
                     @php
                         $stars = [
-                            5 => ['count' => $generalSummary->five_stars, 'color' => 'green', 'icon' => 'bi-star-fill'],
-                            4 => ['count' => $generalSummary->four_stars, 'color' => 'teal', 'icon' => 'bi-star-fill'],
-                            3 => ['count' => $generalSummary->three_stars, 'color' => 'yellow', 'icon' => 'bi-star-fill'],
-                            2 => ['count' => $generalSummary->two_stars, 'color' => 'orange', 'icon' => 'bi-star-fill'],
-                            1 => ['count' => $generalSummary->one_stars, 'color' => 'red', 'icon' => 'bi-star-fill']
+                            5 => ['count' => $generalSummary->five_stars, 'color' => 'green',  'bar' => 'success',  'icon' => 'bi-star-fill'],
+                            4 => ['count' => $generalSummary->four_stars, 'color' => 'teal',   'bar' => 'teal',     'icon' => 'bi-star-fill'],
+                            3 => ['count' => $generalSummary->three_stars,'color' => 'yellow', 'bar' => 'warning',  'icon' => 'bi-star-fill'],
+                            2 => ['count' => $generalSummary->two_stars,  'color' => 'orange', 'bar' => 'orange',   'icon' => 'bi-star-fill'],
+                            1 => ['count' => $generalSummary->one_stars,  'color' => 'red',    'bar' => 'danger',   'icon' => 'bi-star-fill']
                         ];
                     @endphp
-                    
+
                     @foreach($stars as $starsCount => $data)
                         @php
-                            $percentage = $generalSummary->total_ratings > 0 ? 
+                            $percentage = $generalSummary->total_ratings > 0 ?
                                 ($data['count'] / $generalSummary->total_ratings) * 100 : 0;
                         @endphp
                         <div class="mb-3">
@@ -128,7 +128,7 @@
                                 </span>
                             </div>
                             <div class="progress" style="height: 12px; border-radius: 6px;">
-                                <div class="progress-bar bg-{{ $data['color'] }}" 
+                                <div class="progress-bar bg-{{ $data['bar'] }}"
                                      style="width: {{ $percentage }}%; border-radius: 6px;"></div>
                             </div>
                         </div>
@@ -165,14 +165,14 @@
                                             <td>
                                                 <div class="d-flex align-items-center">
                                                     @if($alert->driver_foto_path)
-                                                        <img src="{{ asset('storage/' . $alert->driver_foto_path) }}" 
-                                                             alt="{{ $alert->driver_name }}" 
-                                                             class="rounded-circle me-2" 
+                                                        <img src="{{ asset('storage/' . $alert->driver_foto_path) }}"
+                                                             alt="{{ $alert->driver_name }}"
+                                                             class="rounded-circle me-2"
                                                              style="width: 40px; height: 40px; object-fit: cover;">
                                                     @else
-                                                        <div class="bg-secondary rounded-circle d-flex align-items-center justify-content-center me-2" 
+                                                        <div class="bg-secondary-lt text-secondary rounded-circle d-flex align-items-center justify-content-center me-2"
                                                              style="width: 40px; height: 40px;">
-                                                            <i class="bi bi-person text-white"></i>
+                                                            <i class="bi bi-person"></i>
                                                         </div>
                                                     @endif
                                                     <div>
@@ -182,22 +182,22 @@
                                                 </div>
                                             </td>
                                             <td>
-                                                <span class="badge bg-red text-white rounded-pill">
+                                                <span class="badge bg-danger-lt text-danger rounded-pill">
                                                     <i class="bi bi-star-fill me-1"></i>{{ number_format($alert->avg_rating, 1) }}
                                                 </span>
                                             </td>
                                             <td>
-                                                <span class="badge bg-yellow text-dark rounded-pill">
+                                                <span class="badge bg-warning-lt text-warning rounded-pill">
                                                     {{ $alert->low_ratings }}
                                                 </span>
                                             </td>
                                             <td>
-                                                <span class="badge bg-secondary rounded-pill">
+                                                <span class="badge bg-secondary-lt text-secondary rounded-pill">
                                                     {{ $alert->total_ratings }}
                                                 </span>
                                             </td>
                                             <td>
-                                                <a href="{{ route('ratings.show', $alert->driver_id) }}" 
+                                                <a href="{{ route('ratings.show', $alert->driver_id) }}"
                                                    class="btn btn-sm btn-outline-primary rounded-pill">
                                                     <i class="bi bi-eye me-1"></i> Ver
                                                 </a>
@@ -250,14 +250,14 @@
                                         <td>
                                             <div class="d-flex align-items-center">
                                                 @if($driver->driver_foto_path)
-                                                    <img src="{{ asset('storage/' . $driver->driver_foto_path) }}" 
-                                                         alt="{{ $driver->driver_name }}" 
-                                                         class="rounded-circle me-2" 
+                                                    <img src="{{ asset('storage/' . $driver->driver_foto_path) }}"
+                                                         alt="{{ $driver->driver_name }}"
+                                                         class="rounded-circle me-2"
                                                          style="width: 40px; height: 40px; object-fit: cover;">
                                                 @else
-                                                    <div class="bg-blue rounded-circle d-flex align-items-center justify-content-center me-2" 
+                                                    <div class="bg-primary-lt text-primary rounded-circle d-flex align-items-center justify-content-center me-2"
                                                          style="width: 40px; height: 40px;">
-                                                        <i class="bi bi-person text-white"></i>
+                                                        <i class="bi bi-person"></i>
                                                     </div>
                                                 @endif
                                                 <div>
@@ -278,33 +278,33 @@
                                             </div>
                                         </td>
                                         <td>
-                                            <span class="badge bg-blue text-white rounded-pill">
+                                            <span class="badge bg-primary-lt text-primary rounded-pill">
                                                 <i class="bi bi-car-front me-1"></i>{{ $driver->total_rides ?? 0 }}
                                             </span>
                                         </td>
                                         <td>
-                                            <span class="badge bg-green text-white rounded-pill">
+                                            <span class="badge bg-success-lt text-success rounded-pill">
                                                 <i class="bi bi-check-circle me-1"></i>{{ $driver->completed_rides ?? 0 }}
                                             </span>
                                         </td>
                                         <td>
                                             <div class="d-flex flex-wrap gap-1">
-                                                <span class="badge bg-azure" title="Puntualidad">
+                                                <span class="badge bg-azure-lt text-azure" title="Puntualidad">
                                                     P:{{ number_format($driver->avg_punctuality, 1) }}
                                                 </span>
-                                                <span class="badge bg-teal" title="Cortesía">
+                                                <span class="badge bg-teal-lt text-teal" title="Cortesía">
                                                     C:{{ number_format($driver->avg_courtesy, 1) }}
                                                 </span>
-                                                <span class="badge bg-yellow text-dark" title="Vehículo">
+                                                <span class="badge bg-warning-lt text-warning" title="Vehículo">
                                                     V:{{ number_format($driver->avg_vehicle_condition, 1) }}
                                                 </span>
-                                                <span class="badge bg-blue text-white" title="Conducción">
+                                                <span class="badge bg-primary-lt text-primary" title="Conducción">
                                                     CD:{{ number_format($driver->avg_driving_skills, 1) }}
                                                 </span>
                                             </div>
                                         </td>
                                         <td>
-                                            <span class="badge bg-green text-white rounded-pill">
+                                            <span class="badge bg-success-lt text-success rounded-pill">
                                                 <i class="bi bi-star-fill me-1"></i>{{ $driver->five_stars }}
                                             </span>
                                         </td>
@@ -312,17 +312,17 @@
                                             @php
                                                 $statusColors = [
                                                     'idle' => 'green',
-                                                    'busy' => 'yellow', 
+                                                    'busy' => 'yellow',
                                                     'offline' => 'secondary',
                                                     'on_ride' => 'blue'
                                                 ];
                                             @endphp
-                                            <span class="badge bg-{{ $statusColors[$driver->driver_status] ?? 'secondary' }} rounded-pill">
+                                            <span class="badge bg-{{ $statusColors[$driver->driver_status] ?? 'secondary' }}-lt text-{{ $statusColors[$driver->driver_status] ?? 'secondary' }} rounded-pill">
                                                 {{ ucfirst($driver->driver_status) }}
                                             </span>
                                         </td>
                                         <td>
-                                            <a href="{{ route('ratings.show', $driver->driver_id) }}" 
+                                            <a href="{{ route('ratings.show', $driver->driver_id) }}"
                                                class="btn btn-sm btn-outline-primary rounded-pill">
                                                 <i class="bi bi-eye me-1"></i> Detalles
                                             </a>
@@ -421,8 +421,6 @@
 
 @push('styles')
 <style>
-/* Eliminé la clase bg-purple personalizada ya que Tabler tiene sus propios colores */
-
 .card {
     border: 1px solid var(--tblr-border-color);
     border-radius: 8px;
@@ -461,7 +459,7 @@
     font-size: 1.2rem;
 }
 
-/* Colores de Tabler para mejor compatibilidad */
+/* Mantener solo textos (si Tabler ya trae utilidades, igual esto ayuda y no rompe) */
 .text-blue { color: #206bc4 !important; }
 .text-teal { color: #18a997 !important; }
 .text-green { color: #2fb344 !important; }
@@ -470,12 +468,6 @@
 .text-orange { color: #f76707 !important; }
 .text-azure { color: #4299e1 !important; }
 
-.bg-blue { background-color: #206bc4 !important; }
-.bg-teal { background-color: #18a997 !important; }
-.bg-green { background-color: #2fb344 !important; }
-.bg-yellow { background-color: #f59f00 !important; }
-.bg-red { background-color: #d63939 !important; }
-.bg-orange { background-color: #f76707 !important; }
-.bg-azure { background-color: #4299e1 !important; }
+/* IMPORTANTE: eliminamos bg-* sólidos para no romper bg-*-lt de Tabler */
 </style>
 @endpush

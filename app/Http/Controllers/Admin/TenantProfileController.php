@@ -5,15 +5,20 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Tenant;
 use Illuminate\Http\Request;
+use App\Models\TenantDocument;
 
 class TenantProfileController extends Controller
 {
-    public function edit()
-    {
-        $tenant = Tenant::findOrFail(auth()->user()->tenant_id);
-        return view('admin.tenant.edit', compact('tenant'));
-    }
+public function edit()
+{
+    $tenant = Tenant::findOrFail(auth()->user()->tenant_id);
 
+    $docs = TenantDocument::where('tenant_id', $tenant->id)
+        ->get()
+        ->keyBy('type'); // id_official, proof_address, tax_certificate
+
+    return view('admin.tenant.edit', compact('tenant','docs'));
+}
 
 
 

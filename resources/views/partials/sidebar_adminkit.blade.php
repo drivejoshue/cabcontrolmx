@@ -200,13 +200,15 @@ $logoInline = asset('images/logo.png');     // logo inline (con texto o sin, per
           </a>
         </li>
 
-        <li class="sidebar-item {{ $isActive('admin.reports.revenue*') }}">
-          <a class="sidebar-link"
-             href="{{ Route::has('admin.reports.revenue') ? route('admin.reports.revenue') : url('/admin/reportes/ingresos') }}">
-            <i class="align-middle" data-feather="bar-chart-2"></i>
-            <span class="align-middle">Ingresos</span>
+        <li class="sidebar-item {{ $isActive('admin.ride_issues.*') }}">
+          <a class="sidebar-link" href="{{ route('admin.ride_issues.index') }}">
+            <i class="align-middle" data-feather="alert-triangle"></i>
+            <span class="align-middle">Issues</span>
           </a>
         </li>
+
+
+
       @endif
 
     </ul>

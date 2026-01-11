@@ -222,6 +222,15 @@ $homeUrl = $isTenantAdmin
             </a>
           </li>
 
+          <li class="nav-item {{ $isActive('admin.reports.incomes.taxi_income*') ? 'active' : '' }}">
+  <a class="nav-link" href="{{ route('admin.reports.incomes.taxi_income') }}"
+     aria-current="{{ $isActive('admin.reports.incomes.taxi_income*') ? 'page' : 'false' }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-cash"></i></span>
+    <span class="nav-link-title">Ingresos Taxis</span>
+  </a>
+</li>
+
+
           {{-- BI --}}
           <li class="nav-item mt-3">
             <div class="nav-link text-uppercase text-muted fw-semibold small">Business Intelligence</div>
@@ -266,6 +275,22 @@ $homeUrl = $isTenantAdmin
               <span class="nav-link-title">Calificaciones</span>
             </a>
           </li>
+
+                  <li class="nav-item {{ $isActive('admin.ride_issues.*') ? 'active' : '' }}">
+          <a class="nav-link" href="{{ route('admin.ride_issues.index') }}"
+             aria-current="{{ $isActive('admin.ride_issues.*') ? 'page' : 'false' }}">
+            <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-alert-triangle"></i></span>
+            <span class="nav-link-title">Issues</span>
+          </a>
+        </li>
+
+          {{-- REPORTES --}}
+          <li class="nav-item mt-3">
+            <div class="nav-link text-uppercase text-muted fw-semibold small">ORBANA_CORE</div>
+          </li>
+
+
+
 
         @endif {{-- isTenantAdmin --}}
         @endif {{-- dispatcherOnly else --}}

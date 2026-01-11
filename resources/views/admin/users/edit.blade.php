@@ -17,12 +17,8 @@
     </div>
   </div>
 
-  @if(session('success'))
-    <div class="alert alert-success">{{ session('success') }}</div>
-  @endif
-  @if(session('warning'))
-    <div class="alert alert-warning">{{ session('warning') }}</div>
-  @endif
+  @if(session('success')) <div class="alert alert-success">{{ session('success') }}</div> @endif
+  @if(session('warning')) <div class="alert alert-warning">{{ session('warning') }}</div> @endif
   @if($errors->any())
     <div class="alert alert-danger">
       <ul class="mb-0">
@@ -33,7 +29,7 @@
 
   <div class="row g-3">
     <div class="col-lg-7">
-      <form method="POST" action="{{ route('admin.users.update', $user) }}" class="card" id="userEditForm">
+      <form method="POST" action="{{ route('admin.users.update', $user) }}" class="card">
         @csrf
         @method('PUT')
 
@@ -55,42 +51,44 @@
 
             <div class="col-12">
               <label class="form-label">Rol</label>
-
-              @php
-                // Determinar rol actual (estricto)
-                $currentRole = old('role');
-                if (!$currentRole) {
-                  $currentRole = !empty($user->is_admin) ? 'admin' : 'dispatcher';
-                }
-              @endphp
-
-              <div class="d-flex flex-wrap gap-3">
-                <label class="form-check">
-                  <input class="form-check-input" type="radio" name="role" value="admin"
-                         @checked($currentRole === 'admin')>
-                  <span class="form-check-label">Admin</span>
-                </label>
-
-                <label class="form-check">
-                  <input class="form-check-input" type="radio" name="role" value="dispatcher"
-                         @checked($currentRole === 'dispatcher')>
-                  <span class="form-check-label">Dispatcher</span>
-                </label>
-              </div>
-
-              {{-- Estos dos hidden son los que consume tu controller endurecido --}}
-              <input type="hidden" name="is_admin" id="is_admin" value="{{ $currentRole === 'admin' ? 1 : 0 }}">
-              <input type="hidden" name="is_dispatcher" id="is_dispatcher" value="{{ $currentRole === 'dispatcher' ? 1 : 0 }}">
-
-              <div class="form-hint mt-1">
-                Admin puede entrar a Dispatch aunque no sea Dispatcher (y no permitimos ambos roles a la vez).
+              <div class="d-flex align-items-center gap-2">
+                <span class="badge bg-secondary-lt text-uppercase">{{ $user->role }}</span>
+                <span class="text-muted">El rol no se edita. Para quitar acceso usa “Desactivar”.</span>
               </div>
             </div>
 
+            <div class="col-12">
+              <label class="form-label">Estado</label>
+              @if($user->active)
+                <span class="badge bg-green-lt">Activo</span>
+              @else
+                <span class="badge bg-red-lt">Desactivado</span>
+              @endif
+            </div>
           </div>
         </div>
 
-        <div class="card-footer text-end">
+        <div class="card-footer d-flex justify-content-between">
+          <div>
+            @if($user->active && (int)auth()->id() !== (int)$user->id)
+              <form method="POST" action="{{ route('admin.users.deactivate', $user) }}" class="d-inline">
+                @csrf
+                <button class="btn btn-outline-danger" onclick="return confirm('¿Desactivar este usuario?')">
+                  <i class="ti ti-user-off me-1"></i> Desactivar
+                </button>
+              </form>
+            @endif
+
+            @if(!$user->active)
+              <form method="POST" action="{{ route('admin.users.reactivate', $user) }}" class="d-inline">
+                @csrf
+                <button class="btn btn-outline-success" onclick="return confirm('¿Reactivar este usuario?')">
+                  <i class="ti ti-user-check me-1"></i> Reactivar
+                </button>
+              </form>
+            @endif
+          </div>
+
           <button class="btn btn-primary">
             <i class="ti ti-device-floppy me-1"></i> Guardar
           </button>
@@ -104,7 +102,6 @@
           <h3 class="card-title">Password</h3>
         </div>
         <div class="card-body">
-
           <form method="POST" action="{{ route('admin.users.set_password', $user) }}" class="mb-3">
             @csrf
             <label class="form-label">Nuevo password</label>
@@ -128,32 +125,9 @@
           <div class="text-muted small mt-2">
             Si no tienes correo configurado, usa “Establecer password”.
           </div>
-
         </div>
       </div>
     </div>
   </div>
 </div>
-
-{{-- Sin depender de bundles extra --}}
-<script>
-(function(){
-  function syncRoleToFlags() {
-    const role = document.querySelector('input[name="role"]:checked')?.value || '';
-    const isAdmin = document.getElementById('is_admin');
-    const isDisp  = document.getElementById('is_dispatcher');
-    if (!isAdmin || !isDisp) return;
-
-    isAdmin.value = (role === 'admin') ? '1' : '0';
-    isDisp.value  = (role === 'dispatcher') ? '1' : '0';
-  }
-
-  document.addEventListener('change', function(e){
-    if (e.target && e.target.name === 'role') syncRoleToFlags();
-  });
-
-  // Inicial
-  syncRoleToFlags();
-})();
-</script>
 @endsection

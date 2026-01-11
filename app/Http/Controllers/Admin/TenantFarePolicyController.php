@@ -92,37 +92,61 @@ class TenantFarePolicyController extends Controller
 
 
     // Actualiza (sin crear adicionales)
-    public function update(Request $request)
-    {
-        $tenantId = $this->tenantIdFrom($request);
-        $policy   = TenantFarePolicy::where('tenant_id', $tenantId)->orderByDesc('id')->firstOrFail();
+   public function update(Request $request)
+{
+    $tenantId = $this->tenantIdFrom($request);
+    $policy   = TenantFarePolicy::where('tenant_id', $tenantId)->orderByDesc('id')->firstOrFail();
 
-        $data = $request->validate([
-            'mode'             => 'required|in:meter',
-            'base_fee'         => 'required|numeric|min:0',
-            'per_km'           => 'required|numeric|min:0',
-            'per_min'          => 'required|numeric|min:0',
-            'night_start_hour' => 'nullable|integer|min:0|max:23',
-            'night_end_hour'   => 'nullable|integer|min:0|max:23',
-            'round_mode'       => 'required|in:decimals,step',
-            'round_decimals'   => 'nullable|integer|min:0|max:4',
-            'round_step'       => 'nullable|numeric|min:0',
-            'night_multiplier' => 'nullable|numeric|min:0',
-            'round_to'         => 'nullable|numeric|min:0',
-            'min_total'        => 'nullable|numeric|min:0',
-            'active_from'      => 'nullable|date',
-            'active_to'        => 'nullable|date|after_or_equal:active_from',
-            'extras'           => 'nullable|json',
-        ]);
+    $data = $request->validate([
+        'mode'             => 'required|in:meter',
 
-        // Normaliza extras a array
-        if (isset($data['extras']) && is_string($data['extras'])) {
-            $data['extras'] = json_decode($data['extras'], true) ?: [];
+        // Campos clave: nunca 0
+        'base_fee'         => 'required|numeric|min:1|max:9999',
+        'per_km'           => 'required|numeric|min:0.10|max:9999',
+        'per_min'          => 'required|numeric|min:0.10|max:9999',
+        'min_total'        => 'required|numeric|min:1|max:9999',
+
+        // Noche
+        'night_start_hour' => 'required|integer|min:0|max:23',
+        'night_end_hour'   => 'required|integer|min:0|max:23',
+        'night_multiplier' => 'required|numeric|min:1.00|max:3.00',
+
+        // Redondeo (obligar consistencia)
+        'round_mode'       => 'required|in:decimals,step',
+        'round_decimals'   => 'nullable|integer|min:0|max:4',
+        'round_step'       => 'nullable|numeric|min:0.50|max:50',
+        'round_to'         => 'required|numeric|min:1|max:50',
+
+        // Vigencia
+        'active_from'      => 'nullable|date',
+        'active_to'        => 'nullable|date|after_or_equal:active_from',
+
+        // Extras
+        'extras'           => 'nullable|json',
+    ]);
+
+    // Regla: según round_mode, exige el campo correspondiente
+    if ($data['round_mode'] === 'step') {
+        if (!isset($data['round_step']) || (float)$data['round_step'] < 0.50) {
+            return back()->withErrors(['round_step' => 'El paso debe ser mínimo 0.50.'])->withInput();
         }
-
-        $policy->update($data);
-
-        return redirect()->route('admin.fare_policies.index')
-            ->with('ok', 'Política de tarifa actualizada');
+        $data['round_decimals'] = null;
+    } else { // decimals
+        if (!isset($data['round_decimals'])) {
+            return back()->withErrors(['round_decimals' => 'Indica cuántos decimales usar.'])->withInput();
+        }
+        $data['round_step'] = null;
     }
+
+    // Normaliza extras a array
+    if (isset($data['extras']) && is_string($data['extras'])) {
+        $data['extras'] = json_decode($data['extras'], true) ?: [];
+    }
+
+    $policy->update($data);
+
+    return redirect()->route('admin.fare_policies.index')
+        ->with('ok', 'Política de tarifa actualizada');
+}
+
 }

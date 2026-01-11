@@ -75,6 +75,14 @@ Schedule::command('tenants:bill-month-start')
     ->name('tenants.billMonthStart')
     ->withoutOverlapping();
 
+// suepende despues del dia 5 sin pago 
+
+    Schedule::command('billing:suspend-overdue --days=0')
+    ->dailyAt('02:15')
+    ->name('billing.suspend_overdue')
+    ->withoutOverlapping();
+
+    //expira rides despues del tiempo en settings 
 
       Schedule::command('orbana:expire-passenger-rides')
     ->everyMinute()
@@ -104,10 +112,10 @@ Schedule::command('tenants:bill-month-start')
 // =====================================================
 // 5) Purga chat (si lo reactivas, solo una vez)
 // =====================================================
-// Schedule::command('chat:purge-old --days=60')
-//     ->dailyAt('03:00')
-//     ->name('chat.purgeOld')
-//     ->withoutOverlapping();
+Schedule::command('chat:purge-old --days=30')
+    ->dailyAt('03:00')
+    ->name('chat.purgeOld')
+    ->withoutOverlapping();
 
 
 

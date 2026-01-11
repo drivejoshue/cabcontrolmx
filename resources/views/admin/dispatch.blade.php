@@ -658,9 +658,7 @@ html[data-theme="dark"] .btn-focus-driver-compact.btn-outline-secondary {
     font-size: 0.7rem;
   }
 }
-</style>
 
-<style>
 
 
 body {

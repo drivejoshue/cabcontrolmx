@@ -10,11 +10,34 @@
     </div>
   </div>
 
+  <div class="card mb-3">
+  <div class="card-body">
+    <h3 class="card-title mb-1">Cómo usar esta herramienta</h3>
+    <div class="text-muted">
+      Define la <strong>cuota fija</strong> que cada taxi debe pagar a la central por periodo (no depende de rides).
+    </div>
+
+    <ol class="mt-3 mb-0">
+      <li><strong>Crea una cuota</strong> seleccionando el taxi y el periodo (semanal/quincenal/mensual).</li>
+      <li>Deja la cuota en <strong>Activa</strong> para que el generador la tome.</li>
+      <li>Después ve a <strong>Cobros por taxi</strong> y presiona <strong>Generar cobros del periodo</strong>.</li>
+    </ol>
+
+    <div class="alert alert-info mt-3 mb-0">
+      Consejo: Mantén <strong>una sola cuota activa</strong> por taxi y periodo para evitar confusión.
+    </div>
+  
+  </div>
+</div>
+
+
   @if(session('ok'))
     <div class="alert alert-success">{{ session('ok') }}</div>
   @endif
 
   <div class="card shadow-sm border-0 mb-3">
+
+
     <div class="card-body">
       <h6 class="mb-2">Crear cuota</h6>
       <form method="post" action="{{ route('admin.taxi_fees.update', 0) }}" class="row g-2 align-items-end">

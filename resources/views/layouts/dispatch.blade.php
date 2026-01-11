@@ -185,7 +185,7 @@
   </div>
 </nav>
 
-{{-- Contenido plano sin sidebar (tipo TaxiCaller) --}}
+{{-- Contenido plano sin sidebar --}}
 <main class="dispatch-wrapper">
   @yield('content')
 </main>

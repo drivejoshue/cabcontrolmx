@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class TaxiStandController extends Controller
 {
@@ -37,6 +38,31 @@ class TaxiStandController extends Controller
 
         return view('admin.taxistands.index', ['taxistands' => $stands]);
     }
+
+
+    public function show(int $id)
+{
+    $tenantId = $this->currentTenantId();
+
+    $stand = DB::table('taxi_stands as t')
+        ->leftJoin('sectores as s', function ($q) use ($tenantId) {
+            $q->on('s.id', '=', 't.sector_id')
+              ->where('s.tenant_id', '=', $tenantId);
+        })
+        ->where('t.tenant_id', $tenantId)
+        ->where('t.id', $id)
+        ->select('t.*', 's.nombre as sector_nombre')
+        ->first();
+
+    if (!$stand) {
+        abort(404, 'Paradero no encontrado');
+    }
+
+    return view('admin.taxistands.show', ['stand' => $stand]);
+}
+
+
+
 
 public function create()
 {

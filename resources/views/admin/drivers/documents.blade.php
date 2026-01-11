@@ -17,7 +17,7 @@
       </div>
     </div>
     <div class="d-flex gap-2">
-      <a href="{{ route('drivers.show', ['id'=>$driver->id]) }}" class="btn btn-outline-secondary">
+      <a href="{{ route('admin.drivers.show', ['id'=>$driver->id]) }}" class="btn btn-outline-secondary">
         Volver a ficha
       </a>
     </div>
@@ -101,7 +101,7 @@
   <div class="card mb-3">
     <div class="card-header"><b>Subir documento</b></div>
     <div class="card-body">
-      <form method="POST" action="{{ route('drivers.documents.store',$driver->id) }}" enctype="multipart/form-data">
+      <form method="POST" action="{{ route('admin.drivers.documents.store',$driver->id) }}" enctype="multipart/form-data">
         @csrf
         <div class="row g-2 align-items-end">
           <div class="col-md-4">
@@ -155,12 +155,12 @@
                 <td class="text-muted">{{ $d->review_notes }}</td>
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-secondary"
-                     href="{{ route('drivers.documents.download',$d->id) }}">
+                     href="{{ route('admin.drivers.documents.download',$d->id) }}">
                     Descargar
                   </a>
 
                   @if($d->status !== 'approved')
-                    <form class="d-inline" method="POST" action="{{ route('drivers.documents.delete',$d->id) }}">
+                    <form class="d-inline" method="POST" action="{{ route('admin.drivers.documents.delete',$d->id) }}">
                       @csrf
                       <button class="btn btn-sm btn-outline-danger"
                               onclick="return confirm('¿Eliminar documento?')">

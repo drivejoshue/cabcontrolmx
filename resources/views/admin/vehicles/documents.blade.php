@@ -12,7 +12,7 @@
       </div>
     </div>
     <div class="d-flex gap-2">
-      <a href="{{ route('vehicles.show', ['id'=>$vehicle->id]) }}" class="btn btn-outline-secondary">Volver</a>
+      <a href="{{ route('admin.vehicles.show', ['id'=>$vehicle->id]) }}" class="btn btn-outline-secondary">Volver</a>
     </div>
   </div>
 
@@ -100,7 +100,7 @@
     <div class="card-header"><b>Subir documento</b></div>
     <div class="card-body">
       <form method="POST"
-            action="{{ route('vehicles.documents.store',$vehicle->id) }}"
+            action="{{ route('admin.vehicles.documents.store',$vehicle->id) }}"
             enctype="multipart/form-data">
         @csrf
         <div class="row g-2 align-items-end">
@@ -151,14 +151,14 @@
                 <td class="text-muted">{{ $d->review_notes }}</td>
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-secondary"
-                     href="{{ route('vehicles.documents.download',$d->id) }}">
+                     href="{{ route('admin.vehicles.documents.download',$d->id) }}">
                     Descargar
                   </a>
 
                   @if($d->status !== 'approved')
                     <form class="d-inline"
                           method="POST"
-                          action="{{ route('vehicles.documents.delete',$d->id) }}">
+                          action="{{ route('admin.vehicles.documents.delete',$d->id) }}">
                       @csrf
                       <button class="btn btn-sm btn-outline-danger"
                               onclick="return confirm('¿Eliminar documento?')">

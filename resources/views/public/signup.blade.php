@@ -287,19 +287,40 @@
     if (!form || !btn) return;
 
     let locked = false;
-    form.addEventListener('submit', function () {
-      if (locked) return false;
-      locked = true;
+    const originalHtml = btn.innerHTML;
 
+    function unlock() {
+      locked = false;
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+
+    form.addEventListener('submit', function (e) {
+      // Validar token Turnstile
+      const tokenEl = form.querySelector('input[name="cf-turnstile-response"]');
+      const token   = tokenEl && tokenEl.value ? tokenEl.value.trim() : '';
+
+      if (!token) {
+        e.preventDefault();
+        unlock();
+        alert('Completa la verificación anti-bot antes de continuar.');
+        return;
+      }
+
+      if (locked) {
+        e.preventDefault();
+        return;
+      }
+
+      locked = true;
       btn.disabled = true;
-      btn.dataset.originalText = btn.innerHTML;
       btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Creando...';
     });
   })();
 </script>
+
 @endsection
 
-@section('scripts')
-  @parent
+@push('scripts')
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-@endsection
+@endpush

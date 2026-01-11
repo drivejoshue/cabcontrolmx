@@ -36,21 +36,21 @@
                     @if($driverInfo)
                         <div class="mb-4">
                             @if($driverInfo->foto_path)
-                                <img src="{{ asset('storage/' . $driverInfo->foto_path) }}" 
-                                     alt="{{ $driverInfo->name }}" 
-                                     class="rounded-circle mb-3" 
+                                <img src="{{ asset('storage/' . $driverInfo->foto_path) }}"
+                                     alt="{{ $driverInfo->name }}"
+                                     class="rounded-circle mb-3"
                                      style="width: 100px; height: 100px; object-fit: cover;">
                             @else
-                                <div class="bg-blue rounded-circle d-flex align-items-center justify-content-center mx-auto mb-3" 
+                                <div class="bg-primary-lt text-primary rounded-circle d-flex align-items-center justify-content-center mx-auto mb-3"
                                      style="width: 100px; height: 100px;">
-                                    <i class="bi bi-person text-white" style="font-size: 2.5rem;"></i>
+                                    <i class="bi bi-person" style="font-size: 2.5rem;"></i>
                                 </div>
                             @endif
                             <h4 class="mb-1">{{ $driverInfo->name }}</h4>
                             <p class="text-muted mb-2">
                                 <i class="bi bi-telephone me-1"></i>{{ $driverInfo->phone }}
                             </p>
-                            
+
                             @php
                                 $statusColors = [
                                     'idle' => 'green',
@@ -59,10 +59,10 @@
                                     'on_ride' => 'blue'
                                 ];
                             @endphp
-                            <span class="badge bg-{{ $statusColors[$driverInfo->status] ?? 'secondary' }} rounded-pill mb-3">
+                            <span class="badge bg-{{ $statusColors[$driverInfo->status] ?? 'secondary' }}-lt text-{{ $statusColors[$driverInfo->status] ?? 'secondary' }} rounded-pill mb-3">
                                 <i class="bi bi-circle-fill me-1"></i>{{ ucfirst($driverInfo->status) }}
                             </span>
-                            
+
                             <div class="star-rating mb-3">
                                 @for($i = 1; $i <= 5; $i++)
                                     <i class="bi bi-star-fill display-6 {{ $i <= $driverSummary->avg_rating ? 'text-yellow' : 'text-muted' }} me-1"></i>
@@ -147,17 +147,17 @@
                             </h6>
                             @php
                                 $starsDistribution = [
-                                    5 => ['count' => $driverSummary->five_stars, 'color' => 'green'],
-                                    4 => ['count' => $driverSummary->four_stars, 'color' => 'teal'],
-                                    3 => ['count' => $driverSummary->three_stars, 'color' => 'yellow'],
-                                    2 => ['count' => $driverSummary->two_stars, 'color' => 'orange'],
-                                    1 => ['count' => $driverSummary->one_stars, 'color' => 'red']
+                                    5 => ['count' => $driverSummary->five_stars,  'color' => 'green',  'bar' => 'success'],
+                                    4 => ['count' => $driverSummary->four_stars,  'color' => 'teal',   'bar' => 'teal'],
+                                    3 => ['count' => $driverSummary->three_stars, 'color' => 'yellow', 'bar' => 'warning'],
+                                    2 => ['count' => $driverSummary->two_stars,   'color' => 'orange', 'bar' => 'orange'],
+                                    1 => ['count' => $driverSummary->one_stars,   'color' => 'red',    'bar' => 'danger']
                                 ];
                             @endphp
-                            
+
                             @foreach($starsDistribution as $stars => $data)
                                 @php
-                                    $percentage = $driverSummary->total_ratings > 0 ? 
+                                    $percentage = $driverSummary->total_ratings > 0 ?
                                         ($data['count'] / $driverSummary->total_ratings) * 100 : 0;
                                 @endphp
                                 <div class="mb-2">
@@ -170,7 +170,7 @@
                                         <span class="text-sm fw-bold">{{ $data['count'] }}</span>
                                     </div>
                                     <div class="progress" style="height: 8px; border-radius: 4px;">
-                                        <div class="progress-bar bg-{{ $data['color'] }}" 
+                                        <div class="progress-bar bg-{{ $data['bar'] }}"
                                              style="width: {{ $percentage }}%; border-radius: 4px;"></div>
                                     </div>
                                 </div>
@@ -193,7 +193,7 @@
                     <h5 class="card-title mb-0">
                         <i class="bi bi-clock-history me-2"></i>
                         Historial de Calificaciones
-                        <span class="badge bg-blue rounded-pill ms-2">{{ $ratings->total() }}</span>
+                        <span class="badge bg-primary-lt text-primary rounded-pill ms-2">{{ $ratings->total() }}</span>
                     </h5>
                 </div>
                 <div class="card-body p-0">
@@ -233,7 +233,7 @@
                                                     @for($i = 1; $i <= 5; $i++)
                                                         <i class="bi bi-star-fill {{ $i <= $rating->rating ? 'text-yellow' : 'text-muted' }} me-1"></i>
                                                     @endfor
-                                                    <span class="badge bg-secondary rounded-pill ms-2">{{ $rating->rating }}/5</span>
+                                                    <span class="badge bg-secondary-lt text-secondary rounded-pill ms-2">{{ $rating->rating }}/5</span>
                                                 </div>
                                             </td>
                                             <td>
@@ -252,22 +252,22 @@
                                             <td>
                                                 <div class="d-flex flex-wrap gap-1">
                                                     @if($rating->punctuality)
-                                                        <span class="badge bg-teal text-white rounded-pill" title="Puntualidad">
+                                                        <span class="badge bg-teal-lt text-teal rounded-pill" title="Puntualidad">
                                                             <i class="bi bi-clock me-1"></i>{{ $rating->punctuality }}
                                                         </span>
                                                     @endif
                                                     @if($rating->courtesy)
-                                                        <span class="badge bg-green text-white rounded-pill" title="Cortesía">
+                                                        <span class="badge bg-success-lt text-success rounded-pill" title="Cortesía">
                                                             <i class="bi bi-hand-thumbs-up me-1"></i>{{ $rating->courtesy }}
                                                         </span>
                                                     @endif
                                                     @if($rating->vehicle_condition)
-                                                        <span class="badge bg-orange text-white rounded-pill" title="Vehículo">
+                                                        <span class="badge bg-orange-lt text-orange rounded-pill" title="Vehículo">
                                                             <i class="bi bi-car-front me-1"></i>{{ $rating->vehicle_condition }}
                                                         </span>
                                                     @endif
                                                     @if($rating->driving_skills)
-                                                        <span class="badge bg-blue text-white rounded-pill" title="Conducción">
+                                                        <span class="badge bg-primary-lt text-primary rounded-pill" title="Conducción">
                                                             <i class="bi bi-speedometer2 me-1"></i>{{ $rating->driving_skills }}
                                                         </span>
                                                     @endif
@@ -381,7 +381,7 @@
 
 @push('styles')
 <style>
-/* Colores de Tabler para mejor compatibilidad */
+/* Colores de Tabler para mejor compatibilidad (solo text-*, NO bg-* sólidos) */
 .text-blue { color: #206bc4 !important; }
 .text-teal { color: #18a997 !important; }
 .text-green { color: #2fb344 !important; }
@@ -389,23 +389,6 @@
 .text-red { color: #d63939 !important; }
 .text-orange { color: #f76707 !important; }
 .text-azure { color: #4299e1 !important; }
-
-.bg-blue { background-color: #206bc4 !important; }
-.bg-teal { background-color: #18a997 !important; }
-.bg-green { background-color: #2fb344 !important; }
-.bg-yellow { background-color: #f59f00 !important; }
-.bg-red { background-color: #d63939 !important; }
-.bg-orange { background-color: #f76707 !important; }
-.bg-azure { background-color: #4299e1 !important; }
-
-/* Asegurar contraste adecuado para los badges */
-.bg-blue, .bg-teal, .bg-green, .bg-red {
-    color: white !important;
-}
-
-.bg-yellow, .bg-orange {
-    color: #212529 !important;
-}
 
 /* Corregir el paginado de Bootstrap 4 para AdminKit */
 .pagination {
@@ -475,7 +458,7 @@
     .pagination {
         font-size: 0.8rem;
     }
-    
+
     .page-link {
         padding: 0.375rem 0.5rem;
         margin: 1px;

@@ -27,12 +27,31 @@ class AuthController extends Controller
     /** @var User $user */
     $user = Auth::user();
 
+
+
+if (property_exists($user, 'active') && (int)$user->active === 0) {
+    Auth::logout();
+    return response()->json([
+        'ok' => false,
+        'message' => 'Usuario desactivado. Contacta a tu administrador.'
+    ], 403);
+}
+
+
+
     // ¿Es driver?
     $driver = DB::table('drivers')->where('user_id', $user->id)->first();
 
     if ($driver) {
         // ✅ Driver app: SIEMPRE single-session (sin tablas nuevas)
         $user->tokens()->whereIn('name', ['api-token','driver-app'])->delete();
+
+
+    //     $driver = DB::table('drivers')
+    // ->where('user_id', $user->id)
+    // ->where('tenant_id', $user->tenant_id) // <- evita cross-tenant por datos sucios
+    // ->first();
+
 
         $token = $user->createToken('driver-app')->plainTextToken;
 

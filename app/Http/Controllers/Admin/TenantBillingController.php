@@ -11,6 +11,8 @@ use App\Services\TenantBillingService;
 use Illuminate\Support\Facades\Auth;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Services\TenantWalletService;
+use Illuminate\Support\Facades\DB;
+
 
 use Carbon\Carbon;
 
@@ -224,25 +226,57 @@ public function payWithWallet(TenantInvoice $invoice, TenantBillingService $bill
 }
 
 
-public function acceptTerms(TenantBillingService $billing)
+public function acceptTerms(TenantBillingService $billing, TenantWalletService $wallet)
 {
-    $tenant = Auth::user()->tenant;
+    $user = Auth::user();
+    $tenant = $user?->tenant;
     abort_if(!$tenant, 403);
+    abort_if((int)$user->is_admin !== 1, 403);
 
     $p = $tenant->billingProfile;
     abort_if(!$p, 404);
 
-    $p->accepted_terms_at = now();
-    $p->accepted_by_user_id = Auth::id();
-    $p->save();
+    if (!empty($p->accepted_terms_at)) {
+        return back()->with('ok', 'Los términos ya estaban aceptados.');
+    }
 
-    // Si existe invoice draft (post-trial), pásala a pending
-    TenantInvoice::where('tenant_id', $tenant->id)
-        ->where('status', 'draft')
-        ->update(['status' => 'pending']);
+    DB::transaction(function () use ($tenant, $p, $billing, $user) {
+        $p->accepted_terms_at = now();
+        $p->accepted_by_user_id = $user->id;
+        $p->save();
 
-    return back()->with('ok', 'Términos aceptados.');
+        // Convertir SOLO la draft relevante (si existe) a pending
+        $draft = TenantInvoice::where('tenant_id', $tenant->id)
+            ->where('status', 'draft')
+            ->orderByDesc('issue_date')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($draft) {
+            $draft->status = 'pending';
+            $draft->save();
+        }
+    });
+
+    // Intentar pagar la factura abierta del mes (si alcanza) y normalizar estado
+    $inv = (new \ReflectionClass($billing))->hasMethod('findCurrentUnpaidInvoice')
+        ? $billing->billingUiState($tenant, $wallet, now()) // solo para forzar ensureWallet/balance
+        : null;
+
+    $currentInv = TenantInvoice::where('tenant_id', $tenant->id)
+        ->where('status', 'pending')
+        ->orderByDesc('issue_date')->orderByDesc('id')
+        ->first();
+
+    if ($currentInv) {
+        $billing->payInvoiceFromWallet($currentInv, $wallet);
+    }
+
+    $billing->recheckTenantBillingState($tenant, $wallet, now());
+
+    return back()->with('ok', 'Términos aceptados. La facturación queda habilitada.');
 }
+
 
 
 

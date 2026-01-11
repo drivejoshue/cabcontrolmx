@@ -49,7 +49,7 @@
     </div>
 
     <div class="d-flex flex-wrap gap-2">
-      <a href="{{ route('vehicles.documents.index', $v->id) }}" class="btn btn-outline-info">
+      <a href="{{ route('admin.vehicles.documents.index', $v->id) }}" class="btn btn-outline-info">
         <i data-feather="file-text"></i>
         @if($vs === 'verified')
           Ver documentos
@@ -58,11 +58,11 @@
         @endif
       </a>
 
-      <a href="{{ route('vehicles.edit', ['id'=>$v->id]) }}" class="btn btn-primary">
+      <a href="{{ route('admin.vehicles.edit', ['id'=>$v->id]) }}" class="btn btn-primary">
         <i data-feather="edit-2"></i> Editar
       </a>
 
-      <a href="{{ route('vehicles.index') }}" class="btn btn-outline-secondary">
+      <a href="{{ route('admin.vehicles.index') }}" class="btn btn-outline-secondary">
         <i data-feather="arrow-left"></i> Volver
       </a>
     </div>
@@ -209,7 +209,7 @@
                     Verificación rechazada. Revisa las notas y vuelve a subir documentación corregida .
                   @endif
                 </div>
-                <a href="{{ route('vehicles.documents.index',$v->id) }}" class="btn btn-sm btn-outline-dark">
+                <a href="{{ route('admin.vehicles.documents.index',$v->id) }}" class="btn btn-sm btn-outline-dark">
                   <i data-feather="file-text"></i> Ver / subir documentos
                 </a>
               </div>
@@ -221,7 +221,7 @@
                   La asignación se realiza <strong>desde la ficha del conductor</strong>
                   (Conductores → Ver → “Asignar vehículo”).
                 </div>
-                <a href="{{ route('drivers.index') }}" class="btn btn-sm btn-outline-primary">
+                <a href="{{ route('admin.drivers.index') }}" class="btn btn-sm btn-outline-primary">
                   Ir a Conductores
                 </a>
               </div>
@@ -262,7 +262,7 @@
                                   <i data-feather="user"></i>
                                 </div>
                               @endif
-                              <a href="{{ route('drivers.show',$cd->driver_id) }}" class="text-decoration-none">
+                              <a href="{{ route('admin.drivers.show',$cd->driver_id) }}" class="text-decoration-none">
                                 {{ $cd->name }}
                               </a>
                             </div>
@@ -270,7 +270,7 @@
                           <td>{{ $cd->phone ?? '—' }}</td>
                           <td>{{ $cd->start_at }}</td>
                           <td class="text-end">
-                            <a class="btn btn-sm btn-outline-secondary" href="{{ route('drivers.show',$cd->driver_id) }}">
+                            <a class="btn btn-sm btn-outline-secondary" href="{{ route('admin.drivers.show',$cd->driver_id) }}">
                               Ver conductor
                             </a>
                           </td>
@@ -307,7 +307,7 @@
                     @forelse($assignments ?? [] as $a)
                       <tr>
                         <td>
-                          <a class="text-decoration-none" href="{{ route('drivers.show',$a->driver_id) }}">
+                          <a class="text-decoration-none" href="{{ route('admin.drivers.show',$a->driver_id) }}">
                             {{ $a->name }}
                           </a>
                         </td>
@@ -354,10 +354,10 @@
           @endif
 
           <div class="mt-3 d-flex gap-2">
-            <a href="{{ route('vehicles.edit', ['id'=>$v->id]) }}" class="btn btn-primary">
+            <a href="{{ route('admin.vehicles.edit', ['id'=>$v->id]) }}" class="btn btn-primary">
               <i data-feather="upload"></i> Subir/Reemplazar foto
             </a>
-            <a href="{{ route('vehicles.index') }}" class="btn btn-outline-secondary">
+            <a href="{{ route('admin.vehicles.index') }}" class="btn btn-outline-secondary">
               <i data-feather="arrow-left"></i> Volver al listado
             </a>
           </div>

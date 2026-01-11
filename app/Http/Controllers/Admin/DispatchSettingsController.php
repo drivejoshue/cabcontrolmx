@@ -89,35 +89,36 @@ class DispatchSettingsController extends Controller
     }
 
     // UI PUT: /admin/dispatch-settings
-    public function update(Request $request)
+public function update(Request $request)
 {
     $tenantId = $this->tenantIdFrom($request);
 
-    // Nota: tu blade manda select(0/1), no checkbox. Validamos como in:0,1.
     $data = $request->validate([
         // Auto dispatch
         'auto_enabled'            => 'required|in:0,1',
 
-        // En tu UI el input se llama auto_dispatch_delay_s
-        // Lo vamos a guardar en auto_delay_sec (canónico) y también en auto_dispatch_delay_s si quieres mantener compat.
-        'auto_dispatch_delay_s'   => 'nullable|integer|min:0|max:180',
+        // NUNCA 0: delay mínimo seguro
+        'auto_dispatch_delay_s'   => 'required|integer|min:1|max:180',
 
-        'auto_dispatch_preview_n' => 'nullable|integer|min:1|max:50',
-        'auto_dispatch_radius_km' => 'nullable|numeric|min:0|max:60',
+        'auto_dispatch_preview_n' => 'required|integer|min:1|max:50',
+
+        // Radios mínimos seguros
+        'auto_dispatch_radius_km' => 'required|numeric|min:0.5|max:60',
 
         // Olas & expiración
-        'wave_size_n'             => 'nullable|integer|min:1|max:50',
-        'offer_expires_sec'       => 'nullable|integer|min:15|max:900',
-        'lead_time_min'           => 'nullable|integer|min:0|max:240',
+        'wave_size_n'             => 'required|integer|min:1|max:50',
+
+        // NUNCA menor a 20 por red y reacción humana
+        'offer_expires_sec'       => 'required|integer|min:20|max:900',
+
+        'lead_time_min'           => 'required|integer|min:0|max:240',
         'auto_assign_if_single'   => 'required|in:0,1',
 
-        // Búsqueda & bases
-        'nearby_search_radius_km' => 'nullable|numeric|min:0|max:200',
-        'stand_radius_km'         => 'nullable|numeric|min:0|max:200',
-        'use_google_for_eta'      => 'required|in:0,1',
+        // Búsqueda & bases (mínimos seguros)
+        'nearby_search_radius_km' => 'required|numeric|min:0.5|max:200',
+        'stand_radius_km'         => 'required|numeric|min:0.2|max:200',
 
-        // Si luego lo agregas en UI
-        // 'allow_fare_bidding'   => 'required|in:0,1',
+        'use_google_for_eta'      => 'required|in:0,1',
     ]);
 
     $row = DispatchSetting::firstOrCreate(['tenant_id' => $tenantId]);
@@ -127,46 +128,25 @@ class DispatchSettingsController extends Controller
     $row->auto_assign_if_single = (int)$data['auto_assign_if_single'];
     $row->use_google_for_eta    = (int)$data['use_google_for_eta'];
 
-    // Números
-    if (array_key_exists('auto_dispatch_radius_km', $data) && $data['auto_dispatch_radius_km'] !== null) {
-        $row->auto_dispatch_radius_km = (float)$data['auto_dispatch_radius_km'];
-    }
+    // Clamp extra (por si algo raro pasa)
+    $delay   = max(1, min(180, (int)$data['auto_dispatch_delay_s']));
+    $expires = max(20, min(900, (int)$data['offer_expires_sec']));
 
-    if (array_key_exists('auto_dispatch_preview_n', $data) && $data['auto_dispatch_preview_n'] !== null) {
-        $row->auto_dispatch_preview_n = (int)$data['auto_dispatch_preview_n'];
-    }
+    $row->auto_dispatch_radius_km   = max(0.5, (float)$data['auto_dispatch_radius_km']);
+    $row->auto_dispatch_preview_n   = max(1, (int)$data['auto_dispatch_preview_n']);
 
-    // Delay: tu input se llama auto_dispatch_delay_s, pero el campo clásico es auto_delay_sec.
-    // Guardamos en ambos para que no haya desalineación con código legacy.
-    if (array_key_exists('auto_dispatch_delay_s', $data) && $data['auto_dispatch_delay_s'] !== null) {
-        $delay = (int)$data['auto_dispatch_delay_s'];
-        $row->auto_delay_sec        = $delay;
-        $row->auto_dispatch_delay_s = $delay;
-    }
+    $row->auto_delay_sec            = $delay;
+    $row->auto_dispatch_delay_s     = $delay;
 
-    if (array_key_exists('wave_size_n', $data) && $data['wave_size_n'] !== null) {
-        $row->wave_size_n = (int)$data['wave_size_n'];
-    }
+    $row->wave_size_n               = max(1, (int)$data['wave_size_n']);
+    $row->offer_expires_sec         = $expires;
+    $row->lead_time_min             = max(0, (int)$data['lead_time_min']);
 
-    if (array_key_exists('offer_expires_sec', $data) && $data['offer_expires_sec'] !== null) {
-        $row->offer_expires_sec = (int)$data['offer_expires_sec'];
-    }
-
-    if (array_key_exists('lead_time_min', $data) && $data['lead_time_min'] !== null) {
-        $row->lead_time_min = (int)$data['lead_time_min'];
-    }
-
-    if (array_key_exists('nearby_search_radius_km', $data) && $data['nearby_search_radius_km'] !== null) {
-        $row->nearby_search_radius_km = (float)$data['nearby_search_radius_km'];
-    }
-
-    if (array_key_exists('stand_radius_km', $data) && $data['stand_radius_km'] !== null) {
-        $row->stand_radius_km = (float)$data['stand_radius_km'];
-    }
+    $row->nearby_search_radius_km   = max(0.5, (float)$data['nearby_search_radius_km']);
+    $row->stand_radius_km           = max(0.2, (float)$data['stand_radius_km']);
 
     $row->save();
 
-    // Invalida cache si tu servicio lo soporta
     if (method_exists(\App\Services\DispatchSettingsService::class, 'forgetTenant')) {
         \App\Services\DispatchSettingsService::forgetTenant($tenantId);
     }
@@ -175,5 +155,6 @@ class DispatchSettingsController extends Controller
         ->route('admin.dispatch_settings.edit')
         ->with('ok', 'Ajustes de despacho guardados.');
 }
+
 
 }

@@ -1,5 +1,4 @@
 <?php
-// app/Http/Controllers/Admin/Billing/TaxiChargesController.php
 namespace App\Http\Controllers\Admin\Billing;
 
 use App\Http\Controllers\Controller;
@@ -11,6 +10,8 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Carbon\Carbon;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+
 
 class TaxiChargesController extends Controller
 {
@@ -269,4 +270,113 @@ class TaxiChargesController extends Controller
 
     return view('admin.billing.taxi_receipts.show', compact('rc'));
   }
+
+  public function export(Request $r): StreamedResponse
+{
+  $tenantId = $this->tenantId();
+  $tz = $this->tenantTz($tenantId);
+
+  $status = $r->input('status','');
+  $periodType = $r->input('period_type','weekly');
+  if (!in_array($periodType, ['weekly','biweekly','monthly'], true)) $periodType = 'weekly';
+
+  [$pStartDT, $pEndDT] = $this->periodBounds($periodType, $r->input('anchor_date'), $tz);
+  $pStart = $pStartDT->toDateString();
+  $pEnd   = $pEndDT->toDateString();
+
+  $rows = DB::table('tenant_taxi_charges as c')
+    ->leftJoin('vehicles as v','c.vehicle_id','=','v.id')
+    ->leftJoin('drivers as d','c.driver_id','=','d.id')
+    ->leftJoin('tenant_taxi_receipts as rc','rc.charge_id','=','c.id')
+    ->where('c.tenant_id', $tenantId)
+    ->where('c.period_type', $periodType)
+    ->where('c.period_start', $pStart)
+    ->where('c.period_end', $pEnd)
+    ->when($status !== '', fn($q)=>$q->where('c.status',$status))
+    ->select(
+      'c.id','c.status','c.amount','c.period_type','c.period_start','c.period_end','c.generated_at','c.paid_at',
+      'v.economico as vehicle_economico','v.plate as vehicle_plate',
+      'd.name as driver_name',
+      'rc.receipt_number'
+    )
+    ->orderByRaw("FIELD(c.status,'pending','paid','canceled')")
+    ->orderByDesc('c.amount')
+    ->get();
+
+  $filename = "taxi_charges_tenant_{$tenantId}_{$periodType}_{$pStart}_{$pEnd}.csv";
+
+  return response()->streamDownload(function() use ($rows) {
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF");
+
+    fputcsv($out, [
+      'estado','monto','periodo','inicio','fin',
+      'taxi_economico','placa','conductor',
+      'generado_en','pagado_en','recibo'
+    ]);
+
+    foreach ($rows as $r) {
+      fputcsv($out, [
+       // $r->id,
+        $r->status,
+        (float)$r->amount,
+        $r->period_type,
+        $r->period_start,
+        $r->period_end,
+        $r->vehicle_economico,
+        $r->vehicle_plate,
+        $r->driver_name,
+        $r->generated_at,
+        $r->paid_at,
+        $r->receipt_number,
+      ]);
+    }
+    fclose($out);
+  }, $filename, [
+    'Content-Type' => 'text/csv; charset=UTF-8',
+  ]);
+}
+
+public function purge(Request $r)
+{
+  $tenantId = $this->tenantId();
+
+  $data = $r->validate([
+    'confirm_text'  => ['required','string','max:50'],
+    'confirm_check' => ['nullable'], // checkbox opcional
+  ]);
+
+  // si quieres forzar checkbox, descomenta:
+  // if (empty($data['confirm_check'])) {
+  //   return back()->with('warn','Debes marcar la casilla de confirmación.');
+  // }
+
+  $txt = trim((string)$data['confirm_text']);
+  if (mb_strtoupper($txt) !== 'ACEPTAR') {
+    return back()->with('warn','Confirmación incorrecta. Escribe ACEPTAR para vaciar el historial.');
+  }
+
+  [$chargesDeleted, $receiptsDeleted] = DB::transaction(function() use ($tenantId) {
+    // Recibos primero
+    $receiptsDeleted = DB::table('tenant_taxi_receipts')
+      ->where('tenant_id', $tenantId)
+      ->delete();
+
+    // Luego cobros
+    $chargesDeleted = DB::table('tenant_taxi_charges')
+      ->where('tenant_id', $tenantId)
+      ->delete();
+
+    return [$chargesDeleted, $receiptsDeleted];
+  });
+
+  if (($chargesDeleted + $receiptsDeleted) === 0) {
+    return back()->with('warn','No había registros para borrar (o no correspondían a este tenant).');
+  }
+
+  return back()->with('ok',"Historial vaciado. Cobros: {$chargesDeleted}. Recibos: {$receiptsDeleted}.");
+}
+
+
+
 }
