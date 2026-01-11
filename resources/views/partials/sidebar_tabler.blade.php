@@ -231,17 +231,8 @@ $homeUrl = $isTenantAdmin
 </li>
 
 
-          {{-- BI --}}
-          <li class="nav-item mt-3">
-            <div class="nav-link text-uppercase text-muted fw-semibold small">Business Intelligence</div>
-          </li>
+         
 
-          <li class="nav-item {{ $isActive('admin.bi.demand') ? 'active' : '' }}">
-            <a class="nav-link" href="{{ route('admin.bi.demand') }}">
-              <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-flame"></i></span>
-              <span class="nav-link-title">Mapa de demanda</span>
-            </a>
-          </li>
 
           {{-- REPORTES --}}
           <li class="nav-item mt-3">
@@ -283,6 +274,14 @@ $homeUrl = $isTenantAdmin
             <span class="nav-link-title">Issues</span>
           </a>
         </li>
+
+        
+          <li class="nav-item {{ $isActive('admin.bi.demand') ? 'active' : '' }}">
+            <a class="nav-link" href="{{ route('admin.bi.demand') }}">
+              <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-flame"></i></span>
+              <span class="nav-link-title">Mapa de demanda</span>
+            </a>
+          </li>
 
           {{-- REPORTES --}}
           <li class="nav-item mt-3">
