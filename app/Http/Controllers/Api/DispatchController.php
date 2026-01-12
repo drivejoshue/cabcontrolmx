@@ -246,7 +246,7 @@ class DispatchController extends Controller
             'dl.lng',
             'dl.reported_at',
             DB::raw('COALESCE(dl.heading_deg, dl.bearing) as heading_deg'),
-            DB::raw('CASE WHEN dl.reported_at >= (NOW() - INTERVAL 30 SECOND) THEN 1 ELSE 0 END AS is_fresh')
+            DB::raw('CASE WHEN dl.reported_at >= (NOW() - INTERVAL 90 SECOND) THEN 1 ELSE 0 END AS is_fresh')
         );
 
     // =========================================================
