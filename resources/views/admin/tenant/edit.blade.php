@@ -181,14 +181,18 @@
               <i class="ti ti-alert-triangle"></i> Falta aceptar billing
             </span>
 
-            <form method="POST" action="{{ route('admin.billing.acceptTerms') }}" class="d-inline">
-              @csrf
-              <button type="submit" class="btn btn-sm btn-primary"
-                onclick="return confirm('¿Confirmas que aceptas iniciar facturación al terminar el trial?');">
-                <i class="ti ti-file-check"></i> Aceptar billing
-              </button>
-            </form>
+           <button type="button" class="btn btn-sm btn-primary"
+        data-bs-toggle="modal" data-bs-target="#billingTermsModal">
+  <i class="ti ti-file-check"></i> Aceptar billing
+</button>
+@include('admin.tenant._terms_modal', [
+  'tenant' => $tenant,
+  'profile' => $p,
+  'billingPlan' => $billingPlan,
+])
+
           @endif
+
         </div>
       </div>
 
@@ -383,7 +387,7 @@
           </div>
 
           <div class="mt-3">
-            <div class="p-3 rounded border bg-light">
+            <div class="p-3 rounded border bg-body-tertiary">
               <div class="fw-bold mb-1">Solicitud de cambio de coordenadas</div>
               <div class="small text-muted mb-2">
                 Por seguridad, la ubicación y el radio solo pueden modificarse mediante solicitud a soporte (Orbana).

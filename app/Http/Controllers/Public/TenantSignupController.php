@@ -14,6 +14,8 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
+use App\Models\BillingPlan; // nuevo
+use Illuminate\Support\Facades\Log;
 
 class TenantSignupController extends Controller
 {
@@ -125,36 +127,57 @@ class TenantSignupController extends Controller
         }
     }
 
-    private function ensureTrialBillingProfile(int $tenantId, string $tz): void
-    {
-        if (!class_exists(TenantBillingProfile::class)) return;
+  private function ensureTrialBillingProfile(int $tenantId, string $tz): void
+{
+    if (!class_exists(TenantBillingProfile::class)) return;
+    if (!Schema::hasTable('tenant_billing_profiles')) return;
 
-        // Solo crea si existe tabla (por si estás en un entorno donde aún no migras)
-        if (!Schema::hasTable('tenant_billing_profiles')) return;
+    $planCode = 'PV_STARTER';
 
-        // Ajusta estos campos a tu schema real:
-        $payload = [
-            'plan_code'      => 'PV_STARTER',
-            'billing_model'  => 'per_vehicle',
-            'status'         => 'trial',
-            'trial_ends_at'  => Carbon::now($tz)->addDays(14)->toDateString(),
-            'trial_vehicles' => 5,
-        ];
-
-        // Opcional: si existen columnas típicas, complétalas sin romper
-        $columns = Schema::getColumnListing('tenant_billing_profiles');
-
-        if (in_array('base_monthly_fee', $columns, true))  $payload['base_monthly_fee']  = 1500.00;
-        if (in_array('included_vehicles', $columns, true)) $payload['included_vehicles'] = 5;
-        if (in_array('price_per_vehicle', $columns, true)) $payload['price_per_vehicle'] = 300.00;
-        if (in_array('max_vehicles', $columns, true))      $payload['max_vehicles']      = 100;
-
-        TenantBillingProfile::updateOrCreate(
-            ['tenant_id' => $tenantId],
-            $payload
-        );
+    // Lee el plan desde tabla (si existe)
+    $plan = null;
+    if (Schema::hasTable('billing_plans')) {
+        $plan = BillingPlan::where('code', $planCode)->where('active', 1)->first();
     }
 
+    // Defaults seguros (fallback)
+    $baseMonthly = 0.00;
+    $includedVehicles = 5;
+    $pricePerVehicle = 299.00;
+    $currency = 'MXN';
+
+    if ($plan) {
+        $baseMonthly = (float)$plan->base_monthly_fee;
+        $includedVehicles = (int)$plan->included_vehicles;
+        $pricePerVehicle = (float)$plan->price_per_vehicle;
+        $currency = $plan->currency ?: 'MXN';
+    } else {
+        Log::warning('BillingPlan missing, using fallback defaults', [
+            'plan_code' => $planCode,
+            'tenant_id' => $tenantId,
+        ]);
+    }
+
+    $payload = [
+        'plan_code'      => $planCode,
+        'billing_model'  => 'per_vehicle',
+        'status'         => 'trial',
+        'trial_ends_at'  => Carbon::now($tz)->addDays(14)->toDateString(),
+        'trial_vehicles' => 5,
+    ];
+
+    $columns = Schema::getColumnListing('tenant_billing_profiles');
+
+    if (in_array('currency', $columns, true))         $payload['currency'] = $currency;
+    if (in_array('base_monthly_fee', $columns, true)) $payload['base_monthly_fee'] = $baseMonthly;
+    if (in_array('included_vehicles', $columns, true))$payload['included_vehicles'] = $includedVehicles;
+    if (in_array('price_per_vehicle', $columns, true))$payload['price_per_vehicle'] = $pricePerVehicle;
+
+    TenantBillingProfile::updateOrCreate(
+        ['tenant_id' => $tenantId],
+        $payload
+    );
+}
         private function verifyTurnstile(string $token, ?string $ip = null): bool
 {
     $secret = config('services.turnstile.secret_key');

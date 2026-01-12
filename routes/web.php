@@ -41,6 +41,7 @@ use App\Http\Controllers\Admin\AdminRideController;
 use App\Http\Controllers\Admin\TenantWalletController;
 use App\Http\Controllers\Admin\TenantWalletTopupController;
 
+
 use App\Http\Controllers\Admin\StaffUserController;
 use App\Http\Controllers\Admin\TenantQrPointController;
 
@@ -82,7 +83,7 @@ use App\Events\TestEvent;
 use App\Http\Controllers\Webhooks\MercadoPagoWebhookController;
 
 use App\Http\Controllers\Public\RideShareController;
-
+use App\Http\Controllers\SysAdmin\BillingPlanController;
 /*
 |--------------------------------------------------------------------------
 | Webhooks (sin CSRF)
@@ -266,9 +267,8 @@ Route::prefix('admin')
             Route::get('/wallet/topup', [TenantWalletTopupController::class, 'create'])->name('wallet.topup.create');
             Route::post('/wallet/topup', [TenantWalletTopupController::class, 'store'])->name('wallet.topup.store');
 
-            Route::post('/wallet/transfer/notice', function () {
-                return back()->with('warning', 'Transferencia: flujo pendiente (se implementa en SysAdmin).');
-            })->name('wallet.transfer.notice.store');
+           Route::post('/wallet/transfer/notice', [TenantWalletTopupController::class, 'storeTransferNotice'])
+  ->name('wallet.transfer.notice.store');
 
             Route::get('/wallet/topup/{topup}/checkout', [TenantWalletTopupController::class, 'checkout'])->name('wallet.topup.checkout');
             Route::get('/wallet/topup/{topup}/status', [TenantWalletTopupController::class, 'status'])->name('wallet.topup.status');
@@ -480,6 +480,10 @@ Route::prefix('sysadmin')->middleware(['auth','sysadmin'])->group(function () {
     Route::get('/', [SysAdminDashboardController::class,'index'])
         ->name('sysadmin.dashboard');
 
+        Route::resource('provider-profiles', \App\Http\Controllers\SysAdmin\ProviderProfileController::class)
+    ->except(['show'])
+    ->names('sysadmin.provider-profiles');
+
     // Tenants (CRUD básico)
     Route::get('/tenants', [SysTenantController::class, 'index'])->name('sysadmin.tenants.index');
     Route::get('/tenants/create', [SysTenantController::class, 'create'])->name('sysadmin.tenants.create');
@@ -690,6 +694,44 @@ Route::post('/tenants/{tenant}/billing/users/{user}/send-reset-link', [TenantCon
 
 Route::post('/tenants/{tenant}/billing/users/{user}/revoke-tokens', [TenantConsoleUserController::class, 'revokeTokens'])
     ->name('sysadmin.tenants.billing.users.revoke_tokens');
+
+
+// =====================================================
+// Billing Plans (SysAdmin)
+// =====================================================
+
+Route::get('/billing-plans', [BillingPlanController::class, 'index'])
+    ->name('sysadmin.billing-plans.index');
+
+Route::get('/billing-plans/create', [BillingPlanController::class, 'create'])
+    ->name('sysadmin.billing-plans.create');
+
+Route::post('/billing-plans', [BillingPlanController::class, 'store'])
+    ->name('sysadmin.billing-plans.store');
+
+Route::get('/billing-plans/{billing_plan}/edit', [BillingPlanController::class, 'edit'])
+    ->name('sysadmin.billing-plans.edit');
+
+Route::put('/billing-plans/{billing_plan}', [BillingPlanController::class, 'update'])
+    ->name('sysadmin.billing-plans.update');
+
+Route::delete('/billing-plans/{billing_plan}', [BillingPlanController::class, 'destroy'])
+    ->name('sysadmin.billing-plans.destroy');
+
+
+
+
+Route::get('/topups/transfer', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'index'])
+  ->name('sysadmin.topups.transfer.index');
+
+Route::get('/topups/transfer/{topup}', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'show'])
+  ->name('sysadmin.topups.transfer.show');
+
+Route::post('/topups/transfer/{topup}/approve', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'approve'])
+  ->name('sysadmin.topups.transfer.approve');
+
+Route::post('/topups/transfer/{topup}/reject', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'reject'])
+  ->name('sysadmin.topups.transfer.reject');
 
 
 

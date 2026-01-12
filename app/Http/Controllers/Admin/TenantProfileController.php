@@ -6,20 +6,42 @@ use App\Http\Controllers\Controller;
 use App\Models\Tenant;
 use Illuminate\Http\Request;
 use App\Models\TenantDocument;
+use App\Models\BillingPlan;
+use App\Models\ProviderProfile;
+
+
 
 class TenantProfileController extends Controller
 {
+
+   
+
+
 public function edit()
 {
+     $provider = ProviderProfile::activeOne();
+     
     $tenant = Tenant::findOrFail(auth()->user()->tenant_id);
 
     $docs = TenantDocument::where('tenant_id', $tenant->id)
         ->get()
         ->keyBy('type'); // id_official, proof_address, tax_certificate
 
-    return view('admin.tenant.edit', compact('tenant','docs'));
+ $p = $tenant->billingProfile;
+$billingPlan = null;
+
+if ($p && !empty($p->plan_code)) {
+    $billingPlan = BillingPlan::where('code', $p->plan_code)->first();
 }
 
+return view('admin.tenant.edit', [
+    'tenant' => $tenant,
+    'docs' => $docs,
+    'billingPlan' => $billingPlan,
+    'provider' => $provider,
+]);
+
+}
 
 
     public function update(Request $request)

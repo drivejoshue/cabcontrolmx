@@ -32,6 +32,12 @@ class TenantTopup extends Model
         'meta',
         'paid_at',
         'credited_at',
+
+          'provider_account_slot',
+  'review_status',
+  'review_notes',
+  'reviewed_by',
+  'reviewed_at',
     ];
 
     protected $casts = [
@@ -40,6 +46,8 @@ class TenantTopup extends Model
         'credited_at'  => 'datetime',
         'deposited_at' => 'datetime',
         'amount'       => 'decimal:2',
+          'reviewed_at' => 'datetime',
+  'provider_account_slot' => 'integer',
     ];
 
     public function tenant()

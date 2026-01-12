@@ -43,6 +43,28 @@ $isActive = function ($patterns): bool {
             <span class="nav-link-title">Dashboard</span>
           </a>
         </li>
+<li class="nav-item">
+  <a class="nav-link {{ request()->routeIs('sysadmin.provider-profiles.*') ? 'active' : '' }}"
+     href="{{ route('sysadmin.provider-profiles.index') }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block">
+      <i class="ti ti-building-bank"></i>
+    </span>
+    <span class="nav-link-title">Proveedor</span>
+  </a>
+</li>
+
+       <li class="nav-item">
+  <a class="nav-link {{ request()->routeIs('sysadmin.billing-plans.*') ? 'active' : '' }}"
+     href="{{ route('sysadmin.billing-plans.index') }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block">
+      <i class="ti ti-receipt"></i>
+    </span>
+    <span class="nav-link-title">
+      Billing Plans
+    </span>
+  </a>
+</li>
+
 
         {{-- TENANTS --}}
         <li class="nav-item mt-3">
@@ -71,6 +93,20 @@ $isActive = function ($patterns): bool {
             <span class="nav-link-title">Facturas a tenants</span>
           </a>
         </li>
+
+
+        <li class="nav-item">
+  <a class="nav-link {{ request()->routeIs('sysadmin.topups.transfer.*') ? 'active' : '' }}"
+     href="{{ route('sysadmin.topups.transfer.index') }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block">
+      <i class="ti ti-cash-banknote"></i>
+    </span>
+    <span class="nav-link-title">
+      Transferencias (Recargas)
+    </span>
+  </a>
+</li>
+
         {{-- Nota: Billing por tenant requiere ID, se accede desde editar tenant --}}
 
         {{-- VERIFICACIÓN --}}
