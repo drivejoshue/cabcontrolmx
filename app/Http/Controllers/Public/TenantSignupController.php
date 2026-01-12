@@ -23,66 +23,75 @@ class TenantSignupController extends Controller
     public function show() { return view('public.signup'); }
     public function success() { return view('public.success'); }
 
-    public function store(Request $request)
-    {
-        $data = $request->validate([
-    'central_name' => ['required','string','max:150'],
-    'city'         => ['nullable','string','max:120'],
-    'timezone'     => ['nullable','string','max:64'],
+  public function store(Request $request)
+{
+    $turnstileEnabled = (bool) (
+        config('services.turnstile.site_key') &&
+        config('services.turnstile.secret_key')
+    );
 
-    'owner_name'   => ['required','string','max:150'],
-    'owner_email'  => ['required','email','max:190', 'unique:users,email'],
-    'password'     => ['required','string','min:8','max:72','confirmed'],
+    $rules = [
+        'central_name' => ['required','string','max:150'],
+        'city'         => ['nullable','string','max:120'],
+        'timezone'     => ['nullable','string','max:64'],
 
-    'notification_email' => ['nullable','email','max:190'],
-    'phone'              => ['nullable','string','max:30'],
+        'owner_name'   => ['required','string','max:150'],
+        'owner_email'  => ['required','email','max:190', 'unique:users,email'],
+        'password'     => ['required','string','min:8','max:72','confirmed'],
 
-    'cf-turnstile-response' => ['required','string'],
-]);
+        'notification_email' => ['nullable','email','max:190'],
+        'phone'              => ['nullable','string','max:30'],
+    ];
 
-        if (!$this->verifyTurnstile($data['cf-turnstile-response'], $request->ip())) {
+    if ($turnstileEnabled) {
+        $rules['cf-turnstile-response'] = ['required','string'];
+    }
+
+    $data = $request->validate($rules);
+
+    if ($turnstileEnabled) {
+        $check = $this->verifyTurnstile(
+            $data['cf-turnstile-response'],
+            $request->ip()
+        );
+
+        if (!$check['ok']) {
             return back()
-                ->withErrors(['cf-turnstile-response' => 'Verificación anti-bot falló. Intenta de nuevo.'])
+                ->withErrors(['cf-turnstile-response' => $check['message'] ?? 'Verificación anti-bot falló. Intenta de nuevo.'])
                 ->withInput();
         }
-
-        // Normaliza email
-        $data['owner_email'] = mb_strtolower(trim($data['owner_email']));
-
-        // Timezone seguro
-        $tz = $this->safeTimezone($data['timezone'] ?? null);
-
-        /** @var \App\Models\User $user */
-        $user = DB::transaction(function () use ($data, $tz) {
-
-            // Slug base
-            $baseSlug = Str::slug($data['central_name']) ?: ('tenant-'.Str::lower(Str::random(6)));
-
-            // Importante: en alta concurrencia, el "while exists()" puede fallar por carrera.
-            // Lo hacemos con intento + sufijo aleatorio y confiamos en UNIQUE INDEX en tenants.slug.
-            $tenant = $this->createTenantWithUniqueSlug($data, $tz, $baseSlug);
-
-            $user = User::create([
-                'name'      => $data['owner_name'],
-                'email'     => $data['owner_email'],
-                'password'  => Hash::make($data['password']),
-                'tenant_id' => $tenant->id,
-                'is_admin'   => 1,
-            ]);
-
-            $this->ensureTrialBillingProfile($tenant->id, $tz);
-
-            return $user;
-        });
-
-                  auth()->login($user);
-
-            // dispara el email de verificación
-            $user->sendEmailVerificationNotification();
-
-            // manda a pantalla estándar de “verifica tu correo”
-            return redirect()->route('verification.notice');
     }
+
+    // Normaliza email (mejor hacerlo ANTES de crear)
+    $data['owner_email'] = mb_strtolower(trim($data['owner_email']));
+
+    $tz = $this->safeTimezone($data['timezone'] ?? null);
+
+    $user = DB::transaction(function () use ($data, $tz) {
+        $baseSlug = Str::slug($data['central_name']) ?: ('tenant-'.Str::lower(Str::random(6)));
+        $tenant = $this->createTenantWithUniqueSlug($data, $tz, $baseSlug);
+
+        $user = User::create([
+            'name'      => $data['owner_name'],
+            'email'     => $data['owner_email'],
+            'password'  => Hash::make($data['password']),
+            'tenant_id' => $tenant->id,
+            'is_admin'  => 1,
+        ]);
+
+        $this->ensureTrialBillingProfile($tenant->id, $tz);
+
+        return $user;
+    });
+
+    auth()->login($user);
+    $user->sendEmailVerificationNotification();
+    return redirect()->route('verification.notice');
+}
+
+
+
+
 
     private function safeTimezone(?string $tz): string
     {
@@ -178,21 +187,58 @@ class TenantSignupController extends Controller
         $payload
     );
 }
-        private function verifyTurnstile(string $token, ?string $ip = null): bool
+
+
+     private function verifyTurnstile(string $token, ?string $ip = null): array
 {
     $secret = config('services.turnstile.secret_key');
-    if (!$secret) return false;
+    if (!$secret) {
+        return ['ok' => false, 'message' => 'Turnstile no está configurado (secret).'];
+    }
 
-    $resp = Http::asForm()->post(
-        'https://challenges.cloudflare.com/turnstile/v0/siteverify',
-        [
-            'secret' => $secret,
-            'response' => $token,
-            'remoteip' => $ip,
-        ]
-    );
+    try {
+        $resp = Http::asForm()
+            ->timeout(6)
+            ->retry(2, 250) // 2 reintentos, 250ms
+            ->post('https://challenges.cloudflare.com/turnstile/v0/siteverify', [
+                'secret'   => $secret,
+                'response' => $token,
+                // remoteip es opcional; si lo mandas y hay proxies raros puede fallar.
+                // Si quieres mantenerlo, déjalo solo cuando venga:
+                'remoteip' => $ip ?: null,
+            ]);
 
-    if (!$resp->ok()) return false;
-    return (bool)($resp->json('success') ?? false);
+        if (!$resp->ok()) {
+            return ['ok' => false, 'message' => 'No se pudo validar Turnstile (respuesta no OK).'];
+        }
+
+        $json = $resp->json();
+        $success  = (bool)($json['success'] ?? false);
+        $hostname = (string)($json['hostname'] ?? '');
+        $errors   = (array)($json['error-codes'] ?? []);
+
+        if (!$success) {
+            return ['ok' => false, 'message' => 'Verificación anti-bot falló. Recarga e intenta de nuevo.', 'errors' => $errors];
+        }
+
+        // Valida que el token sea para ESTE host (evita tokens de otro dominio)
+        $allowedHosts = [
+            'dispatch.orbana.mx',
+            // si también lo usas en otros subdominios, agrega aquí
+        ];
+
+        if ($hostname && !in_array($hostname, $allowedHosts, true)) {
+            return ['ok' => false, 'message' => 'Verificación inválida para este dominio. Recarga la página.'];
+        }
+
+        return ['ok' => true];
+
+    } catch (\Throwable $e) {
+        Log::warning('Turnstile verify exception', [
+            'msg' => $e->getMessage(),
+        ]);
+        return ['ok' => false, 'message' => 'No se pudo validar la verificación anti-bot. Intenta de nuevo.'];
+    }
 }
+
 }
