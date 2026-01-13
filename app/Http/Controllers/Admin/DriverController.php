@@ -126,7 +126,7 @@ class DriverController extends Controller
                     'updated_at'  => now(),
                 ]);
 
-                $redirect = redirect()->route('drivers.show', ['id' => $id])->with('ok', 'Conductor creado.');
+                $redirect = redirect()->route('admin.drivers.show', ['id' => $id])->with('ok', 'Conductor creado.');
                 if ($creds) $redirect->with('driver_creds', $creds);
 
                 return $redirect;
@@ -423,7 +423,7 @@ class DriverController extends Controller
             ->where('id', $id)
             ->update(['active' => 0, 'updated_at' => now()]);
 
-        return redirect()->route('drivers.index')->with('ok', 'Conductor desactivado.');
+        return redirect()->route('admin.drivers.index')->with('ok', 'Conductor desactivado.');
     }
 
     public function assignVehicle(Request $r, int $id)
@@ -488,7 +488,7 @@ class DriverController extends Controller
             return back()->withErrors(['assign' => 'No se pudo asignar: ' . $e->getMessage()])->withInput();
         }
 
-        return redirect()->route('drivers.show', ['id' => $id])->with('ok', 'Vehículo asignado.');
+        return redirect()->route('admin.drivers.show', ['id' => $id])->with('ok', 'Vehículo asignado.');
     }
 
     public function closeAssignment(int $assignmentId)
