@@ -513,7 +513,7 @@ $activeForDriver = DB::query()
     if ($requestedChannel === 'passenger_app') {
         return response()->json([
             'ok'  => false,
-            'msg' => 'Este servicio proviene de la app de pasajero y es gestionado automáticamente por Orbana Aegis Dispatch Core. Desde la central solo está disponible la vista/seguimiento.'
+            'msg' => 'Este servicio proviene de la app de pasajero y es gestionado automáticamente por Orbana Athera Dispatch Core. Desde la central solo está disponible la vista/seguimiento.'
         ], 403);
     }
 
@@ -668,7 +668,7 @@ $activeForDriver = DB::query()
 
 
 
- public function reassign(Request $r, int $ride)
+public function reassign(Request $r, int $ride)
 {
     $v = $r->validate([
         'driver_id' => 'required|integer',
@@ -699,6 +699,16 @@ $activeForDriver = DB::query()
         if (!$rideRow) {
             DB::rollBack();
             return response()->json(['ok'=>false,'msg'=>'Ride no encontrado'], 404);
+        }
+
+        // ✅ BLOQUEO: si el ride es de passenger_app, no se puede reasignar
+        $requestedChannel = strtolower((string)($rideRow->requested_channel ?? ''));
+        if ($requestedChannel === 'passenger_app') {
+            DB::rollBack();
+            return response()->json([
+                'ok'  => false,
+                'msg' => 'Este servicio proviene de la app de pasajero y no se puede reasignar desde la central.'
+            ], 403);
         }
 
         $prevStatus = strtolower($rideRow->status ?? '');

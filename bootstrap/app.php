@@ -8,6 +8,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Middleware\HandleCors;
+use Illuminate\Session\TokenMismatchException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -28,26 +29,45 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant.onboarded'=> EnsureTenantOnboarded::class,
             'tenant.ready' => \App\Http\Middleware\EnsureTenantReady::class,
             'tenant.billing_ok_api' => \App\Http\Middleware\TenantBillingOkApi::class,
-               'dispatch'  => \App\Http\Middleware\EnsureUserCanDispatch::class,
-                    'tenant.balance' => \App\Http\Middleware\EnsureTenantSufficientBalance::class,
-                     'staff' => \App\Http\Middleware\EnsureStaff::class,
-                     'public.key' => \App\Http\Middleware\PublicApiKeyMiddleware::class,
-
-
-
+            'dispatch'  => \App\Http\Middleware\EnsureUserCanDispatch::class,
+            'tenant.balance' => \App\Http\Middleware\EnsureTenantSufficientBalance::class,
+            'staff' => \App\Http\Middleware\EnsureStaff::class,
+            'public.key' => \App\Http\Middleware\PublicApiKeyMiddleware::class,
         ]);
-    })->withProviders([
-       
+    })
+    ->withProviders([
         Illuminate\Filesystem\FilesystemServiceProvider::class,
         Illuminate\Broadcasting\BroadcastServiceProvider::class,
-
-     
-
-     
         App\Providers\AppServiceProvider::class,
-      
-
     ])
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
-    })->create();
+
+        $exceptions->render(function (TokenMismatchException $e, $request) {
+
+            // Para fetch/AJAX y APIs: responde JSON 419 en vez de HTML "Page Expired"
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'ok'  => false,
+                    'msg' => 'session_expired',
+                ], 419);
+            }
+
+            // Web: limpia sesión y manda a login (evita quedarse atorado)
+            try {
+                $request->session()->invalidate();
+                $request->session()->regenerateToken();
+            } catch (\Throwable $t) {
+                // si ya no hay sesión activa, ignorar
+            }
+
+            if (\Illuminate\Support\Facades\Route::has('login')) {
+                return redirect()->route('login')
+                    ->with('status', 'Tu sesión expiró. Inicia sesión de nuevo.');
+            }
+
+            return redirect('/login')
+                ->with('status', 'Tu sesión expiró. Inicia sesión de nuevo.');
+        });
+
+    })
+    ->create();
