@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
+use App\Enums\UserRole;
 
 class TenantController extends Controller
 {
@@ -85,6 +86,8 @@ class TenantController extends Controller
             'longitud'           => ['nullable','numeric'],
             'coverage_radius_km' => ['nullable','numeric','min:0'],
             'allow_marketplace'  => ['nullable','boolean'],
+           'role' => ['sometimes', Rule::in(['driver','admin','dispatcher','sysadmin'])],
+
 
             // Admin inicial del tenant
             'admin_name'         => ['required','string','max:255'],
@@ -117,8 +120,12 @@ class TenantController extends Controller
                 'email'             => $data['admin_email'],
                 'password'          => Hash::make($data['admin_password']),
                 'email_verified_at' => now(),
+                 'role'      => UserRole::ADMIN,
+
                 'is_admin'          => true,
+                'is_dispatcher' => false,
                 'is_sysadmin'       => false,
+                'email_verified_at' => now(),
             ]);
 
             DB::commit();

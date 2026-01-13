@@ -16,6 +16,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
 use App\Models\BillingPlan; // nuevo
 use Illuminate\Support\Facades\Log;
+use App\Enums\UserRole;
 
 class TenantSignupController extends Controller
 {
@@ -76,7 +77,10 @@ class TenantSignupController extends Controller
             'email'     => $data['owner_email'],
             'password'  => Hash::make($data['password']),
             'tenant_id' => $tenant->id,
-            'is_admin'  => 1,
+            'role'       => UserRole::ADMIN,  // o 'admin'
+            'is_admin'   => 1,
+            'is_dispatcher' => 0,
+            'is_sysadmin'   => 0,
         ]);
 
         $this->ensureTrialBillingProfile($tenant->id, $tz);

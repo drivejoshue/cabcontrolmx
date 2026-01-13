@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use App\Enums\UserRole;
+
 
 class DriverController extends Controller
 {
@@ -55,27 +57,28 @@ class DriverController extends Controller
 
     public function store(Request $r)
     {
-        $tenantId = $this->tenantId();
+        
+    $tenantId = $this->tenantId();
 
-        $data = $r->validate([
-            'name'        => ['required', 'string', 'max:120'],
-            'phone'       => ['nullable', 'string', 'max:30'],
-            'email'       => ['nullable', 'email', 'max:120'], // contacto
-            'document_id' => ['nullable', 'string', 'max:60'],
-            'active'      => ['nullable', 'boolean'],
-            'foto'        => ['nullable', 'image', 'max:2048'],
-            'role' => 'driver',
+    $data = $r->validate([
+        'name'        => ['required', 'string', 'max:120'],
+        'phone'       => ['nullable', 'string', 'max:30'],
+        'email'       => ['nullable', 'email', 'max:120'],
+        'document_id' => ['nullable', 'string', 'max:60'],
+        'active'      => ['nullable', 'boolean'],
+        'foto'        => ['nullable', 'image', 'max:2048'],
+'role' => ['sometimes', Rule::in(['driver','admin','dispatcher','sysadmin'])],
 
-            // Cuenta (usuario)
-            'create_user'   => ['nullable', 'boolean'],
-            'user_email'    => [
-                Rule::requiredIf(fn () => (bool)$r->input('create_user')),
-                'nullable', 'email', 'max:120',
-                'unique:users,email', // UNIQUE GLOBAL (tu schema)
-            ],
-            'user_password' => ['nullable', 'string', 'min:6', 'confirmed'],
-        ]);
+        'create_user'   => ['nullable', 'boolean'],
+        'user_email'    => [
+            Rule::requiredIf(fn () => (bool)$r->input('create_user')),
+            'nullable', 'email', 'max:120',
+            'unique:users,email',
+        ],
+        'user_password' => ['nullable', 'string', 'min:6', 'confirmed'],
+    ]);
 
+    
         $fotoPath = null;
         if ($r->hasFile('foto')) {
             $fotoPath = $r->file('foto')->store('drivers', 'public');
@@ -97,7 +100,8 @@ class DriverController extends Controller
                     'email'         => $data['user_email'],
                     'password'      => Hash::make($plain),
 
-                    'role'          => 'driver',
+                    'role'      => UserRole::DRIVER, // recomendado con cast Enum
+
                     'active'        => 1,
                     'deactivated_at'=> null,
 
