@@ -182,12 +182,12 @@ $homeUrl = $isTenantAdmin
             </a>
           </li>
 
-          <li class="nav-item {{ $isActive('admin.dispatch_settings.*') ? 'active' : '' }}">
+        <!--   <li class="nav-item {{ $isActive('admin.dispatch_settings.*') ? 'active' : '' }}">
             <a class="nav-link" href="{{ Route::has('admin.dispatch_settings.edit') ? route('admin.dispatch_settings.edit') : url('/admin/dispatch-settings') }}">
               <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-adjustments-horizontal"></i></span>
               <span class="nav-link-title">Dispatch Settings</span>
             </a>
-          </li>
+          </li> -->
 
           <li class="nav-item {{ $isActive('admin.users.*') ? 'active' : '' }}">
             <a class="nav-link" href="{{ route('admin.users.index') }}">

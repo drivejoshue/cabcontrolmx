@@ -485,27 +485,97 @@ $activeForDriver = DB::query()
         return response()->json($drivers);
     }
 
-    public function assign(Request $req)
-    {
-        $v = $req->validate([
-            'ride_id'   => 'required|integer',
-            'driver_id' => 'required|integer',
+   public function assign(Request $req)
+{
+    $v = $req->validate([
+        'ride_id'   => 'required|integer',
+        'driver_id' => 'required|integer',
+    ]);
+
+    $rideId     = (int)$v['ride_id'];
+    $driverId   = (int)$v['driver_id'];
+    $assignedBy = optional($req->user())->id ?? 0;
+
+    // 1) Leer ride real (y amarrar tenant desde DB, no desde header)
+    $ride = \DB::table('rides')
+        ->where('id', $rideId)
+        ->select('id','tenant_id','status','requested_channel')
+        ->first();
+
+    if (!$ride) {
+        return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
+    }
+
+    $tenantId = (int)$ride->tenant_id;
+    $requestedChannel = strtolower((string)($ride->requested_channel ?? ''));
+
+    // 2) Bloqueo total si es Passenger App
+    if ($requestedChannel === 'passenger_app') {
+        return response()->json([
+            'ok'  => false,
+            'msg' => 'Este servicio proviene de la app de pasajero y es gestionado automáticamente por Orbana Aegis Dispatch Core. Desde la central solo está disponible la vista/seguimiento.'
+        ], 403);
+    }
+
+    // 3) Validación de estado (opcional pero recomendable)
+    if (in_array(strtolower((string)$ride->status), ['canceled','finished'], true)) {
+        return response()->json(['ok'=>false,'msg'=>'Ride no asignable en estado '.$ride->status], 422);
+    }
+
+    try {
+        $row = \DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [
+            $tenantId, $rideId, $driverId, null
         ]);
 
-        $tenantId   = (int)($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
-        $rideId     = (int)$v['ride_id'];
-        $driverId   = (int)$v['driver_id'];
-        $assignedBy = optional($req->user())->id ?? 0;
+        $offerId = null;
 
-        try {
-            $row = \DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [
-                $tenantId, $rideId, $driverId, null
+        if ($row && isset($row->id)) {
+            $offerId = (int)$row->id;
+        } else {
+            $offerId = \DB::table('ride_offers')
+                ->where('tenant_id', $tenantId)
+                ->where('ride_id',   $rideId)
+                ->where('driver_id', $driverId)
+                ->where('status',    'offered')
+                ->orderByDesc('id')
+                ->value('id');
+        }
+
+        if ($offerId) {
+            // Dispatch normal: marcar como directa (como ya haces)
+            \DB::table('ride_offers')
+                ->where('id', $offerId)
+                ->update(['is_direct' => 1]);
+
+            \Log::info('Dispatch.assign emitNew', [
+                'tenant_id'          => $tenantId,
+                'ride_id'            => $rideId,
+                'driver_id'          => $driverId,
+                'offer_id'           => $offerId,
+                'requested_channel'  => $requestedChannel,
+                'is_direct'          => 1,
+                'via'                => 'sp_create_offer_v2',
             ]);
 
-            $offerId = null;
-            if ($row && isset($row->id)) {
-                $offerId = (int)$row->id;
-            } else {
+            OfferBroadcaster::emitNew((int)$offerId);
+        }
+
+        return response()->json([
+            'ok'       => true,
+            'via'      => 'sp_create_offer_v2',
+            'offer_id' => $offerId,
+        ]);
+
+    } catch (\Throwable $e) {
+        $msg = $e->getMessage();
+        $isMissing = str_contains($msg, '1305') || str_contains($msg, 'does not exist');
+
+        if ($isMissing) {
+            try {
+                \DB::selectOne('CALL sp_assign_direct_v1(?,?,?)', [
+                    $tenantId, $rideId, $driverId
+                ]);
+
                 $offerId = \DB::table('ride_offers')
                     ->where('tenant_id', $tenantId)
                     ->where('ride_id',   $rideId)
@@ -513,167 +583,89 @@ $activeForDriver = DB::query()
                     ->where('status',    'offered')
                     ->orderByDesc('id')
                     ->value('id');
-            }
 
-            if ($offerId) {
-                $rideRow = \DB::table('rides')
-                    ->where('tenant_id', $tenantId)
-                    ->where('id', $rideId)
-                    ->select('requested_channel')
-                    ->first();
-
-                $requestedChannel = $rideRow->requested_channel ?? null;
-                $requestedChannel = $requestedChannel ? strtolower($requestedChannel) : null;
-
-                $isDirect = null;
-
-                if ($requestedChannel === 'passenger_app') {
-                    $isDirect = (int)\DB::table('ride_offers')
-                        ->where('id', $offerId)
-                        ->value('is_direct');
-                } else {
+                if ($offerId) {
                     \DB::table('ride_offers')
                         ->where('id', $offerId)
                         ->update(['is_direct' => 1]);
 
-                    $isDirect = 1;
-                }
-
-                \Log::info('Dispatch.assign emitNew', [
-                    'tenant_id'          => $tenantId,
-                    'ride_id'            => $rideId,
-                    'driver_id'          => $driverId,
-                    'offer_id'           => $offerId,
-                    'requested_channel'  => $requestedChannel,
-                    'is_direct'          => $isDirect,
-                    'via'                => 'sp_create_offer_v2',
-                ]);
-
-                OfferBroadcaster::emitNew((int)$offerId);
-            }
-
-            return response()->json([
-                'ok'       => true,
-                'via'      => 'sp_create_offer_v2',
-                'offer_id' => $offerId,
-            ]);
-
-        } catch (\Throwable $e) {
-            $msg = $e->getMessage();
-            $isMissing = str_contains($msg, '1305') || str_contains($msg, 'does not exist');
-
-            if ($isMissing) {
-                try {
-                    \DB::selectOne('CALL sp_assign_direct_v1(?,?,?)', [
-                        $tenantId, $rideId, $driverId
+                    \Log::info('Dispatch.assign fallback emitNew', [
+                        'tenant_id'          => $tenantId,
+                        'ride_id'            => $rideId,
+                        'driver_id'          => $driverId,
+                        'offer_id'           => $offerId,
+                        'requested_channel'  => $requestedChannel,
+                        'is_direct'          => 1,
+                        'via'                => 'sp_assign_direct_v1',
                     ]);
 
-                    $offerId = \DB::table('ride_offers')
+                    OfferBroadcaster::emitNew((int)$offerId);
+                } else {
+                    \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.active', [
+                        'ride_id' => (int)$rideId,
+                    ]);
+                }
+
+                return response()->json(['ok' => true, 'via' => 'sp_assign_direct_v1']);
+
+            } catch (\Throwable $e2) {
+                // Tu fallback "direct" (lo conservo igual, pero usando $tenantId del ride)
+                try {
+                    \DB::beginTransaction();
+
+                    $rideLock = \DB::table('rides')
                         ->where('tenant_id', $tenantId)
-                        ->where('ride_id',   $rideId)
-                        ->where('driver_id', $driverId)
-                        ->where('status',    'offered')
-                        ->orderByDesc('id')
-                        ->value('id');
+                        ->where('id', $rideId)
+                        ->lockForUpdate()
+                        ->first();
 
-                    if ($offerId) {
-                        $rideRow = \DB::table('rides')
-                            ->where('tenant_id', $tenantId)
-                            ->where('id', $rideId)
-                            ->select('requested_channel')
-                            ->first();
-
-                        $requestedChannel = $rideRow->requested_channel ?? null;
-                        $requestedChannel = $requestedChannel ? strtolower($requestedChannel) : null;
-
-                        $isDirect = null;
-
-                        if ($requestedChannel === 'passenger_app') {
-                            $isDirect = (int)\DB::table('ride_offers')
-                                ->where('id', $offerId)
-                                ->value('is_direct');
-                        } else {
-                            \DB::table('ride_offers')
-                                ->where('id', $offerId)
-                                ->update(['is_direct' => 1]);
-                            $isDirect = 1;
-                        }
-
-                        \Log::info('Dispatch.assign fallback emitNew', [
-                            'tenant_id'          => $tenantId,
-                            'ride_id'            => $rideId,
-                            'driver_id'          => $driverId,
-                            'offer_id'           => $offerId,
-                            'requested_channel'  => $requestedChannel,
-                            'is_direct'          => $isDirect,
-                            'via'                => 'sp_assign_direct_v1',
-                        ]);
-
-                        OfferBroadcaster::emitNew((int)$offerId);
-                    } else {
-                        \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.active', [
-                            'ride_id' => (int)$rideId,
-                        ]);
+                    if (!$rideLock) throw new \Exception('Ride no encontrado');
+                    if (in_array(strtolower($rideLock->status), ['canceled','finished'])) {
+                        throw new \Exception('Ride no asignable en estado '.$rideLock->status);
                     }
 
-                    return response()->json(['ok' => true, 'via' => 'sp_assign_direct_v1']);
-
-                } catch (\Throwable $e2) {
-                    try {
-                        \DB::beginTransaction();
-
-                        $ride = \DB::table('rides')
-                            ->where('tenant_id', $tenantId)
-                            ->where('id', $rideId)
-                            ->lockForUpdate()
-                            ->first();
-
-                        if (!$ride) throw new \Exception('Ride no encontrado');
-                        if (in_array(strtolower($ride->status), ['canceled', 'finished'])) {
-                            throw new \Exception('Ride no asignable en estado '.$ride->status);
-                        }
-
-                        \DB::table('rides')
-                            ->where('tenant_id', $tenantId)
-                            ->where('id', $rideId)
-                            ->update([
-                                'driver_id'   => $driverId,
-                                'status'      => 'accepted',
-                                'accepted_at' => now(),
-                                'updated_at'  => now(),
-                            ]);
-
-                        \DB::table('ride_status_history')->insert([
-                            'tenant_id'   => $tenantId,
-                            'ride_id'     => $rideId,
-                            'prev_status' => $ride->status,
-                            'new_status'  => 'accepted',
-                            'meta'        => json_encode([
-                                'driver_id'   => $driverId,
-                                'assigned_by' => $assignedBy
-                            ]),
-                            'created_at'  => now(),
+                    \DB::table('rides')
+                        ->where('tenant_id', $tenantId)
+                        ->where('id', $rideId)
+                        ->update([
+                            'driver_id'   => $driverId,
+                            'status'      => 'accepted',
+                            'accepted_at' => now(),
                             'updated_at'  => now(),
                         ]);
 
-                        \DB::commit();
+                    \DB::table('ride_status_history')->insert([
+                        'tenant_id'   => $tenantId,
+                        'ride_id'     => $rideId,
+                        'prev_status' => $rideLock->status,
+                        'new_status'  => 'accepted',
+                        'meta'        => json_encode([
+                            'driver_id'   => $driverId,
+                            'assigned_by' => $assignedBy
+                        ]),
+                        'created_at'  => now(),
+                        'updated_at'  => now(),
+                    ]);
 
-                        \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.active', [
-                            'ride_id' => (int)$rideId,
-                        ]);
+                    \DB::commit();
 
-                        return response()->json(['ok' => true, 'via' => 'direct']);
+                    \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.active', [
+                        'ride_id' => (int)$rideId,
+                    ]);
 
-                    } catch (\Throwable $e3) {
-                        \DB::rollBack();
-                        return response()->json(['ok' => false, 'msg' => $e3->getMessage()], 500);
-                    }
+                    return response()->json(['ok' => true, 'via' => 'direct']);
+
+                } catch (\Throwable $e3) {
+                    \DB::rollBack();
+                    return response()->json(['ok' => false, 'msg' => $e3->getMessage()], 500);
                 }
             }
-
-            return response()->json(['ok' => false, 'msg' => $msg], 500);
         }
+
+        return response()->json(['ok' => false, 'msg' => $msg], 500);
     }
+}
+
 
 
  public function reassign(Request $r, int $ride)

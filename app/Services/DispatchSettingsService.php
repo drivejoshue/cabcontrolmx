@@ -27,8 +27,8 @@ final class DispatchSettingsService
 
             // Defaults consistentes
             $d = [
-                'auto_dispatch_radius_km' => 5.00,
-                'nearby_search_radius_km' => 5.00,
+                'auto_dispatch_radius_km' => 4.00,
+                'nearby_search_radius_km' => 4.00,
                 'stand_radius_km'         => 3.00,
                 'offer_expires_sec'       => 300,
                 'wave_size_n'             => 12,

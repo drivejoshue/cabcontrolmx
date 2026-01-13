@@ -1978,9 +1978,9 @@ function fmtWhen_db(s) {
   }
 
   /* ===== Passenger app: marca visual (opcional) ===== */
-  .cc-ride-card.is-passenger .cc-passenger-info{
-    border: 1px dashed var(--cc-border);
-  }
+  .cc-ride-card.is-passenger{
+  border-left: 4px solid rgba(13,202,240,.55); /* info/cyan suave */
+}
 
   html:not([data-theme="dark"]) .cc-ride-card{
     background: #ffffff !important;
@@ -2018,6 +2018,29 @@ function renderRideCard(ride) {
 
   const ui = deriveRideUi(ride);
   const ch = ui.channel || deriveRideChannel(ride);
+
+
+   const isPassenger = !!ui.isPassengerApp || String(ride.requested_channel||'').toLowerCase() === 'passenger_app';
+
+  // Passenger App: acciones bloqueadas (solo "Ver")
+  const canOperate = !isPassenger;
+
+  const AUTODISPATCH_NAME = 'Orbana Athera Dispatch Core';
+
+  const passengerNotice = isPassenger ? `
+    <div class="alert alert-info py-2 px-2 mt-2 mb-0 small" style="border-radius:10px;">
+      <div class="fw-semibold mb-1">
+        <i class="bi bi-shield-check me-1"></i>
+        Servicio operado automáticamente
+      </div>
+      <div class="text-muted">
+        Este viaje proviene de la app de pasajero y es gestionado por <span class="fw-semibold">${esc(AUTODISPATCH_NAME)}</span>.
+        Desde la central solo está disponible la vista y seguimiento del servicio.
+      </div>
+    </div>
+  ` : '';
+
+
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => (
     {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
@@ -2167,15 +2190,18 @@ function renderRideCard(ride) {
 
       ${debugBlock}
 
+          ${passengerNotice}
+
       <div class="d-flex justify-content-end cc-actions mt-3">
         <div class="btn-group btn-group-sm">
-          ${ui.showAssign  ? `<button class="btn btn-primary" data-act="assign">${assignLabel}</button>` : ''}
-          ${ui.showReoffer ? `<button class="btn btn-outline-primary" data-act="reoffer">Re-ofertar</button>` : ''}
-          ${ui.showRelease ? `<button class="btn btn-warning" data-act="release">Liberar</button>` : ''}
-          ${ui.showCancel  ? `<button class="btn btn-outline-danger btn-cancel" data-ride-id="${ride.id}">Cancelar</button>` : ''}
+          ${canOperate && ui.showAssign  ? `<button class="btn btn-primary" data-act="assign">${assignLabel}</button>` : ''}
+          ${canOperate && ui.showReoffer ? `<button class="btn btn-outline-primary" data-act="reoffer">Re-ofertar</button>` : ''}
+          ${canOperate && ui.showRelease ? `<button class="btn btn-warning" data-act="release">Liberar</button>` : ''}
+          ${canOperate && ui.showCancel  ? `<button class="btn btn-outline-danger btn-cancel" data-ride-id="${ride.id}">Cancelar</button>` : ''}
           <button class="btn btn-outline-secondary" data-act="view">Ver</button>
         </div>
       </div>
+
     </div>
   </div>`;
 }
