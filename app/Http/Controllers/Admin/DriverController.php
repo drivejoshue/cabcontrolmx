@@ -367,7 +367,7 @@ class DriverController extends Controller
                     ? 'Conductor actualizado. Nota: tenía un user_id apuntando a otro tenant; se reemplazó/normalizó.'
                     : 'Conductor actualizado.';
 
-                return redirect()->route('drivers.show', ['id' => $id])->with('ok', $msg);
+                return redirect()->route('admin.drivers.show', ['id' => $id])->with('ok', $msg);
             });
         } catch (\Throwable $e) {
             throw $e;
