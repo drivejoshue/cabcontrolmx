@@ -303,7 +303,7 @@
               </div>
             </div>
 
-            <form class="mt-3" method="post" action="{{ route('assignments.close',['id'=>$current->assignment_id]) }}">
+            <form class="mt-3" method="post" action="{{ route('admin.assignments.close',['id'=>$current->assignment_id]) }}">
               @csrf @method('PUT')
               <button class="btn btn-sm btn-outline-danger">
                 <i data-feather="slash"></i> Cerrar asignación
