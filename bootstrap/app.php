@@ -33,6 +33,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant.balance' => \App\Http\Middleware\EnsureTenantSufficientBalance::class,
             'staff' => \App\Http\Middleware\EnsureStaff::class,
             'public.key' => \App\Http\Middleware\PublicApiKeyMiddleware::class,
+            'orbana.core' => \App\Http\Middleware\OrbanaCoreOnly::class,
+
         ]);
     })
     ->withProviders([

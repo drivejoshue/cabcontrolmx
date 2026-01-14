@@ -5,7 +5,9 @@ use Illuminate\Support\Facades\DB;
 use App\Models\DispatchSetting;
 
 class AutoDispatchService
-{
+{   
+    private const CORE_TENANT_ID = 100;
+    
     /** Lee settings por tenant con defaults sanos */
     public static function settings(int $tenantId): object
     {
@@ -16,9 +18,18 @@ class AutoDispatchService
     /** 
      * Método privado para obtener settings unificados
      */
+     /** Settings unificados: tenant 100 manda */
     private static function getUnifiedSettings(int $tenantId): object
     {
-        return DispatchSettingsService::forTenant($tenantId);
+        // requestedTenantId = $tenantId (lo conservamos por si luego vuelves a individual)
+        // effectiveTenantId = 100 (cerebro Orbana)
+        $s = DispatchSettingsService::forTenant(self::CORE_TENANT_ID);
+
+        // (Opcional) debug sin romper contrato del objeto:
+        // $s->requested_tenant_id = $tenantId;
+        // $s->effective_tenant_id = self::CORE_TENANT_ID;
+
+        return $s;
     }
 
     /**
@@ -39,12 +50,11 @@ class AutoDispatchService
 ): 
   array 
   { 
-     $settings = self::getUnifiedSettings($tenantId);
-        
-     if ($expires === null) {
-        $settings = self::settings($tenantId);
-        $expires = $settings->expires_s ?? 180;
-    }
+      $settings = self::getUnifiedSettings($tenantId);
+
+        if ($expires === null) {
+            $expires = (int)($settings->expires_s ?? 180);
+        }
     // 0) Verifica ride ofertable
     $ride = DB::table('rides')
         ->where('tenant_id', $tenantId)

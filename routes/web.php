@@ -413,8 +413,13 @@ Route::prefix('admin')
                 Route::get('/tenant-settings', [TenantSettingsController::class, 'edit'])->name('tenant_settings.edit');
                 Route::put('/tenant-settings', [TenantSettingsController::class, 'update'])->name('tenant_settings.update');
 
-                Route::get('/dispatch-settings', [DispatchSettingsController::class, 'edit'])->name('dispatch_settings.edit');
-                Route::put('/dispatch-settings', [DispatchSettingsController::class, 'update'])->name('dispatch_settings.update');
+
+
+               Route::middleware(['orbana.core'])->group(function () {
+    Route::get('/dispatch-settings', [DispatchSettingsController::class, 'edit'])->name('dispatch_settings.edit');
+    Route::put('/dispatch-settings', [DispatchSettingsController::class, 'update'])->name('dispatch_settings.update');
+});
+
 
                 Route::get('/fare-policies', [TenantFarePolicyController::class, 'index'])->name('fare_policies.index');
                 Route::get('/fare-policies/edit', [TenantFarePolicyController::class, 'edit'])->name('fare_policies.edit');

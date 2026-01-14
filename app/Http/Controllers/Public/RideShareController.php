@@ -29,7 +29,11 @@ class RideShareController extends Controller
         $snapshot = $this->buildSnapshot((int)$share->tenant_id, (int)$share->ride_id);
 
         // Si el ride ya cerró, auto-end el share para que muera
-        $this->autoEndIfRideClosed($share, $snapshot);
+       $ended = $this->autoEndIfRideClosed($share, $snapshot);
+        if ($ended) {
+            $share->status = 'ended';
+        }
+
 
         return view('public.ride_share.show', [
             'token'    => $token,
@@ -41,40 +45,59 @@ class RideShareController extends Controller
     /**
      * GET /ride_share/{token}/state
      */
-    public function state(Request $req, string $token)
-    {
-        $share = $this->getActiveOrViewableShare($token);
-        if (!$share) {
-            return response()->json(['ok' => false, 'code' => 'NOT_FOUND'], 404);
-        }
-
-        // Expiración dura
-        if ($share->expires_at && now()->greaterThan($share->expires_at) && $share->status === 'active') {
-            DB::table('ride_shares')->where('id', $share->id)->update([
-                'status'     => 'expired',
-                'updated_at' => now(),
-            ]);
-            return response()->json(['ok' => false, 'code' => 'EXPIRED'], 410);
-        }
-
-        $snapshot = $this->buildSnapshot((int)$share->tenant_id, (int)$share->ride_id);
-
-        $ended = $this->autoEndIfRideClosed($share, $snapshot);
-
-        return response()->json([
-            'ok'      => true,
-            'ended'   => $ended,
-            'share'   => [
-                'status'     => $share->status,
-                'expires_at' => $share->expires_at ? (string)$share->expires_at : null,
-            ],
-            'ride'    => $snapshot['ride'] ?? null,
-            'driver'  => $snapshot['driver'] ?? null,
-            'vehicle' => $snapshot['vehicle'] ?? null,
-            'location'=> $snapshot['location'] ?? null,
-            'ts'      => now()->format('Y-m-d H:i:s'),
-        ]);
+   public function state(Request $req, string $token)
+{
+    $share = $this->getActiveOrViewableShare($token);
+    if (!$share) {
+        return response()->json(['ok' => false, 'code' => 'NOT_FOUND'], 404);
     }
+
+    // ✅ si ya no está activo, ya no es “stream”
+    if (($share->status ?? null) !== 'active') {
+        return response()->json([
+            'ok' => false,
+            'code' => strtoupper((string)$share->status), // ENDED/EXPIRED/REVOKED...
+        ], 410);
+    }
+
+    // Expiración dura
+    if ($share->expires_at && now()->greaterThan($share->expires_at)) {
+        DB::table('ride_shares')->where('id', $share->id)->update([
+            'status'     => 'expired',
+            'updated_at' => now(),
+        ]);
+        return response()->json(['ok' => false, 'code' => 'EXPIRED'], 410);
+    }
+
+    $snapshot = $this->buildSnapshot((int)$share->tenant_id, (int)$share->ride_id);
+
+    $ended = $this->autoEndIfRideClosed($share, $snapshot);
+
+    // ✅ si ya terminó el ride, corta el stream
+    if ($ended) {
+        return response()->json([
+            'ok'    => false,
+            'code'  => 'ENDED',
+            'ride'  => $snapshot['ride'] ?? null,
+            'ts'    => now()->format('Y-m-d H:i:s'),
+        ], 410);
+    }
+
+    return response()->json([
+        'ok'      => true,
+        'ended'   => false,
+        'share'   => [
+            'status'     => 'active',
+            'expires_at' => $share->expires_at ? (string)$share->expires_at : null,
+        ],
+        'ride'    => $snapshot['ride'] ?? null,
+        'driver'  => $snapshot['driver'] ?? null,
+        'vehicle' => $snapshot['vehicle'] ?? null,
+        'location'=> $snapshot['location'] ?? null,
+        'ts'      => now()->format('Y-m-d H:i:s'),
+    ]);
+}
+
 
     private function getActiveOrViewableShare(string $token): ?object
     {
@@ -88,48 +111,50 @@ class RideShareController extends Controller
         return $row;
     }
 
-    private function buildSnapshot(int $tenantId, int $rideId): array
-    {
-        $ride = DB::table('rides')
-            ->where('tenant_id', $tenantId)
-            ->where('id', $rideId)
-            ->first([
-                'id','tenant_id','status','driver_id',
-                'origin_label','origin_lat','origin_lng',
-                'dest_label','dest_lat','dest_lng',
-                'canceled_by','cancel_reason',
-                'created_at','updated_at',
-            ]);
+  private function buildSnapshot(int $tenantId, int $rideId): array
+{
+    $ride = DB::table('rides')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $rideId)
+        ->first([
+            'id','tenant_id','status','driver_id',
+            'origin_label','origin_lat','origin_lng',
+            'dest_label','dest_lat','dest_lng',
+            'canceled_by','cancel_reason',
+            'created_at','updated_at',
+        ]);
 
-        if (!$ride) {
-            return ['ride' => null];
+    if (!$ride) return ['ride' => null];
+
+    $status = strtolower((string)$ride->status);
+    $isClosed = in_array($status, ['finished','canceled','completed','ended'], true);
+
+    $driver = null;
+    $vehicle = null;
+    $location = null;
+
+    if (!empty($ride->driver_id)) {
+        $driver = DB::table('drivers')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $ride->driver_id)
+            ->first(['id','name','foto_path','last_seen_at','last_bearing','last_speed','last_lat','last_lng']);
+
+        $assign = DB::table('driver_vehicle_assignments')
+            ->where('tenant_id', $tenantId)
+            ->where('driver_id', $ride->driver_id)
+            ->whereNull('end_at')
+            ->orderByDesc('id')
+            ->first(['vehicle_id']);
+
+        if ($assign && !empty($assign->vehicle_id)) {
+            $vehicle = DB::table('vehicles')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $assign->vehicle_id)
+                ->first(['id','economico','plate','brand','model','color','year','photo_url','foto_path']);
         }
 
-        $driver = null;
-        $vehicle = null;
-        $location = null;
-
-        if (!empty($ride->driver_id)) {
-            $driver = DB::table('drivers')
-                ->where('tenant_id', $tenantId)
-                ->where('id', $ride->driver_id)
-                ->first(['id','name','foto_path','last_seen_at','last_bearing','last_speed','last_lat','last_lng']);
-
-            $assign = DB::table('driver_vehicle_assignments')
-                ->where('tenant_id', $tenantId)
-                ->where('driver_id', $ride->driver_id)
-                ->whereNull('end_at')
-                ->orderByDesc('id')
-                ->first(['vehicle_id']);
-
-            if ($assign && !empty($assign->vehicle_id)) {
-                $vehicle = DB::table('vehicles')
-                    ->where('tenant_id', $tenantId)
-                    ->where('id', $assign->vehicle_id)
-                    ->first(['id','economico','plate','brand','model','color','year','photo_url','foto_path']);
-            }
-
-            // Fuente principal: driver_locations (tu tabla histórica)
+        // ✅ SOLO si el ride NO está cerrado
+        if (!$isClosed) {
             $dl = DB::table('driver_locations')
                 ->where('tenant_id', $tenantId)
                 ->where('driver_id', $ride->driver_id)
@@ -146,46 +171,10 @@ class RideShareController extends Controller
                 ];
             }
         }
-
-        // Discreción media: enmascarar datos sensibles desde el backend ya
-        $safeDriverName = $driver ? $this->maskPersonName((string)$driver->name) : null;
-        $safePlate = $vehicle ? $this->maskPlate((string)$vehicle->plate) : null;
-
-        return [
-            'ride' => [
-                'id'     => (int)$ride->id,
-                'status' => (string)$ride->status,
-                'origin' => [
-                    'label' => $ride->origin_label,
-                    'lat'   => $ride->origin_lat !== null ? (float)$ride->origin_lat : null,
-                    'lng'   => $ride->origin_lng !== null ? (float)$ride->origin_lng : null,
-                ],
-                'destination' => [
-                    'label' => $ride->dest_label,
-                    'lat'   => $ride->dest_lat !== null ? (float)$ride->dest_lat : null,
-                    'lng'   => $ride->dest_lng !== null ? (float)$ride->dest_lng : null,
-                ],
-                'canceled_by'   => $ride->canceled_by ? (string)$ride->canceled_by : null,
-                'cancel_reason' => $ride->cancel_reason ? (string)$ride->cancel_reason : null,
-            ],
-            'driver' => $driver ? [
-                'id'   => (int)$driver->id,
-                'name' => $safeDriverName,
-                'photo'=> $driver->foto_path,
-            ] : null,
-            'vehicle' => $vehicle ? [
-                'id'       => (int)$vehicle->id,
-                'economico'=> $vehicle->economico,
-                'plate'    => $safePlate,
-                'brand'    => $vehicle->brand,
-                'model'    => $vehicle->model,
-                'color'    => $vehicle->color,
-                'year'     => $vehicle->year,
-                'photo'    => $vehicle->photo_url ?: ($vehicle->foto_path ? asset($vehicle->foto_path) : null),
-            ] : null,
-            'location' => $location,
-        ];
     }
+
+   
+
 
     private function autoEndIfRideClosed(object $share, array $snapshot): bool
     {

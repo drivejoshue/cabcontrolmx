@@ -23,14 +23,26 @@
     .kv div { font-size:14px; }
     .danger { border-color:#6b2a2a; background:#1b1011; }
     .ok { border-color:#2a6b52; background:#0f1b16; }
+
+    .h1 { font-weight:800; font-size:18px; letter-spacing:.2px; margin:0; }
+    .sub { margin-top:4px; }
+    .note { margin-top:10px; padding:10px 12px; border-radius:12px; border:1px dashed #223247; background:#0e1520; }
+    .note b { color:#e7eef8; }
+    .small { font-size:12px; }
+    .hr { height:1px; background:#223247; opacity:.55; margin:12px 0; border:0; }
+
+    /* Estado de error suave (sin romper UI) */
+    .warn { border-color:#6b5a2a; background:#1b1710; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="row" style="margin-bottom:12px;">
       <div>
-        <div style="font-weight:700; font-size:16px;">Seguimiento de viaje</div>
-        <div class="muted">Este enlace se desactiva automáticamente al finalizar o cancelar el viaje.</div>
+        <div class="h1">Seguimiento de viaje</div>
+        <div class="muted sub">
+          Enlace temporal para ver el avance del taxi. Se desactiva automáticamente al finalizar o cancelar el viaje.
+        </div>
       </div>
       <div id="statusPill" class="pill">Cargando…</div>
     </div>
@@ -38,8 +50,10 @@
     <div class="grid">
       <div class="card">
         <div id="map"></div>
-        <div class="muted" style="margin-top:10px;">
-          Última actualización: <span id="lastTs">—</span>
+
+        <div class="muted" style="margin-top:10px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <div>Última actualización: <span id="lastTs">—</span></div>
+          <div class="small">Si el viaje termina, el seguimiento se detiene automáticamente.</div>
         </div>
       </div>
 
@@ -62,11 +76,25 @@
         <div class="kv">
           <b>Destino</b>
           <div id="destLine">—</div>
-          <div class="muted">El destino se muestra solo cuando el viaje está en curso (on_board).</div>
+          <div class="note muted small">
+            <b>Privacidad:</b> el destino se muestra únicamente cuando el viaje está en curso.
+          </div>
         </div>
 
-        <div id="endedBox" class="pill danger" style="display:none; margin-top:14px;">
-          Este viaje ya está cerrado. El seguimiento terminó.
+        <hr class="hr">
+
+        <div id="endedBox" class="note danger" style="display:none;">
+          <b>Viaje finalizado.</b>
+          <div class="muted small" style="margin-top:4px;">
+            El enlace de seguimiento se desactivó y ya no se actualizará la ubicación.
+          </div>
+        </div>
+
+        <div id="errorBox" class="note warn" style="display:none;">
+          <b>Conexión inestable.</b>
+          <div class="muted small" style="margin-top:4px;">
+            Estamos intentando reconectar. El último estado mostrado puede no ser el más reciente.
+          </div>
         </div>
       </div>
     </div>
@@ -83,133 +111,110 @@
   // ===== Leaflet map =====
   const map = L.map('map', { zoomControl: true, attributionControl: false });
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-  }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
   // Vista inicial (evita 0,0 mientras llega snapshot)
   map.setView([19.2221, -96.1775], 15);
 
-  // Icono coche (asegúrate que existe en public/images/vehicles/sedan.png)
+  // Icono coche
   const carIcon = L.icon({
     iconUrl: "{{ asset('images/vehicles/sedan.png') }}",
     iconSize: [36, 36],
     iconAnchor: [18, 18],
   });
 
-  // Markers (uno solo por tipo)
-  const pickupMarker = L.marker([0,0], { opacity: 0 });
-  const destMarker   = L.marker([0,0], { opacity: 0 });
-  const driverMarker = L.marker([0,0], { opacity: 0, icon: carIcon, zIndexOffset: 1000 });
-
-  pickupMarker.addTo(map);
-  destMarker.addTo(map);
-  driverMarker.addTo(map);
-
-  // Polyline “ruta” (MVP): línea recta entre puntos relevantes
-  
+  // Markers
+  const pickupMarker = L.marker([0,0], { opacity: 0 }).addTo(map);
+  const destMarker   = L.marker([0,0], { opacity: 0 }).addTo(map);
+  const driverMarker = L.marker([0,0], { opacity: 0, icon: carIcon, zIndexOffset: 1000 }).addTo(map);
 
   // ===== Ruta fija (pickup -> destino) =====
-let fixedRouteLine = null;
-let fixedRouteSet = false;
+  let fixedRouteLine = null;
+  let fixedRouteSet = false;
 
-function decodePolyline(encoded) {
-  // Google Encoded Polyline Algorithm
-  let index = 0, lat = 0, lng = 0, coordinates = [];
+  function decodePolyline(encoded) {
+    let index = 0, lat = 0, lng = 0, coordinates = [];
 
-  while (index < encoded.length) {
-    let b, shift = 0, result = 0;
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    const dlat = (result & 1) ? ~(result >> 1) : (result >> 1);
-    lat += dlat;
+    while (index < encoded.length) {
+      let b, shift = 0, result = 0;
+      do {
+        b = encoded.charCodeAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      const dlat = (result & 1) ? ~(result >> 1) : (result >> 1);
+      lat += dlat;
 
-    shift = 0;
-    result = 0;
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    const dlng = (result & 1) ? ~(result >> 1) : (result >> 1);
-    lng += dlng;
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.charCodeAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      const dlng = (result & 1) ? ~(result >> 1) : (result >> 1);
+      lng += dlng;
 
-    coordinates.push([lat / 1e5, lng / 1e5]);
-  }
-
-  return coordinates;
-}
-
-function setFixedRoute(points) {
-  if (!points || points.length < 2) return;
-
-  if (!fixedRouteLine) {
-    fixedRouteLine = L.polyline(points, { weight: 4, opacity: 0.7 }).addTo(map);
-  } else {
-    fixedRouteLine.setLatLngs(points);
-  }
-  fixedRouteSet = true;
-}
-
-/**
- * Calcula la ruta real una sola vez (pickup -> destino) y la deja fija.
- * - Usa /api/geo/route (tu GeoController)
- * - Si falla, cae a línea recta
- */
-async function ensureFixedRoute(snapshot) {
-  if (fixedRouteSet) return;
-
-  const ride = snapshot?.ride;
-  const o = ride?.origin;
-  const d = ride?.destination;
-
-  if (!o?.lat || !o?.lng || !d?.lat || !d?.lng) return;
-
-  try {
-    const res = await fetch("/api/geo/route", {
-      method: "POST",
-      headers: {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: { lat: o.lat, lng: o.lng },
-        to: { lat: d.lat, lng: d.lng },
-        mode: "driving",
-        // stops: []  // (si luego quieres incluir stops en share, aquí van)
-      })
-    });
-
-    if (!res.ok) throw new Error("geo route http " + res.status);
-    const r = await res.json();
-    if (!r.ok) throw new Error("geo route not ok");
-
-    // Verificación rápida (para ti)
-    console.log("route provider=", r.provider, "distance_m=", r.distance_m, "duration_s=", r.duration_s);
-
-    if (r.polyline) {
-      const pts = decodePolyline(r.polyline);
-      setFixedRoute(pts);
-      return;
+      coordinates.push([lat / 1e5, lng / 1e5]);
     }
 
-    // Provider fallback devuelve points: [[lat,lng],...]
-    if (r.points && Array.isArray(r.points) && r.points.length >= 2) {
-      setFixedRoute(r.points);
-      return;
-    }
-
-    // Si por alguna razón vino vacío:
-    setFixedRoute([[o.lat, o.lng], [d.lat, d.lng]]);
-  } catch (e) {
-    // Fallback duro: línea recta
-    setFixedRoute([[o.lat, o.lng], [d.lat, d.lng]]);
+    return coordinates;
   }
-}
 
+  function setFixedRoute(points) {
+    if (!points || points.length < 2) return;
+
+    if (!fixedRouteLine) {
+      fixedRouteLine = L.polyline(points, { weight: 4, opacity: 0.7 }).addTo(map);
+    } else {
+      fixedRouteLine.setLatLngs(points);
+    }
+    fixedRouteSet = true;
+  }
+
+  async function ensureFixedRoute(snapshot) {
+    if (fixedRouteSet) return;
+
+    const ride = snapshot?.ride;
+    const o = ride?.origin;
+    const d = ride?.destination;
+
+    if (o?.lat == null || o?.lng == null || d?.lat == null || d?.lng == null) return;
+
+    try {
+      const res = await fetch("/api/geo/route", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: { lat: o.lat, lng: o.lng },
+          to: { lat: d.lat, lng: d.lng },
+          mode: "driving",
+        })
+      });
+
+      if (!res.ok) throw new Error("geo route http " + res.status);
+
+      const r = await res.json();
+      if (!r.ok) throw new Error("geo route not ok");
+
+      if (r.polyline) {
+        setFixedRoute(decodePolyline(r.polyline));
+        return;
+      }
+
+      if (r.points && Array.isArray(r.points) && r.points.length >= 2) {
+        setFixedRoute(r.points);
+        return;
+      }
+
+      setFixedRoute([[o.lat, o.lng], [d.lat, d.lng]]);
+    } catch (e) {
+      setFixedRoute([[o.lat, o.lng], [d.lat, d.lng]]);
+    }
+  }
 
   function setMarker(marker, lat, lng, visible) {
     if (lat == null || lng == null) {
@@ -231,12 +236,45 @@ async function ensureFixedRoute(snapshot) {
   function setStatusPill(text, kind) {
     const el = document.getElementById('statusPill');
     el.textContent = text || '—';
-    el.classList.remove('danger', 'ok');
+    el.classList.remove('danger', 'ok', 'warn');
     if (kind) el.classList.add(kind);
   }
 
   function safeText(id, text) {
     document.getElementById(id).textContent = (text == null || text === '') ? '—' : text;
+  }
+
+  function showEndedUI(labelText = 'FINALIZADO') {
+    setStatusPill(labelText, 'danger');
+    document.getElementById('endedBox').style.display = 'block';
+    document.getElementById('errorBox').style.display = 'none';
+  }
+
+  function showErrorUI() {
+    // No "matamos" el estado, solo avisamos.
+    document.getElementById('errorBox').style.display = 'block';
+  }
+
+  function hideErrorUI() {
+    document.getElementById('errorBox').style.display = 'none';
+  }
+
+  // Etiquetas amigables
+  const statusLabel = {
+    searching: 'BUSCANDO',
+    offered: 'OFERTADO',
+    accepted: 'ASIGNADO',
+    arrived: 'LLEGÓ',
+    on_board: 'EN VIAJE',
+    finished: 'FINALIZADO',
+    canceled: 'CANCELADO',
+    ended: 'FINALIZADO',
+    expired: 'EXPIRADO',
+    revoked: 'REVOCADO',
+  };
+
+  function pillTextFor(stLower) {
+    return statusLabel[stLower] || (stLower ? stLower.toUpperCase() : '—');
   }
 
   // Control de cámara: NO reencuadrar cada poll
@@ -252,16 +290,17 @@ async function ensureFixedRoute(snapshot) {
     const st = ride ? (ride.status || '—') : '—';
     const stLower = (st || '').toLowerCase();
 
-    // Status pill
+    const pill = pillTextFor(stLower);
+
+    // Status pill + ended box
     if (['finished','canceled'].includes(stLower)) {
-      setStatusPill(stLower.toUpperCase(), 'danger');
-      document.getElementById('endedBox').style.display = 'block';
+      showEndedUI(pill);
     } else {
-      setStatusPill(stLower.toUpperCase(), 'ok');
+      setStatusPill(pill, 'ok');
       document.getElementById('endedBox').style.display = 'none';
     }
 
-    safeText('driverName', driver && driver.name ? driver.name : '—');
+    safeText('driverName', driver?.name || '—');
 
     if (vehicle) {
       const line = [vehicle.brand, vehicle.model, vehicle.color, vehicle.plate].filter(Boolean).join(' · ');
@@ -270,25 +309,20 @@ async function ensureFixedRoute(snapshot) {
       safeText('vehicleLine', '—');
     }
 
-    safeText('originLine', ride && ride.origin ? (ride.origin.label || '') : '—');
+    safeText('originLine', ride?.origin ? (ride.origin.label || '') : '—');
 
     // Privacidad: destino solo si va on_board
     const showDest = (stLower === 'on_board');
-    const destLabel = ride && ride.destination ? (ride.destination.label || '') : '';
+    const destLabel = ride?.destination ? (ride.destination.label || '') : '';
     safeText('destLine', showDest ? (destLabel || '—') : '—');
 
     // Markers
-    const o = ride && ride.origin ? ride.origin : {};
-    const d = ride && ride.destination ? ride.destination : {};
+    const o = ride?.origin || {};
+    const d = ride?.destination || {};
 
     setMarker(pickupMarker, o.lat, o.lng, true);
     setMarker(destMarker, d.lat, d.lng, showDest);
-    setMarker(driverMarker, loc ? loc.lat : null, loc ? loc.lng : null, !!loc);
-
-    // “Ruta” (MVP): línea recta
-    // - on_board: driver -> destino
-    // - si no: driver -> pickup
-   
+    setMarker(driverMarker, loc?.lat ?? null, loc?.lng ?? null, !!loc);
 
     // Cámara: primer encuadre o cuando cambia el modo (pickup vs dest)
     let fitMode = null;
@@ -298,15 +332,11 @@ async function ensureFixedRoute(snapshot) {
     }
 
     if (!didInitialFit && fitMode) {
-      if (fitMode === 'dest') {
-        fitIfPossible([[loc.lat, loc.lng], [d.lat, d.lng]]);
-      } else {
-        fitIfPossible([[loc.lat, loc.lng], [o.lat, o.lng]]);
-      }
+      if (fitMode === 'dest') fitIfPossible([[loc.lat, loc.lng], [d.lat, d.lng]]);
+      else fitIfPossible([[loc.lat, loc.lng], [o.lat, o.lng]]);
       didInitialFit = true;
       lastFitMode = fitMode;
     } else if (fitMode && fitMode !== lastFitMode) {
-      // Cambio de fase: reencuadrar una sola vez
       if (fitMode === 'dest') fitIfPossible([[loc.lat, loc.lng], [d.lat, d.lng]]);
       else fitIfPossible([[loc.lat, loc.lng], [o.lat, o.lng]]);
       lastFitMode = fitMode;
@@ -315,11 +345,27 @@ async function ensureFixedRoute(snapshot) {
     document.getElementById('lastTs').textContent = ts || '—';
   }
 
+  // ===== Stop polling (centralizado) =====
+  let polling = true;
+  let tickTimer = null;
+  const POLL_MS = 2500;
+
+  function stopPolling(reason = 'ENDED') {
+    polling = false;
+    if (tickTimer) {
+      clearTimeout(tickTimer);
+      tickTimer = null;
+    }
+
+    // UI final
+    const lower = (reason || '').toLowerCase();
+    const pill = pillTextFor(lower);
+    showEndedUI(pill);
+  }
+
   // Primer paint
   render(INITIAL, (new Date()).toLocaleString());
-ensureFixedRoute(INITIAL);
-  // Polling
-  let polling = true;
+  ensureFixedRoute(INITIAL);
 
   async function tick() {
     if (!polling) return;
@@ -327,30 +373,47 @@ ensureFixedRoute(INITIAL);
     try {
       const res = await fetch(STATE_URL, { headers: { 'Accept': 'application/json' }});
 
+      // 410 = ended/expired/revoked (tu backend debería usarlo)
+      if (res.status === 410) {
+        let code = 'ENDED';
+        try {
+          const j = await res.json();
+          code = (j && j.code) ? String(j.code) : 'ENDED';
+        } catch (_) {}
+        stopPolling(code);
+        return;
+      }
+
       if (!res.ok) {
-        if (res.status === 410) { // expired
-          setStatusPill('EXPIRED', 'danger');
-          document.getElementById('endedBox').style.display = 'block';
-          polling = false;
-          return;
-        }
+        showErrorUI();
         throw new Error('HTTP ' + res.status);
       }
 
+      hideErrorUI();
+
       const json = await res.json();
-      if (!json.ok) throw new Error('not ok');
+
+      // Si backend manda ok:false, también paramos
+      if (!json || json.ok === false) {
+        const code = json?.code ? String(json.code) : 'ENDED';
+        stopPolling(code);
+        return;
+      }
 
       render(json, json.ts);
 
-      const st = (json.ride && json.ride.status) ? ('' + json.ride.status).toLowerCase() : '';
+      // Si backend marca ended, paramos
+      const st = (json.ride && json.ride.status) ? String(json.ride.status).toLowerCase() : '';
       if (json.ended === true || ['finished','canceled'].includes(st)) {
-        polling = false; // se muere ya no sirve
+        stopPolling(st || 'ENDED');
+        return;
       }
     } catch (e) {
-      // Silencioso: mantenemos el último frame
+      // Silencioso: mantenemos el último frame; mostramos warning si aplica
+      showErrorUI();
     }
 
-    setTimeout(tick, 2500);
+    tickTimer = setTimeout(tick, POLL_MS);
   }
 
   tick();
