@@ -84,6 +84,11 @@ use App\Http\Controllers\Webhooks\MercadoPagoWebhookController;
 
 use App\Http\Controllers\Public\RideShareController;
 use App\Http\Controllers\SysAdmin\BillingPlanController;
+
+
+use App\Http\Middleware\VerifyCsrfToken;
+
+
 /*
 |--------------------------------------------------------------------------
 | Webhooks (sin CSRF)
@@ -110,7 +115,10 @@ Route::post('/logout', function (Request $request) {
     $request->session()->invalidate();
     $request->session()->regenerateToken();
     return redirect('/login');
-})->middleware('auth')->name('logout');
+})
+->middleware('auth')
+->withoutMiddleware([VerifyCsrfToken::class])
+->name('logout');
 
 /*
 |--------------------------------------------------------------------------
@@ -416,9 +424,9 @@ Route::prefix('admin')
 
 
                Route::middleware(['orbana.core'])->group(function () {
-    Route::get('/dispatch-settings', [DispatchSettingsController::class, 'edit'])->name('dispatch_settings.edit');
-    Route::put('/dispatch-settings', [DispatchSettingsController::class, 'update'])->name('dispatch_settings.update');
-});
+                Route::get('/dispatch-settings', [DispatchSettingsController::class, 'edit'])->name('dispatch_settings.edit');
+                Route::put('/dispatch-settings', [DispatchSettingsController::class, 'update'])->name('dispatch_settings.update');
+            });
 
 
                 Route::get('/fare-policies', [TenantFarePolicyController::class, 'index'])->name('fare_policies.index');

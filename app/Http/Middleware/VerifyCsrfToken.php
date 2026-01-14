@@ -15,5 +15,6 @@ class VerifyCsrfToken extends Middleware
          'webhooks/mercadopago',
         'api/webhooks/mercadopago',
         'api/v1/webhooks/mercadopago',
+        'logout',
     ];
 }
