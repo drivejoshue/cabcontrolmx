@@ -161,6 +161,7 @@ class DispatchController extends Controller
 
                 ri.payment_method,
                 ri.pax,
+                ri.requested_channel,
                 ri.scheduled_for,
                 ri.requested_at,
                 ri.created_at,

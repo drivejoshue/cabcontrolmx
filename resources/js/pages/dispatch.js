@@ -2016,16 +2016,32 @@ function fmtWhen_db(s) {
 function renderRideCard(ride) {
   if (shouldHideRideCard(ride)) return '';
 
+  // ✅ SIEMPRE define esc antes de usarlo en template strings
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
+  ));
+
   const ui = deriveRideUi(ride);
   const ch = ui.channel || deriveRideChannel(ride);
 
+  // ✅ Detección robusta (trim + fallback)
+   const rawChan = String(
+    ride.requested_channel ?? ride.requestedChannel ??
+    ride.channel ?? ride.request_source ?? ride.requestSource ??
+    ride.source ?? ''
+  ).toLowerCase().trim();
 
-   const isPassenger = !!ui.isPassengerApp || String(ride.requested_channel||'').toLowerCase() === 'passenger_app';
+  const isPassenger = (ui.isPassengerApp === true) || (rawChan === 'passenger_app');
 
-  // Passenger App: acciones bloqueadas (solo "Ver")
+  // ✅ Passenger App: bloquear acciones (solo Ver)
   const canOperate = !isPassenger;
 
   const AUTODISPATCH_NAME = 'Orbana Athera Dispatch Core';
+
+  // ✅ Badge visible para confirmar detección + inspección rápida
+  const passengerDetectBadge = isPassenger
+    ? `<span class="badge bg-info-subtle text-info border ms-2">PASSENGER_APP</span>`
+    : '';
 
   const passengerNotice = isPassenger ? `
     <div class="alert alert-info py-2 px-2 mt-2 mb-0 small" style="border-radius:10px;">
@@ -2034,17 +2050,15 @@ function renderRideCard(ride) {
         Servicio operado automáticamente
       </div>
       <div class="text-muted">
-        Este viaje proviene de la app de pasajero y es gestionado por <span class="fw-semibold">${esc(AUTODISPATCH_NAME)}</span>.
+        Este viaje proviene de la app de pasajero y es gestionado por
+        <span class="fw-semibold">${esc(AUTODISPATCH_NAME)}</span>.
         Desde la central solo está disponible la vista y seguimiento del servicio.
       </div>
     </div>
   ` : '';
 
+  
 
-
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => (
-    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
-  ));
   const fmtC = (v) => Number.isFinite(+v) ? (+v).toFixed(5) : '—';
 
   const parseStops = () => {
@@ -2114,11 +2128,9 @@ function renderRideCard(ride) {
           id: ride.id,
           status: ride.status,
           requested_channel: ride.requested_channel,
-          sortRank: ui.sortRank,
-          stops_count: ride.stops_count,
-          stop_index: ride.stop_index,
-          stops: ride.stops,
-          stops_json: ride.stops_json
+          rawChan,
+          isPassenger,
+          sortRank: ui.sortRank
         }, null, 2))
       }</pre>
     </details>
@@ -2126,15 +2138,17 @@ function renderRideCard(ride) {
 
   // Clases extra
   const offeredCls   = ui.isOffered ? 'is-offered' : '';
-  const passengerCls = ui.isPassengerApp ? 'is-passenger' : '';
+  const passengerCls = isPassenger ? 'is-passenger' : '';
 
-  // Etiqueta del botón cuando viene de passenger y showAssign=true (reasignar)
-  const assignLabel = ui.isPassengerApp ? 'Reasignar' : 'Asignar';
+  // Si es passenger, no se usa (porque canOperate=false), pero lo dejo consistente
+  const assignLabel = isPassenger ? 'Reasignar' : 'Asignar';
 
   return `
   <div class="card cc-ride-card ${scheduled ? 'is-scheduled' : ''} ${offeredCls} ${passengerCls} mb-2 border-0 shadow-sm"
        data-ride-id="${ride.id}"
-       data-sort="${ui.sortRank}">
+       data-sort="${ui.sortRank}"
+       data-channel="${esc(rawChan)}"
+       data-is-passenger="${isPassenger ? '1' : '0'}">
     <div class="card-body p-3">
       <div class="cc-ride-header d-flex justify-content-between align-items-start mb-2">
         <div class="d-flex align-items-center gap-2">
@@ -2153,7 +2167,10 @@ function renderRideCard(ride) {
           <span class="fw-semibold">${esc(passName)}</span>
           ${passPhone ? `<span class="text-muted ms-2"><i class="bi bi-telephone me-1"></i>${esc(passPhone)}</span>` : ''}
         </div>
-        ${channelBadge}
+        <div class="d-flex align-items-center">
+          ${channelBadge}
+          ${passengerDetectBadge}
+        </div>
       </div>
 
       <ul class="cc-legs list-unstyled mb-2">
@@ -2189,8 +2206,7 @@ function renderRideCard(ride) {
       </div>
 
       ${debugBlock}
-
-          ${passengerNotice}
+      ${passengerNotice}
 
       <div class="d-flex justify-content-end cc-actions mt-3">
         <div class="btn-group btn-group-sm">
