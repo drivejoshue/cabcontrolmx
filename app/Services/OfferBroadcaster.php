@@ -74,16 +74,27 @@ class OfferBroadcaster
 
             // expires_at
             $expiresAt = $o->expires_at;
-            if (empty($expiresAt)) {
+          if (empty($expiresAt)) {
                 $expiresAt = Carbon::now()
                     ->addSeconds($offerExpiresSec)
                     ->format('Y-m-d H:i:s');
 
-                \Log::info('OfferBroadcaster::emitNew - expires_at calculado', [
+                // ✅ Persistir para que el expirador funcione
+                DB::table('ride_offers')
+                    ->where('id', $offerId)
+                    ->whereNull('expires_at')
+                    ->update([
+                        'expires_at'  => $expiresAt,
+                        'updated_at'  => Carbon::now(),
+                    ]);
+
+                \Log::info('OfferBroadcaster::emitNew - expires_at calculado y guardado', [
                     'offerId'   => $offerId,
                     'expiresAt' => $expiresAt
                 ]);
             }
+
+            
 
             // Preview
             $etaSeconds = $o->eta_seconds ?? 60;

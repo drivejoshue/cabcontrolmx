@@ -322,6 +322,9 @@ Route::get('/passengers/lookup',    [PassengerController::class, 'lookup']);
     Route::post('/offers/{offer}/accept', [OfferController::class, 'accept']);
     Route::post('/offers/{offer}/reject', [OfferController::class, 'reject']);
 
+        Route::post('/offers/{offer}/expire', [OfferController::class, 'expire']);
+
+
     Route::post('/offers/{offer}/viewing', [OfferController::class, 'viewing']);
 
     // Ciclo de ride (para el driver app)
@@ -339,6 +342,7 @@ Route::get('/passengers/lookup',    [PassengerController::class, 'lookup']);
      Route::get('/messages', [DriverChatController::class, 'index']);
     Route::post('/messages', [DriverChatController::class, 'store']);
 
+    Route::post('/offers/{offer}/expire', [OfferController::class, 'expire']);
 
     // GEO para driver (geocode + rutas)
     Route::get ('/geo/geocode', [GeoController::class,'geocode']);

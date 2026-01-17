@@ -29,7 +29,8 @@ class ExpirePassengerRides extends Command
         // =========================================================
         DB::table('ride_offers')
             ->select('id','tenant_id','driver_id','ride_id')
-            ->where('status', 'offered')
+           ->whereIn('status', ['offered', 'pending_passenger'])
+
             ->whereNotNull('expires_at')
             ->where('expires_at', '<', $now)
             ->orderBy('id')
@@ -45,19 +46,22 @@ class ExpirePassengerRides extends Command
                     }
 
                     // 1.1) Expira la offer (anti-race)
-                    $offerUpdated = DB::table('ride_offers')
-                        ->where('id', $offerId)
-                        ->where('status', 'offered')
-                        ->update([
-                            'status'       => 'expired',
-                            'response'     => DB::raw("COALESCE(response,'expired')"),
-                            'responded_at' => DB::raw("COALESCE(responded_at,'{$now->format('Y-m-d H:i:s')}')"),
-                            'updated_at'   => $now,
-                        ]);
+                   $offerUpdated = DB::table('ride_offers')
+                      ->where('id', $offerId)
+                      ->whereIn('status', ['offered','pending_passenger'])
+                      ->update([
+                          'status'       => 'expired',
+                          'response'     => DB::raw("COALESCE(response,'expired')"),
+                          'responded_at' => DB::raw("COALESCE(responded_at,'{$now->format('Y-m-d H:i:s')}')"),
+                          'updated_at'   => $now,
+                      ]);
+
 
                     if (!$offerUpdated) {
                         continue;
                     }
+
+                    
 
                     // 1.2) Cancela el ride (solo si sigue activo)
                     $rideUpdated = DB::table('rides')

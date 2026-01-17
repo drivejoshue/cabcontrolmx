@@ -474,49 +474,54 @@ class PassengerRideController extends Controller
         ];
 
         // 3) Buscar el ride más reciente de este pasajero en estado activo
-        $row = DB::table('rides')
-            ->where('tenant_id', $tenantId)
-            ->where('passenger_id', $passenger->id)
-            ->whereIn('status', $activeStatuses)
-            ->orderByDesc('id')
-            ->select([
-                'id',
-                'tenant_id',
-                'passenger_id',
-                'status',
-                'requested_channel',
-                'passenger_name',
-                'passenger_phone',
+    $row = DB::table('rides')
+    ->join('tenants', 'tenants.id', '=', 'rides.tenant_id')
+    ->where('rides.tenant_id', $tenantId)
+    ->where('rides.passenger_id', $passenger->id)
+    ->whereIn('rides.status', $activeStatuses)
+    ->orderByDesc('rides.id')
+    ->select([
+        'rides.id',
+        'rides.tenant_id',
+        'rides.passenger_id',
+        'rides.status',
+        'rides.requested_channel',
+        'rides.passenger_name',
+        'rides.passenger_phone',
 
-                'origin_label',
-                'origin_lat',
-                'origin_lng',
+        'rides.origin_label',
+        'rides.origin_lat',
+        'rides.origin_lng',
 
-                'dest_label',
-                'dest_lat',
-                'dest_lng',
+        'rides.dest_label',
+        'rides.dest_lat',
+        'rides.dest_lng',
 
-                'distance_m',
-                'duration_s',
-                'quoted_amount',
-                'passenger_offer',
-                'driver_offer',
-                'agreed_amount',
-                'total_amount',
-                'payment_method', 
-                'driver_id',
-                 'cancel_reason',
-                 'canceled_by',
+        'rides.distance_m',
+        'rides.duration_s',
+        'rides.quoted_amount',
+        'rides.passenger_offer',
+        'rides.driver_offer',
+        'rides.agreed_amount',
+        'rides.total_amount',
+        'rides.payment_method',
+        'rides.driver_id',
+        'rides.cancel_reason',
+        'rides.canceled_by',
 
-                          
-                'passenger_onway_at',
-                'passenger_onboard_at',
-                'passenger_finished_at',
+        'rides.passenger_onway_at',
+        'rides.passenger_onboard_at',
+        'rides.passenger_finished_at',
 
-                'created_at',
-                'updated_at',
-            ])
-            ->first();
+        'rides.created_at',
+        'rides.updated_at',
+
+        // ✅ tenant
+        'tenants.name as tenant_name',
+        'tenants.public_city as tenant_city',
+    ])
+    ->first();
+
 
           
 
@@ -531,6 +536,17 @@ class PassengerRideController extends Controller
 
           $searchExpiresAt = $this->computeRideSearchExpiresAt($tenantId, (int)$row->id);
 
+          $tenantName = trim((string)($row->tenant_name ?? ''));
+            $tenantCity = trim((string)($row->tenant_city ?? ''));
+
+            $tenantBadge = $tenantName;
+            if ($tenantCity !== '') {
+                $tenantBadge = $tenantBadge !== '' ? ($tenantBadge . ' · ' . $tenantCity) : $tenantCity;
+            }
+            if ($tenantBadge === '') {
+                $tenantBadge = null;
+            }
+
         // 5) Armar payload compacto para el cliente
         $ridePayload = [
             'id'               => (int) $row->id,
@@ -540,7 +556,7 @@ class PassengerRideController extends Controller
             'requested_channel'=> $row->requested_channel,
             'passenger_name'   => $row->passenger_name,
             'passenger_phone'  => $row->passenger_phone,
-
+            'tenant_badge' => $tenantBadge,
             'origin' => [
                 'label' => $row->origin_label,
                 'lat'   => $row->origin_lat !== null ? (float) $row->origin_lat : null,
@@ -607,41 +623,53 @@ class PassengerRideController extends Controller
 
         // 3) Buscar el ride activo más reciente del pasajero (en cualquier tenant)
         $row = DB::table('rides')
-            ->where('passenger_id', $passenger->id)
-            ->whereIn('status', $activeStatuses)
-            ->orderByDesc('id')
-            ->select([
-                'id',
-                'tenant_id',
-                'passenger_id',
-                'status',
-                'requested_channel',
-                'passenger_name',
-                'passenger_phone',
-                'origin_label',
-                'origin_lat',
-                'origin_lng',
-                'dest_label',
-                'dest_lat',
-                'dest_lng',
-                'distance_m',
-                'duration_s',
-                'quoted_amount',
-                'passenger_offer',
-                'driver_offer',
-                'agreed_amount',
-                'total_amount',
-                'payment_method',
-                'driver_id',
-                'passenger_onway_at',
-                'passenger_onboard_at',
-                'passenger_finished_at',
-                'cancel_reason',
-                 'canceled_by',
-                'created_at',
-                'updated_at',
-            ])
-            ->first();
+    ->join('tenants', 'tenants.id', '=', 'rides.tenant_id')
+    ->where('rides.tenant_id', $tenantId)
+    ->where('rides.passenger_id', $passenger->id)
+    ->whereIn('rides.status', $activeStatuses)
+    ->orderByDesc('rides.id')
+    ->select([
+        'rides.id',
+        'rides.tenant_id',
+        'rides.passenger_id',
+        'rides.status',
+        'rides.requested_channel',
+        'rides.passenger_name',
+        'rides.passenger_phone',
+
+        'rides.origin_label',
+        'rides.origin_lat',
+        'rides.origin_lng',
+
+        'rides.dest_label',
+        'rides.dest_lat',
+        'rides.dest_lng',
+
+        'rides.distance_m',
+        'rides.duration_s',
+        'rides.quoted_amount',
+        'rides.passenger_offer',
+        'rides.driver_offer',
+        'rides.agreed_amount',
+        'rides.total_amount',
+        'rides.payment_method',
+        'rides.driver_id',
+        'rides.cancel_reason',
+        'rides.canceled_by',
+
+        'rides.passenger_onway_at',
+        'rides.passenger_onboard_at',
+        'rides.passenger_finished_at',
+
+        'rides.created_at',
+        'rides.updated_at',
+
+        // ✅ tenant
+        'tenants.name as tenant_name',
+        'tenants.public_city as tenant_city',
+    ])
+    ->first();
+
 
            
 
@@ -656,6 +684,16 @@ class PassengerRideController extends Controller
 
          $tenantId = (int)$row->tenant_id;
             $searchExpiresAt = $this->computeRideSearchExpiresAt($tenantId, (int)$row->id);
+$tenantName = trim((string)($row->tenant_name ?? ''));
+$tenantCity = trim((string)($row->tenant_city ?? ''));
+
+$tenantBadge = $tenantName;
+if ($tenantCity !== '') {
+    $tenantBadge = $tenantBadge !== '' ? ($tenantBadge . ' · ' . $tenantCity) : $tenantCity;
+}
+if ($tenantBadge === '') {
+    $tenantBadge = null;
+}
 
 
 
@@ -668,6 +706,8 @@ class PassengerRideController extends Controller
             'requested_channel'=> $row->requested_channel,
             'passenger_name'   => $row->passenger_name,
             'passenger_phone'  => $row->passenger_phone,
+            'tenant_badge' => $tenantBadge,
+
             'origin' => [
                 'label' => $row->origin_label,
                 'lat'   => $row->origin_lat !== null ? (float) $row->origin_lat : null,
@@ -1106,6 +1146,7 @@ class PassengerRideController extends Controller
                 ->where('id', $o->id)
                 ->update([
                     'status'       => 'rejected',
+                     'response'       => 'rejected',
                     'responded_at' => now(),
                     'updated_at'   => now(),
                 ]);

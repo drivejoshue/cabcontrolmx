@@ -38,7 +38,7 @@ class AutoDispatchService
      *  - sp_offer_wave_v1(tenant_id, ride_id, radius_km, limit_n, expires_s)
      * Fallback: buscar candidatos y llamar sp_create_offer_v2 driver por driver.
      */
-  public static function kickoff(
+ public static function kickoff(
     int $tenantId,
     int $rideId,
     float $lat,
@@ -47,31 +47,146 @@ class AutoDispatchService
     int $expires = null,
     int $limitN = 6,
     bool $autoAssignIfSingle = false
-): 
-  array 
-  { 
-      $settings = self::getUnifiedSettings($tenantId);
+): array {
 
-        if ($expires === null) {
-            $expires = (int)($settings->expires_s ?? 180);
-        }
+    $settings = self::getUnifiedSettings($tenantId);
+    if ($expires === null) {
+        $expires = (int)($settings->expires_s ?? 180);
+    }
+
+    $now = now();
+
     // 0) Verifica ride ofertable
     $ride = DB::table('rides')
         ->where('tenant_id', $tenantId)
         ->where('id', $rideId)
         ->first();
+
     if (!$ride) {
-        return ['ok'=>false,'reason'=>'ride_not_found'];
-    }
-    if (in_array(strtolower($ride->status), ['accepted','en_route','arrived','on_board','finished','canceled'])) {
-        return ['ok'=>false,'reason'=>'ride_not_offerable','status'=>$ride->status];
-    }
-    if (!is_null($ride->driver_id)) {
-        return ['ok'=>false,'reason'=>'already_assigned','driver_id'=>$ride->driver_id];
+        return ['ok' => false, 'reason' => 'ride_not_found'];
     }
 
+    if (in_array(strtolower((string)$ride->status), ['accepted','en_route','arrived','on_board','finished','canceled'], true)) {
+        return ['ok' => false, 'reason' => 'ride_not_offerable', 'status' => $ride->status];
+    }
+
+    if (!is_null($ride->driver_id)) {
+        return ['ok' => false, 'reason' => 'already_assigned', 'driver_id' => $ride->driver_id];
+    }
+
+    // ============================================================
+    // 0.25) LIMITAR A 2 OLAS POR RIDE (sin migraciones)
+    // Usamos ride_status_history como bitácora "wave_kickoff"
+    // ============================================================
+    $waveCount = (int) DB::table('ride_status_history')
+        ->where('tenant_id', $tenantId)
+        ->where('ride_id', $rideId)
+        ->where('new_status', 'wave_kickoff')
+        ->count();
+
+    // ============================================================
+    // 0.5) Guard: si ya hay offers vivas (solo las relevantes para pasajero)
+    // NOTA: 'queued' NO debe bloquear relanzar ola (no es offer viva al pasajero)
+    // ============================================================
+    $hasAlive = DB::table('ride_offers')
+        ->where('tenant_id', $tenantId)
+        ->where('ride_id', $rideId)
+        ->whereIn('status', ['offered', 'pending_passenger'])
+        ->where(function ($q) use ($now) {
+            $q->whereNull('expires_at')
+              ->orWhere('expires_at', '>', $now);
+        })
+        ->exists();
+
+    if ($hasAlive) {
+        \Log::info('kickoff skip_alive_offers', [
+            'tenant_id' => $tenantId,
+            'ride_id' => $rideId,
+            'waveCount' => $waveCount,
+        ]);
+
+        return [
+            'ok' => true,
+            'via' => 'skip_alive_offers',
+            'reason' => 'ride_has_alive_offers',
+            'waveCount' => $waveCount,
+        ];
+    }
+
+    // ============================================================
+    // 0.75) Si ya llegó a 6 olas y no hay offers vivas, CANCELA ride
+    // ============================================================
+    if ($waveCount >= 6) {
+        \Log::warning('kickoff blocked: max waves reached', [
+            'tenant_id' => $tenantId,
+            'ride_id' => $rideId,
+            'waveCount' => $waveCount,
+        ]);
+
+        $updated = DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $rideId)
+            ->whereNull('canceled_at')
+            ->whereNotIn('status', ['finished','canceled'])
+            ->update([
+                'status'        => 'canceled',
+                'canceled_at'   => $now,
+                'canceled_by'   => 'system',
+                'cancel_reason' => 'Límite de olas alcanzado',
+                'updated_at'    => $now,
+            ]);
+
+        if ($updated) {
+            DB::table('ride_status_history')->insert([
+                'tenant_id'   => $tenantId,
+                'ride_id'     => $rideId,
+                'prev_status' => (string)($ride->status ?? 'offered'),
+                'new_status'  => 'canceled',
+                'meta'        => json_encode(['by'=>'system','reason'=>'max_waves_reached','max'=>2]),
+                'created_at'  => $now,
+                'updated_at'  => $now,
+            ]);
+
+            try {
+                \App\Services\RideBroadcaster::canceled(
+                    $tenantId,
+                    $rideId,
+                    'system',
+                    'No se encontraron conductores (límite de intentos).'
+                );
+            } catch (\Throwable $e) {
+                \Log::warning('emit ride.canceled failed (max waves)', [
+                    'tenant' => $tenantId,
+                    'ride' => $rideId,
+                    'msg' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return ['ok' => true, 'via' => 'skip_max_waves', 'waveCount' => $waveCount];
+    }
+
+    // ============================================================
+    // Registrar que vamos a disparar una nueva ola (conteo exacto)
+    // ============================================================
+    DB::table('ride_status_history')->insert([
+        'tenant_id'   => $tenantId,
+        'ride_id'     => $rideId,
+        'prev_status' => (string)($ride->status ?? 'offered'),
+        'new_status'  => 'wave_kickoff',
+        'meta'        => json_encode([
+            'km' => $km,
+            'limitN' => $limitN,
+            'expires' => $expires,
+            'autoAssignIfSingle' => $autoAssignIfSingle ? 1 : 0,
+            'wave_num' => $waveCount + 1,
+        ]),
+        'created_at'  => $now,
+        'updated_at'  => $now,
+    ]);
+
     // Marcas para detectar lo NUEVO de esta corrida
-    $t0 = now();
+    $t0 = $now;
     $beforeMaxId = (int)(DB::table('ride_offers')
         ->where('tenant_id', $tenantId)
         ->where('ride_id',   $rideId)
@@ -79,7 +194,7 @@ class AutoDispatchService
 
     // Helper para emitir todas las 'offered' creadas desde t0 / id>beforeMaxId
     $emitNewOffers = function() use ($tenantId, $rideId, $beforeMaxId, $t0) : array {
-        // 1) Primero por id (más robusto y barato)
+        // 1) Por id
         $ids = DB::table('ride_offers')
             ->where('tenant_id', $tenantId)
             ->where('ride_id',   $rideId)
@@ -90,7 +205,7 @@ class AutoDispatchService
             ->map(fn($id)=>(int)$id)
             ->all();
 
-        // 2) Si por alguna razón el id no sirve (replicación/desfase), cae por tiempo
+        // 2) Fallback por tiempo
         if (empty($ids)) {
             $ids = DB::table('ride_offers')
                 ->where('tenant_id', $tenantId)
@@ -110,9 +225,13 @@ class AutoDispatchService
         }
 
         foreach ($ids as $oid) {
-            try { \App\Services\OfferBroadcaster::emitNew((int)$oid); } catch (\Throwable $e) {
-                // no interrumpas — el polling corrige; deja log si quieres
-                \Log::warning('kickoff emitNew fail', ['offer_id'=>$oid,'msg'=>$e->getMessage()]);
+            try {
+                \App\Services\OfferBroadcaster::emitNew((int)$oid);
+            } catch (\Throwable $e) {
+                \Log::warning('kickoff emitNew fail', [
+                    'offer_id' => $oid,
+                    'msg' => $e->getMessage()
+                ]);
             }
         }
         return $ids;
@@ -126,18 +245,25 @@ class AutoDispatchService
 
         // marca como ola (no directa)
         DB::table('ride_offers')
-          ->where('tenant_id', $tenantId)
-          ->where('ride_id',   $rideId)
-          ->where('status',    'offered')
-          ->whereNull('responded_at')
-          ->update(['is_direct' => 0]);
+            ->where('tenant_id', $tenantId)
+            ->where('ride_id',   $rideId)
+            ->where('status',    'offered')
+            ->whereNull('responded_at')
+            ->update(['is_direct' => 0]);
 
-        // 🔔 EMITIR NUEVAS
         $createdIds = $emitNewOffers();
+
+        \Log::info('kickoff wave done', [
+            'tenant_id' => $tenantId,
+            'ride_id' => $rideId,
+            'wave_num' => $waveCount + 1,
+            'created_offer_ids_count' => count($createdIds),
+        ]);
 
         return [
             'ok' => true,
             'via' => 'sp_offer_wave_prio_v3',
+            'wave_num' => $waveCount + 1,
             'created_offer_ids' => $createdIds,
         ];
 
@@ -145,13 +271,12 @@ class AutoDispatchService
         $msg = $e->getMessage();
         $isMissing = str_contains($msg, '1305') || str_contains($msg, 'does not exist');
         if (!$isMissing) {
-            return ['ok'=>false,'via'=>'sp_offer_wave_prio_v3','error'=>$msg];
+            return ['ok' => false, 'via' => 'sp_offer_wave_prio_v3', 'error' => $msg];
         }
     }
 
     // 2) Fallback manual: top N drivers cerca (idle + shift abierto + ping fresco) y SP por driver
     try {
-        // latest location por driver (solo frescos 120s)
         $latest = DB::table('driver_locations as dl1')
             ->select('dl1.driver_id', DB::raw('MAX(dl1.id) as last_id'))
             ->groupBy('dl1.driver_id');
@@ -196,63 +321,70 @@ class AutoDispatchService
                 ]);
                 $created++;
             } catch (\Throwable $ee) {
-                // ignora duplicado/driver sin shift, etc.
+                // ignore
             }
         }
 
-        // ola (no directa)
         DB::table('ride_offers')
-          ->where('tenant_id', $tenantId)
-          ->where('ride_id',   $rideId)
-          ->where('status',    'offered')
-          ->whereNull('responded_at')
-          ->update(['is_direct' => 0]);
+            ->where('tenant_id', $tenantId)
+            ->where('ride_id',   $rideId)
+            ->where('status',    'offered')
+            ->whereNull('responded_at')
+            ->update(['is_direct' => 0]);
 
-        // 🔔 EMITIR NUEVAS
         $createdIds = $emitNewOffers();
 
-        // auto-aceptar si SOLO hay 1 y así se pide
         if ($created === 1 && $autoAssignIfSingle) {
             $offerId = DB::table('ride_offers')
                 ->where('tenant_id',$tenantId)
                 ->where('ride_id',$rideId)
-                ->orderByDesc('id')->value('id');
+                ->orderByDesc('id')
+                ->value('id');
 
             if ($offerId) {
                 try { DB::statement('CALL sp_accept_offer_v7(?)', [$offerId]); } catch (\Throwable $ee) {}
 
-                // Opcional: emitir accepted/ride.active (por si quieres real-time inmediato)
                 try {
                     $row = DB::table('ride_offers')->where('id',$offerId)->first(['tenant_id','driver_id','ride_id']);
                     if ($row) {
-                        \App\Services\OfferBroadcaster::emitStatus((int)$row->tenant_id,(int)$row->driver_id,(int)$row->ride_id,(int)$offerId,'accepted');
-                        \App\Services\Realtime::toDriver((int)$row->tenant_id,(int)$row->driver_id)->emit('ride.active', [
-                            'ride_id'  => (int)$row->ride_id,
-                            'offer_id' => (int)$offerId,
-                        ]);
+                        \App\Services\OfferBroadcaster::emitStatus(
+                            (int)$row->tenant_id,
+                            (int)$row->driver_id,
+                            (int)$row->ride_id,
+                            (int)$offerId,
+                            'accepted'
+                        );
+                        \App\Services\Realtime::toDriver((int)$row->tenant_id,(int)$row->driver_id)
+                            ->emit('ride.active', [
+                                'ride_id'  => (int)$row->ride_id,
+                                'offer_id' => (int)$offerId,
+                            ]);
                     }
                 } catch (\Throwable $ee) {}
 
                 return [
-                    'ok'=>true,
-                    'via'=>'fallback+auto_accept',
-                    'offers_created'=>$created,
-                    'created_offer_ids'=>$createdIds,
-                    'offer_id'=>$offerId,
+                    'ok' => true,
+                    'via' => 'fallback+auto_accept',
+                    'wave_num' => $waveCount + 1,
+                    'offers_created' => $created,
+                    'created_offer_ids' => $createdIds,
+                    'offer_id' => (int)$offerId,
                 ];
             }
         }
 
         return [
-            'ok'=>true,
-            'via'=>'fallback',
-            'offers_created'=>$created,
-            'created_offer_ids'=>$createdIds,
+            'ok' => true,
+            'via' => 'fallback',
+            'wave_num' => $waveCount + 1,
+            'offers_created' => $created,
+            'created_offer_ids' => $createdIds,
         ];
 
     } catch (\Throwable $e2) {
-        return ['ok'=>false,'via'=>'fallback','error'=>$e2->getMessage()];
+        return ['ok' => false, 'via' => 'fallback', 'error' => $e2->getMessage()];
     }
 }
+
 
 }

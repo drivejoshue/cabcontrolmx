@@ -69,6 +69,17 @@ class TaxiStandService
             abort(422, 'Solo puedes unirte a una base estando Disponible.');
         }
 
+
+            $inQueue = DB::table('taxi_stand_queue')
+              ->where('tenant_id', $tenantId)
+              ->where('driver_id', $driverId)
+              ->where('active_key', 1)              // ya implica en_cola|saltado
+              ->exists();
+
+            if ($inQueue) {
+              abort(422, 'Ya estás en una base. Sal primero para cambiar.');
+            }
+
         // Aquí luego se puede validar:
         //  - rides activos
         //  - offers en estado offered/accepted
@@ -98,9 +109,23 @@ class TaxiStandService
         ->select('last_lat', 'last_lng')
         ->first();
 
-    if (!$driver || $driver->last_lat === null || $driver->last_lng === null) {
-        return ['ok' => false, 'message' => 'No tenemos tu ubicación. Abre el mapa unos segundos e inténtalo de nuevo.'];
+   $freshSec = 120; // o desde settings si quieres
+    $loc = self::getFreshLocation($tenantId, $driverId, $freshSec);
+
+    if (!$loc) {
+        return [
+            'ok' => false,
+            'message' => "Ubicación no disponible o desactualizada. Mantén la app enviando ping y reintenta.",
+        ];
     }
+
+    $distKm = self::haversineKm(
+        (float)$stand->latitud,
+        (float)$stand->longitud,
+        $loc['lat'],
+        $loc['lng']
+    );
+
 
     $settings = DB::table('dispatch_settings')->where('tenant_id', $tenantId)->first();
     $radiusKm = 0.2;
@@ -113,10 +138,13 @@ class TaxiStandService
         return ['ok' => false, 'message' => 'No estás dentro de la base. Acércate al paradero para unirte.', 'dist_km' => $distKm, 'radius_km' => $radiusKm];
     }
 
-    // Join por SP (idempotente + maneja cambio de base)
-    DB::statement('CALL sp_queue_join_stand_v1(?, ?, ?)', [$tenantId, $standId, $driverId]);
-
-    return ['ok' => true, 'message' => 'Te uniste a la base.'];
+    try {
+        DB::statement('CALL sp_queue_join_stand_v1(?, ?, ?)', [$tenantId, $standId, $driverId]);
+        return ['ok' => true, 'message' => 'Te uniste a la base.'];
+    } catch (UniqueConstraintViolationException $e) {
+        // Si llegó doble request, lo tomamos como idempotente
+        return ['ok' => true, 'message' => 'Ya estabas en una base.'];
+    }
 }
 
     /**
@@ -126,20 +154,19 @@ public static function leaveStand(int $tenantId, int $driverId, int $standId, st
 {
     try {
         // Primero, eliminar cualquier registro 'salio' existente para evitar violación de unicidad
-        DB::table('taxi_stand_queue')
-            ->where('tenant_id', $tenantId)
-            ->where('stand_id', $standId)
-            ->where('driver_id', $driverId)
-            ->where('status', 'salio')
-            ->delete();
+      $active = DB::table('taxi_stand_queue')
+  ->where('tenant_id', $tenantId)
+  ->where('stand_id', $standId)
+  ->where('driver_id', $driverId)
+  ->where('active_key', 1)              // en_cola|saltado
+  ->exists();
 
-        // Luego llamar al SP
-        DB::statement('CALL sp_queue_leave_stand_v1(?, ?, ?, ?)', [
-            $tenantId,
-            $standId,
-            $driverId,
-            $statusTo,
-        ]);
+        if (!$active) {
+          return ['ok'=>true,'message'=>'Ya estabas fuera de la base.'];
+        }
+
+        DB::statement('CALL sp_queue_leave_stand_v1(?, ?, ?, ?)', [$tenantId,$standId,$driverId,$statusTo]);
+
 
         return [
             'ok'      => true,
@@ -187,10 +214,11 @@ public static function leaveStand(int $tenantId, int $driverId, int $standId, st
     ): ?array {
         // Detectar stand actual si no viene
         if (!$standId) {
-           $standId = DB::table('taxi_stand_queue')
+          $standId = DB::table('taxi_stand_queue')
     ->where('tenant_id', $tenantId)
     ->where('driver_id', $driverId)
-    ->whereIn('status', ['en_cola','saltado'])   // <-- aquí
+    ->where('active_key', 1)
+    ->whereIn('status', ['en_cola','saltado'])
     ->orderByDesc('id')
     ->value('stand_id');
 
@@ -216,10 +244,22 @@ public static function leaveStand(int $tenantId, int $driverId, int $standId, st
             ->select('last_lat', 'last_lng')
             ->first();
 
-        if (!$driver || $driver->last_lat === null || $driver->last_lng === null) {
-            // Sin ubicación, no auto-leave
-            return null;
-        }
+       $freshSec = 120; // o desde settings si quieres
+    $loc = self::getFreshLocation($tenantId, $driverId, $freshSec);
+
+    if (!$loc) {
+        return [
+            'ok' => false,
+            'message' => "Ubicación no disponible o desactualizada. Mantén la app enviando ping y reintenta.",
+        ];
+    }
+
+    $distKm = self::haversineKm(
+        (float)$stand->latitud,
+        (float)$stand->longitud,
+        $loc['lat'],
+        $loc['lng']
+    );
 
         $settings = DB::table('dispatch_settings')
             ->where('tenant_id', $tenantId)
@@ -339,34 +379,35 @@ public static function leaveStand(int $tenantId, int $driverId, int $standId, st
 
         // Cola + vehículo:
         // taxi_stand_queue → drivers → driver_shifts (abierto) → vehicles
-        $queue = DB::table('taxi_stand_queue as q')
-            ->join('drivers as d', function ($q2) use ($tenantId) {
-                $q2->on('d.id', '=', 'q.driver_id')
-                   ->where('d.tenant_id', '=', $tenantId);
-            })
-            ->leftJoin('driver_shifts as s', function ($q2) use ($tenantId) {
-                $q2->on('s.driver_id', '=', 'd.id')
-                   ->where('s.tenant_id', '=', $tenantId)
-                   ->where('s.status', '=', 'abierto');
-            })
-            ->leftJoin('vehicles as v', function ($q2) use ($tenantId) {
-                $q2->on('v.id', '=', 's.vehicle_id')
-                   ->where('v.tenant_id', '=', $tenantId);
-            })
-            ->where('q.tenant_id', $tenantId)
-            ->where('q.stand_id', $standId)
-           ->whereIn('q.status', ['en_cola','saltado'])     // <-- aquí
+      $queue = DB::table('taxi_stand_queue as q')
+    ->join('drivers as d', function ($j) use ($tenantId) {
+        $j->on('d.id', '=', 'q.driver_id')
+          ->where('d.tenant_id', '=', $tenantId);
+    })
+    ->leftJoin('driver_shifts as s', function ($j) use ($tenantId) {
+        $j->on('s.driver_id', '=', 'd.id')
+          ->where('s.tenant_id', '=', $tenantId)
+          ->where('s.status', '=', 'abierto');
+    })
+    ->leftJoin('vehicles as v', function ($j) use ($tenantId) {
+        $j->on('v.id', '=', 's.vehicle_id')
+          ->where('v.tenant_id', '=', $tenantId);
+    })
+    ->where('q.tenant_id', $tenantId)
+    ->where('q.stand_id', $standId)
+    ->where('q.active_key', 1)
+    ->whereIn('q.status', ['en_cola','saltado'])
+    ->orderBy('q.position')
+    ->get([
+        'q.driver_id',
+        'q.position',
+        'q.status as driver_status',
+        'd.last_lat',
+        'd.last_lng',
+        'v.economico',
+        'v.plate',
+    ]);
 
-            ->orderBy('q.position')
-            ->get([
-                'q.driver_id',
-                'q.position',
-                'q.status as driver_status',
-                'd.last_lat',
-                'd.last_lng',
-                'v.economico',
-                'v.plate',
-            ]);
 
         $myPos = null;
         foreach ($queue as $item) {
@@ -421,4 +462,33 @@ public static function leaveStand(int $tenantId, int $driverId, int $standId, st
 
         return $earthRadius * $c;
     }
+
+
+    private static function getFreshLocation(int $tenantId, int $driverId, int $freshSec = 120): ?array
+{
+    $loc = DB::table('driver_locations')   // <-- cambia a 'locations' si así se llama
+        ->where('tenant_id', $tenantId)
+        ->where('driver_id', $driverId)
+        ->orderByDesc('id')
+        ->first(['lat','lng','created_at']);
+
+    if (!$loc || $loc->lat === null || $loc->lng === null) {
+        return null;
+    }
+
+    $age = now()->diffInSeconds($loc->created_at);
+    if ($age > $freshSec) {
+        return null; // ubicación vieja = no permitimos join
+    }
+
+    return [
+        'lat' => (float)$loc->lat,
+        'lng' => (float)$loc->lng,
+        'age_sec' => (int)$age,
+    ];
+}
+
+
+
+
 }
