@@ -111,77 +111,130 @@ class RideShareController extends Controller
         return $row;
     }
 
-private function buildSnapshot($share, $ride, $driver = null, $vehicle = null, $dl = null): array
+private function buildSnapshot(int $tenantId, int $rideId): array
 {
-    try {
-        // Si por cualquier razón no hay ride/share, devuelve snapshot “ended”
-        if (!$share || !$ride) {
-            return [
-                'ok' => false,
-                'ended' => true,
-                'code' => 'ENDED',
-                'ride' => null,
-                'driver' => null,
-                'vehicle' => null,
-                'location' => null,
-                'ts' => now()->toIso8601String(),
-            ];
-        }
+    $ride = DB::table('rides')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $rideId)
+        ->first([
+            'id','tenant_id','status','driver_id',
+            'origin_label','origin_lat','origin_lng',
+            'dest_label','dest_lat','dest_lng',
+            'canceled_by','cancel_reason',
+            'created_at','updated_at',
+        ]);
 
-        $stLower = strtolower((string)($ride->status ?? ''));
-        $ended = in_array($stLower, ['finished','canceled'], true);
-
-        // Construye location (tu bloque actual)
-        $location = null;
-        if ($dl) {
-            $location = [
-                'lat' => $dl->lat,
-                'lng' => $dl->lng,
-                'bearing' => $dl->bearing,
-                'reported_at' => $dl->reported_at ? (string)$dl->reported_at : null,
-            ];
-        }
-
-        // IMPORTANTE: devuelve SIEMPRE
+    // ✅ Siempre devuelve estructura estable
+    if (!$ride) {
         return [
-            'ok' => !$ended,          // si prefieres ok=true aun cuando ended, cámbialo
-            'ended' => $ended,
-            'code' => $ended ? $stLower : null,
-            'ride' => [
-                'id' => $ride->id,
-                'status' => $ride->status,
-                'origin' => $ride->origin ?? null,
-                'destination' => $ride->destination ?? null,
-            ],
-            'driver' => $driver ? [
-                'id' => $driver->id,
-                'name' => $driver->name,
-            ] : null,
-            'vehicle' => $vehicle ? [
-                'brand' => $vehicle->brand ?? null,
-                'model' => $vehicle->model ?? null,
-                'color' => $vehicle->color ?? null,
-                'plate' => $vehicle->plate ?? null,
-            ] : null,
-            'location' => $location,
-            'ts' => now()->toIso8601String(),
-        ];
-
-    } catch (\Throwable $e) {
-        // Nunca dejes que reviente la vista pública
-        report($e);
-
-        return [
-            'ok' => false,
-            'ended' => true,
-            'code' => 'ERROR',
             'ride' => null,
             'driver' => null,
             'vehicle' => null,
             'location' => null,
-            'ts' => now()->toIso8601String(),
         ];
     }
+
+    $status = strtolower((string)$ride->status);
+    $isClosed = in_array($status, ['finished','canceled','completed','ended'], true);
+
+    $driver = null;
+    $vehicle = null;
+    $location = null;
+
+    if (!empty($ride->driver_id)) {
+        $driverRow = DB::table('drivers')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $ride->driver_id)
+            ->first(['id','name','foto_path','last_seen_at','last_bearing','last_speed','last_lat','last_lng']);
+
+        if ($driverRow) {
+            $driver = [
+                'id' => (int)$driverRow->id,
+                'name' => (string)($driverRow->name ?? ''),
+                'foto_path' => $driverRow->foto_path ? (string)$driverRow->foto_path : null,
+                'last_seen_at' => $driverRow->last_seen_at ? (string)$driverRow->last_seen_at : null,
+            ];
+        }
+
+        $assign = DB::table('driver_vehicle_assignments')
+            ->where('tenant_id', $tenantId)
+            ->where('driver_id', $ride->driver_id)
+            ->whereNull('end_at')
+            ->orderByDesc('id')
+            ->first(['vehicle_id']);
+
+        if ($assign && !empty($assign->vehicle_id)) {
+            $v = DB::table('vehicles')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $assign->vehicle_id)
+                ->first(['id','economico','plate','brand','model','color','year','photo_url','foto_path']);
+
+            if ($v) {
+                $vehicle = [
+                    'id' => (int)$v->id,
+                    'economico' => $v->economico ? (string)$v->economico : null,
+                    'plate' => $v->plate ? (string)$v->plate : null,
+                    'brand' => $v->brand ? (string)$v->brand : null,
+                    'model' => $v->model ? (string)$v->model : null,
+                    'color' => $v->color ? (string)$v->color : null,
+                    'year' => $v->year !== null ? (int)$v->year : null,
+                    'photo_url' => $v->photo_url ? (string)$v->photo_url : null,
+                    'foto_path' => $v->foto_path ? (string)$v->foto_path : null,
+                ];
+            }
+        }
+
+        // ✅ SOLO si el ride NO está cerrado
+        if (!$isClosed) {
+            $dl = DB::table('driver_locations')
+                ->where('tenant_id', $tenantId)
+                ->where('driver_id', $ride->driver_id)
+                ->orderByDesc('id')
+                ->first(['lat','lng','speed_kmh','bearing','reported_at']);
+
+            if ($dl) {
+                $location = [
+                    'lat'         => $dl->lat !== null ? (float)$dl->lat : null,
+                    'lng'         => $dl->lng !== null ? (float)$dl->lng : null,
+                    'speed_kmh'   => $dl->speed_kmh !== null ? (float)$dl->speed_kmh : null,
+                    'bearing'     => $dl->bearing !== null ? (float)$dl->bearing : null,
+                    'reported_at' => $dl->reported_at ? (string)$dl->reported_at : null,
+                ];
+            }
+        }
+    }
+
+    // ✅ Normaliza ride al formato que tu JS espera
+    $rideArr = [
+        'id' => (int)$ride->id,
+        'tenant_id' => (int)$ride->tenant_id,
+        'status' => (string)($ride->status ?? ''),
+        'driver_id' => $ride->driver_id ? (int)$ride->driver_id : null,
+
+        'origin' => [
+            'label' => (string)($ride->origin_label ?? ''),
+            'lat'   => $ride->origin_lat !== null ? (float)$ride->origin_lat : null,
+            'lng'   => $ride->origin_lng !== null ? (float)$ride->origin_lng : null,
+        ],
+        'destination' => [
+            'label' => (string)($ride->dest_label ?? ''),
+            'lat'   => $ride->dest_lat !== null ? (float)$ride->dest_lat : null,
+            'lng'   => $ride->dest_lng !== null ? (float)$ride->dest_lng : null,
+        ],
+
+        'canceled_by' => $ride->canceled_by ? (string)$ride->canceled_by : null,
+        'cancel_reason' => $ride->cancel_reason ? (string)$ride->cancel_reason : null,
+
+        'created_at' => $ride->created_at ? (string)$ride->created_at : null,
+        'updated_at' => $ride->updated_at ? (string)$ride->updated_at : null,
+    ];
+
+    return [
+        'ride' => $rideArr,
+        'driver' => $driver,
+        'vehicle' => $vehicle,
+        'location' => $location,
+    ];
 }
 
 
