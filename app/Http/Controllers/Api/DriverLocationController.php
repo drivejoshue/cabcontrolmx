@@ -42,11 +42,13 @@ class DriverLocationController extends Controller
             'heading_deg' => 'nullable|numeric|min:0|max:360',
         ]);
 
-        $driver = DB::table('drivers')
-            ->where('tenant_id', $tenantId)
-            ->where('user_id', $user->id)
-            ->select('id', 'status')
-            ->first();
+       $driver = DB::table('drivers')
+  ->where('tenant_id', $tenantId)
+  ->where('user_id', $user->id)
+  ->select('id','status','partner_id') // mínimo
+  ->first();
+
+
 
         if (!$driver) {
             return response()->json(['ok' => false, 'message' => 'Usuario no vinculado a conductor'], 403);
@@ -68,11 +70,11 @@ class DriverLocationController extends Controller
 
         // OJO: NO forzamos status por activeRide. Solo usamos para broadcast.
         $activeRide = DB::table('rides')
-            ->where('tenant_id', $tenantId)
-            ->where('driver_id', $driver->id)
-            ->whereIn('status', ['accepted', 'arrived', 'on_board'])
-            ->select('id', 'status')
-            ->first();
+    ->where('tenant_id', $tenantId)
+    ->where('driver_id', $driver->id)
+    ->whereIn('status', ['accepted', 'arrived', 'on_board'])
+    ->select('id','status','origin_lat','origin_lng')
+    ->first();
 
         $speed     = array_key_exists('speed_kmh', $data) ? (float)$data['speed_kmh'] : null;
         $isStopped = $speed !== null && $speed < 1.0;
@@ -195,6 +197,46 @@ class DriverLocationController extends Controller
                 }
             }
         }
+
+        // ======= payload base (usar $data, no $lat/$lng) =======
+        $rideStatus = $activeRide ? (string)$activeRide->status : null;
+
+            $payload = [
+                'tenant_id'       => $tenantId,
+                'driver_id'       => (int)$driver->id,
+                'lat'             => (float)$data['lat'],
+                'lng'             => (float)$data['lng'],
+                'bearing'         => $bearing, // ya viene null o float normalizado
+                'reported_at'     => $nowLocal->format('Y-m-d H:i:s'), // consistente con panel
+                'driver_status'   => $effectiveStatus,
+                'ride_status'     => $rideStatus,
+                'shift_open'      => (int)($driver->shift_open ?? 0),
+
+                // datos vehiculo (ya vienen del join)
+                'vehicle_economico' => $driver->vehicle_economico ?? null,
+                'vehicle_plate'     => $driver->vehicle_plate ?? null,
+                'vehicle_type'      => $driver->vehicle_type ?? 'sedan',
+
+                // stand info (si lo usas en UI)
+                'stand_id'       => $driver->stand_id ?? null,
+                'stand_status'   => $driver->stand_status ?? null,
+            ];
+
+            // origin coords si hay ride activo (para suggested route)
+           if ($activeRide && $activeRide->origin_lat !== null && $activeRide->origin_lng !== null) {
+                $payload['origin_lat'] = (float)$activeRide->origin_lat;
+                $payload['origin_lng'] = (float)$activeRide->origin_lng;
+            }
+
+
+            // ======= broadcast partner (solo si tiene partner_id) =======
+            if (!empty($driver->partner_id)) {
+                broadcast(new \App\Events\PartnerDriverLocationUpdated(
+                    (int)$driver->partner_id,
+                    $payload
+                ));
+            }
+
 
         // 4) Broadcast al pasajero si hay ride activo (solo ubicación, no status)
         if ($activeRide) {

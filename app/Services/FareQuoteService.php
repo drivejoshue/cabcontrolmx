@@ -30,20 +30,24 @@ class FareQuoteService
         [$pol, $source] = $this->resolvePolicyWithFallback($tenantId);
 
         // 2) Defaults “duros” (último recurso)
-        $defaults = [
-            'mode'             => 'meter',
-            'base_fee'         => 35.0,
-            'per_km'           => 12.0,
-            'per_min'          => 2.0,
-            'min_total'        => 50.0,
-            'night_multiplier' => 1.20,
-            'night_start_hour' => 22,
-            'night_end_hour'   => 6,
-            'round_mode'       => 'step',
-            'round_step'       => 1.00,
-            'round_decimals'   => 0,
-            'stop_fee'         => 0.0,
-        ];
+       $defaults = [
+    'mode'             => 'meter',
+    'base_fee'         => 35.0,
+    'per_km'           => 12.0,
+    'per_min'          => 2.0,
+    'min_total'        => 50.0,
+    'night_multiplier' => 1.20,
+    'night_start_hour' => 22,
+    'night_end_hour'   => 6,
+    'round_mode'       => 'step',
+    'round_step'       => 1.00,
+    'round_decimals'   => 0,
+    'stop_fee'         => 0.0,
+
+    // ✅ nuevos (slider)
+    'slider_min_pct'   => 0.80,
+    'slider_max_pct'   => 1.20,
+];
 
         // 3) Mapear policy a variables (con fallback de defaults por campo)
         $baseFee    = (float)($pol->base_fee         ?? $defaults['base_fee']);
@@ -57,6 +61,9 @@ class FareQuoteService
         $roundStep  = (float) ($pol->round_step      ?? $defaults['round_step']);
         $roundDec   = (int)   ($pol->round_decimals  ?? $defaults['round_decimals']);
         $stopFee    = (float)($pol->stop_fee         ?? $defaults['stop_fee']);
+        $sliderMinPct = (float)($pol->slider_min_pct ?? $defaults['slider_min_pct']);
+        $sliderMaxPct = (float)($pol->slider_max_pct ?? $defaults['slider_max_pct']);
+
 
         // 4) Anti-cero: si la policy existe pero core está en 0, aplicar fallback duro
         $coreAllZero = ($baseFee <= 0.0 && $perKm <= 0.0 && $perMin <= 0.0);
@@ -76,6 +83,9 @@ class FareQuoteService
             $roundStep  = (float)$defaults['round_step'];
             $roundDec   = (int)$defaults['round_decimals'];
             $stopFee    = (float)$defaults['stop_fee'];
+            $sliderMinPct = (float)$defaults['slider_min_pct'];
+            $sliderMaxPct = (float)$defaults['slider_max_pct'];
+
             $source     = 'hard_defaults';
         }
 
@@ -83,6 +93,16 @@ class FareQuoteService
         if ($roundToStep !== null) {
             $roundMode = 'step';
             $roundStep = $roundToStep;
+        }
+
+        // ✅ clamp de slider (evita rangos absurdos o invertidos)
+        $sliderMinPct = max(0.50, min(1.00, $sliderMinPct));
+        $sliderMaxPct = max(1.00, min(2.00, $sliderMaxPct));
+
+        if ($sliderMaxPct <= $sliderMinPct) {
+            // fallback seguro
+            $sliderMinPct = 0.80;
+            $sliderMaxPct = 1.20;
         }
 
         // --- Normalizar puntos: origen → paradas (máx 2) → destino ---
@@ -162,6 +182,9 @@ class FareQuoteService
             'duration_s'    => $durS,
             'stops_n'       => \count($cleanStops),
             'policy_source' => $source, // útil para debug en QA
+            'slider_min_pct' => $sliderMinPct,
+            'slider_max_pct' => $sliderMaxPct,
+
         ];
     }
 
@@ -219,6 +242,9 @@ class FareQuoteService
                 'min_total'         => $fallback->min_total ?? 50,
                 'extras'            => $fallback->extras ?? json_encode([]),
                 'stop_fee'          => $fallback->stop_fee ?? 0,
+                'slider_min_pct' => $fallback->slider_min_pct ?? 0.80,
+                'slider_max_pct' => $fallback->slider_max_pct ?? 1.20,
+
                 'created_at'        => now(),
                 'updated_at'        => now(),
             ]);

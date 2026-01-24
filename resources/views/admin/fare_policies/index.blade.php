@@ -25,6 +25,9 @@
     'round_step' => 1.00,
     'round_decimals' => 0,
     'round_to' => 1.00,
+    'stop_fee' => 20.00,
+'slider_min_pct' => 0.80,
+'slider_max_pct' => 1.20,
   ];
 
   $kmExample = 10;
@@ -187,10 +190,22 @@
             </div>
           </div>
 
-          <div class="col-12">
-            <div class="text-muted small mb-1">Extras (JSON)</div>
-            <pre class="mb-0 bg-light p-2 rounded small">{{ $policy->extras ? json_encode($policy->extras, JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE) : '{}' }}</pre>
-          </div>
+
+          <div class="col-md-3">
+  <div class="text-muted small">Stop fee</div>
+  <div class="fw-semibold">{{ $money($policy->stop_fee ?? 0) }}</div>
+</div>
+
+<div class="col-md-3">
+  <div class="text-muted small">Slider (puja)</div>
+  <div class="fw-semibold">
+    {{ number_format((float)($policy->slider_min_pct ?? 0.80) * 100, 0) }}% –
+    {{ number_format((float)($policy->slider_max_pct ?? 1.20) * 100, 0) }}%
+  </div>
+</div>
+
+
+          
 
           <div class="col-md-6">
             <div class="text-muted small">Vigente desde</div>

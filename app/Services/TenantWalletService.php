@@ -136,7 +136,7 @@ class TenantWalletService
                 ->where('tenant_id', $tenantId)
                 ->update([
                     'balance'    => DB::raw('balance - ' . $amount),
-                    'currency'   => $currency ?? 'MXN',
+                    'currency'   => $currency ,
                     'updated_at' => now(),
                 ]);
 
@@ -144,7 +144,7 @@ class TenantWalletService
                 'tenant_id'    => $tenantId,
                 'type'         => 'debit',
                 'amount'       => $amount,
-                'currency'     => $currency ?? 'MXN',
+                'currency'     => $currency,
                 'ref_type'     => $refType,
                 'ref_id'       => $refId,
                 'external_ref' => $externalRef,
@@ -234,6 +234,86 @@ class TenantWalletService
         $w = $this->ensureWallet($tenantId);
         return (string)($w->currency ?? 'MXN');
     }
+
+    /**
+ * Acredita una recarga tipo "topup" pero permitiendo ref_type/ref_id.
+ * Útil para partner_topups, ajustes de entrada, etc.
+ *
+ * - type=topup
+ * - Idempotente por external_ref
+ * - DEVUELVE true si acreditó, false si ya existía
+ */
+public function creditTopupWithRef(
+    int $tenantId,
+    float $amount,
+    string $externalRef,
+    ?string $refType = null,
+    ?int $refId = null,
+    ?string $notes = null,
+    ?string $currency = 'MXN'
+): bool {
+    $amount = round((float)$amount, 2);
+    if ($amount <= 0) {
+        throw new \InvalidArgumentException('Amount inválido');
+    }
+
+    $currency = strtoupper(trim((string)($currency ?? 'MXN')));
+
+    return DB::transaction(function () use ($tenantId, $amount, $externalRef, $refType, $refId, $notes, $currency) {
+
+        // Asegurar wallet (ideal: tenant_wallets.tenant_id UNIQUE)
+        $this->ensureWallet($tenantId);
+
+        // 🔒 Lock wallet row para serializar créditos/débitos y hacer idempotencia segura
+        $w = DB::table('tenant_wallets')
+            ->where('tenant_id', $tenantId)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$w) {
+            // Muy raro (pero por si acaso)
+            $this->ensureWallet($tenantId);
+            $w = DB::table('tenant_wallets')->where('tenant_id', $tenantId)->lockForUpdate()->first();
+        }
+
+        $walletCurrency = strtoupper((string)($w->currency ?? 'MXN'));
+        if ($walletCurrency !== $currency) {
+            throw new \RuntimeException("Moneda no coincide. Wallet={$walletCurrency}, request={$currency}");
+        }
+
+        // Idempotencia por external_ref (ya con lock, no hay race)
+        $exists = DB::table('tenant_wallet_movements')
+            ->where('tenant_id', $tenantId)
+            ->where('external_ref', $externalRef)
+            ->exists();
+
+        if ($exists) return false;
+
+        DB::table('tenant_wallets')
+            ->where('tenant_id', $tenantId)
+            ->update([
+                'balance'       => DB::raw('balance + ' . number_format($amount, 2, '.', '')),
+                'last_topup_at' => now(),
+                'updated_at'    => now(),
+            ]);
+
+        DB::table('tenant_wallet_movements')->insert([
+            'tenant_id'    => $tenantId,
+            'type'         => 'topup',
+            'amount'       => $amount,
+            'currency'     => $walletCurrency,
+            'ref_type'     => $refType,
+            'ref_id'       => $refId,
+            'external_ref' => $externalRef,
+            'notes'        => $notes,
+            'created_at'   => now(),
+        ]);
+
+        return true;
+    });
+}
+
+
 
 
 }

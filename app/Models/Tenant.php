@@ -7,36 +7,75 @@ class Tenant extends Model
 {
     protected $table = 'tenants';
     
+  
     protected $fillable = [
         'name',
         'slug',
+        'notification_email',
+        'public_phone',
+        'public_city',
+        'public_active',
+        'public_notes',
+
         'timezone',
+        'country_code',
         'utc_offset_minutes',
         'latitud',
         'longitud',
         'coverage_radius_km',
+
         'allow_marketplace',
+
+        // operación / partners
+        'operating_mode',
+        'partner_billing_wallet',
+        'partner_require_assignment',
+        'partner_min_active_vehicles',
+        'partner_max_vehicles_per_partner',
+
+        // billing
         'billing_mode',
         'commission_percent',
-        'onboarding_done_at', // Agregado si existe en BD
-        'created_at',         // Si quieres poder asignarlo
-        'updated_at'          // Si quieres poder asignarlo
+
+        'onboarding_done_at',
     ];
-    
+
     protected $casts = [
+        'public_active' => 'boolean',
         'allow_marketplace' => 'boolean',
+        'partner_require_assignment' => 'boolean',
+
         'utc_offset_minutes' => 'integer',
+        'partner_min_active_vehicles' => 'integer',
+        'partner_max_vehicles_per_partner' => 'integer',
+
         'latitud' => 'float',
         'longitud' => 'float',
         'coverage_radius_km' => 'float',
         'commission_percent' => 'float',
+
         'onboarding_done_at' => 'datetime',
         'created_at' => 'datetime',
-        'updated_at' => 'datetime'
+        'updated_at' => 'datetime',
     ];
 
-    // Si no existe el campo onboarding_done_at en tu BD, coméntalo o elimínalo
-    // Primero verifica si existe en tu tabla
+    // =======================
+    // Helpers de operación
+    // =======================
+    public function supportsPartners(): bool
+    {
+        return in_array($this->operating_mode, ['partner_network','hybrid','whitelabel'], true);
+    }
+
+    public function isTraditional(): bool
+    {
+        return $this->operating_mode === 'traditional';
+    }
+
+    public function partnerWalletMode(): string
+    {
+        return $this->partner_billing_wallet ?: 'tenant_wallet';
+    }
     
     /**
      * Relación con el perfil de facturación

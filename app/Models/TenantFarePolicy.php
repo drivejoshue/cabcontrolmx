@@ -21,10 +21,15 @@ class TenantFarePolicy extends Model
         'night_multiplier',
         'round_to',
         'min_total',
+        'stop_fee',
         'extras',
+        'slider_min_pct',
+        'slider_max_pct',
         'active_from',
         'active_to',
-        'stop_fee',
+         'extras' => 'array',
+  'active_from' => 'date',
+  'active_to' => 'date',
     ];
 
     protected $casts = [
@@ -39,9 +44,17 @@ class TenantFarePolicy extends Model
         'night_multiplier' => 'float',
         'round_to'         => 'float',
         'min_total'        => 'float',
+        'stop_fee'         => 'float',
+
+        // ✅ nuevos
+        'slider_min_pct'   => 'float',
+        'slider_max_pct'   => 'float',
+
         'extras'           => 'array',
         'active_from'      => 'date',
         'active_to'        => 'date',
-        'stop_fee'                         => 'float',
+         'extras' => 'array',
+  'active_from' => 'date',
+  'active_to' => 'date',
     ];
 }

@@ -30,6 +30,19 @@ class TenantBillingService
         return null;
     }
 
+private function isPartnerModeTenant(Tenant $tenant): bool
+{
+    // partner_billing_wallet = 'partner_wallet' => gobernanza por partner (NO bloquear tenant)
+    $flag = strtolower((string)($tenant->partner_billing_wallet ?? 'tenant_wallet')) === 'partner_wallet';
+
+    // billing_model esperado (por ahora) = per_vehicle
+    $bm = strtolower((string)(optional($tenant->billingProfile)->billing_model ?? 'per_vehicle'));
+
+    return $flag && ($bm === 'per_vehicle');
+}
+
+
+
     public function isTrialExpired(TenantBillingProfile $p, ?Carbon $now = null): bool
     {
         $now = $now ?: Carbon::now();
@@ -67,7 +80,15 @@ class TenantBillingService
      */
 
      public function canRegisterNewVehicle(Tenant $tenant): array
-    {
+    {   
+
+        // ✅ Partner mode: no bloqueamos por trial/paused/pending del tenant
+        if ($this->isPartnerModeTenant($tenant)) {
+            return [true, null];
+        }
+
+
+
         $profile = $tenant->billingProfile;
         if (!$profile) return [false, 'Sin perfil de facturación.'];
 
@@ -444,6 +465,11 @@ public function recheckTenantBillingState(
     $now = $date ?: Carbon::now();
     $p = $tenant->billingProfile;
 
+    if ($this->isPartnerModeTenant($tenant)) {
+    // En partner-mode el tenant NO se pausa por saldo: la gobernanza es por partner.
+    return;
+}
+
     if (!$p || ($p->billing_model ?? '') !== 'per_vehicle') {
         return;
     }
@@ -526,7 +552,7 @@ private function findCurrentUnpaidInvoice(Tenant $tenant, Carbon $now): ?TenantI
     [$mStart, $mEnd] = $this->periodEomFor($now);
 
     return TenantInvoice::where('tenant_id', $tenant->id)
-        ->whereIn('status', ['draft','pending','overdue'])
+        ->whereIn('status', ['draft','pending'])
         ->whereDate('period_end', '>=', $mStart->toDateString())
         ->whereDate('period_start', '<=', $mEnd->toDateString())
         ->orderByDesc('issue_date')
@@ -552,6 +578,22 @@ public function billingUiState(
 ): array {
     $now = $date ?: Carbon::now();
     $p = $tenant->billingProfile;
+
+    if ($this->isPartnerModeTenant($tenant)) {
+    return [
+        'billing_state' => 'ok',
+        'billing_message' => null,
+        'required_amount' => 0.0,
+        'balance' => null,
+        'currency' => 'MXN',
+        'invoice_id' => null,
+        'invoice_status' => null,
+        'due_date' => null,
+        'partner_mode' => true,
+    ];
+}
+
+
 
     if (!$p || ($p->billing_model ?? '') !== 'per_vehicle') {
         return [
@@ -703,7 +745,11 @@ public function billingUiState(
 
 
 public function generateMonthlyInvoice(Tenant $tenant, Carbon $refDate): TenantInvoice
-{
+{   
+    if ($this->isPartnerModeTenant($tenant)) {
+        throw new \RuntimeException("Partner-mode: no se generan invoices mensuales de tenant.");
+    }
+
     $p = $tenant->billingProfile;
     if (!$p) {
         throw new \RuntimeException("Tenant sin billing profile.");
@@ -735,6 +781,16 @@ public function runMonthlyCycle(int $tenantId, ?Carbon $now = null): array
     $now = $now ?: Carbon::now();
     /** @var Tenant $tenant */
     $tenant = Tenant::findOrFail($tenantId);
+
+    if ($this->isPartnerModeTenant($tenant)) {
+        return [
+            'ok' => true,
+            'mode' => 'partner_wallet',
+            'message' => 'Partner-mode: ciclo mensual de tenant deshabilitado (se cobra diario por partner).',
+        ];
+    }
+
+
     $p = $tenant->billingProfile;
     if (!$p) {
         throw new \RuntimeException("Tenant #{$tenantId} sin billing profile.");
@@ -786,6 +842,20 @@ public function billingGateState(Tenant $tenant, TenantWalletService $wallet, ?C
 {
     $now = $date ?: Carbon::now();
     $p = $tenant->billingProfile;
+
+if ($this->isPartnerModeTenant($tenant)) {
+    return [
+        'billing_state' => 'ok',
+        'billing_message' => null,
+        'required_amount' => 0.0,
+        'balance' => null,
+        'currency' => 'MXN',
+        'invoice_id' => null,
+        'invoice_status' => null,
+        'due_date' => null,
+        'partner_mode' => true,
+    ];
+}
 
     // Default
     $out = [

@@ -11,11 +11,20 @@ class Vehicle extends Model
 
     protected $fillable = [
         'tenant_id',
+
+        // partner scope
+        'partner_id',
+        'recruited_by_partner_id',
+        'partner_assigned_at',
+        'partner_left_at',
+        'partner_notes',
+
+        // core fields
         'economico',
         'plate',
         'brand',
         'model',
-        'type',        // 'sedan','vagoneta','van','premium'
+        'type',
         'color',
         'year',
         'capacity',
@@ -23,21 +32,35 @@ class Vehicle extends Model
         'photo_url',
         'foto_path',
         'active',
+
+        // verification
+        'verification_status',
+        'verification_notes',
+        'verified_by',
+        'verified_at',
     ];
 
     protected $casts = [
         'tenant_id' => 'integer',
-        'year'      => 'integer',
-        'capacity'  => 'integer',
-        'active'    => 'boolean',
+        'partner_id' => 'integer',
+        'recruited_by_partner_id' => 'integer',
+        'year' => 'integer',
+        'capacity' => 'integer',
+        'active' => 'boolean',
+        'partner_assigned_at' => 'datetime',
+        'partner_left_at' => 'datetime',
+        'verified_at' => 'datetime',
     ];
 
-    /* =========================================================
-     |  Scopes
-     * ========================================================*/
+    /* Scopes */
     public function scopeForTenant(Builder $q, int $tenantId): Builder
     {
         return $q->where('tenant_id', $tenantId);
+    }
+
+    public function scopeForPartner(Builder $q, int $tenantId, int $partnerId): Builder
+    {
+        return $q->where('tenant_id', $tenantId)->where('partner_id', $partnerId);
     }
 
     public function scopeActive(Builder $q, bool $active = true): Builder
@@ -49,6 +72,7 @@ class Vehicle extends Model
     {
         if (!$term) return $q;
         $term = trim($term);
+
         return $q->where(function ($qq) use ($term) {
             $qq->where('economico', 'like', "%{$term}%")
                ->orWhere('plate', 'like', "%{$term}%")
@@ -58,68 +82,48 @@ class Vehicle extends Model
         });
     }
 
-    /* =========================================================
-     |  Relaciones (ajusta nombres si tus modelos difieren)
-     * ========================================================*/
+    /* Relaciones */
     public function tenant()
     {
-        return $this->belongsTo(\App\Models\Tenant::class);
+        return $this->belongsTo(Tenant::class);
     }
 
-    public function rides()
+    public function partner()
     {
-        return $this->hasMany(\App\Models\Ride::class);
+        return $this->belongsTo(Partner::class, 'partner_id');
     }
 
-    // Si manejas asignaciones históricas vehículo-conductor:
-    public function assignments()
+    public function recruitedByPartner()
     {
-        return $this->hasMany(\App\Models\DriverVehicleAssignment::class, 'vehicle_id');
+        return $this->belongsTo(Partner::class, 'recruited_by_partner_id');
     }
 
-    // Asignación actual (si tu tabla tiene ended_at):
-    public function currentAssignment()
+    public function verifiedByUser()
     {
-        return $this->hasOne(\App\Models\DriverVehicleAssignment::class, 'vehicle_id')
-            ->whereNull('ended_at')
-            ->latestOfMany();
+        return $this->belongsTo(User::class, 'verified_by');
     }
 
-    /* =========================================================
-     |  Accessors / Helpers
-     * ========================================================*/
+    public function documents()
+    {
+        return $this->hasMany(VehicleDocument::class);
+    }
+
+    /* Helpers */
     public function getDisplayNameAttribute(): string
     {
-        // p.ej. "01615 · YZX-123B · Nissan Versa (Blanco)"
         $parts = array_filter([
             $this->economico,
             $this->plate ? '· '.$this->plate : null,
             trim(implode(' ', array_filter([$this->brand, $this->model]))),
             $this->color ? "({$this->color})" : null,
         ]);
-        return trim(implode(' ', $parts)) ?: "Vehículo #{$this->id}";
-    }
 
-    public function getEcoPlateAttribute(): string
-    {
-        // p.ej. "Eco 01615 · YZX-123B"
-        $eco = $this->economico ? "Eco {$this->economico}" : null;
-        return trim(implode(' · ', array_filter([$eco, $this->plate])));
+        return trim(implode(' ', $parts)) ?: "Vehículo #{$this->id}";
     }
 
     public function getPhotoUrlResolvedAttribute(): ?string
     {
-        // Prioriza archivo local (foto_path) sobre URL absoluta
-        if ($this->foto_path) {
-            // Usa storage si lo sirves por /storage
-            return asset('storage/'.$this->foto_path);
-        }
+        if ($this->foto_path) return asset('storage/'.$this->foto_path);
         return $this->photo_url ?: null;
     }
-
-    public function documents()
-{
-    return $this->hasMany(VehicleDocument::class);
-}
-
 }

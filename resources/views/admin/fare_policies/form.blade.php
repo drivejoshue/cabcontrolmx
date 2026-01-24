@@ -16,6 +16,10 @@
     'round_step' => 1.00,
     'round_decimals' => 0,
     'round_to' => 1.00,
+    'stop_fee' => 20,
+'slider_min_pct' => 0.80,
+'slider_max_pct' => 1.20,
+
   ];
 
   $base = (float) old('base_fee', $policy->base_fee ?? 0);
@@ -145,6 +149,43 @@
               </div>
 
               <div class="col-md-3">
+  <label class="form-label">Costo por parada (Stop fee)</label>
+  <div class="input-group">
+    <span class="input-group-text">$</span>
+    <input id="stop_fee" type="number" step="1" min="0" max="9999"
+           class="form-control @error('stop_fee') is-invalid @enderror"
+           name="stop_fee" value="{{ old('stop_fee',$policy->stop_fee) }}">
+  </div>
+  <div class="form-hint">Se suma por cada parada (S1/S2).</div>
+  @error('stop_fee')<div class="invalid-feedback">{{ $message }}</div>@enderror
+</div>
+
+<div class="col-md-3">
+  <label class="form-label">Slider mínimo (puja)</label>
+  <div class="input-group">
+    <input id="slider_min_pct" type="number" step="0.01" min="0.50" max="1.00"
+           class="form-control @error('slider_min_pct') is-invalid @enderror"
+           name="slider_min_pct" value="{{ old('slider_min_pct',$policy->slider_min_pct ?? 0.80) }}">
+    <span class="input-group-text">x</span>
+  </div>
+  <div class="form-hint">0.80 = 80% del recomendado.</div>
+  @error('slider_min_pct')<div class="invalid-feedback">{{ $message }}</div>@enderror
+</div>
+
+<div class="col-md-3">
+  <label class="form-label">Slider máximo (puja)</label>
+  <div class="input-group">
+    <input id="slider_max_pct" type="number" step="0.01" min="1.00" max="1.50"
+           class="form-control @error('slider_max_pct') is-invalid @enderror"
+           name="slider_max_pct" value="{{ old('slider_max_pct',$policy->slider_max_pct ?? 1.20) }}">
+    <span class="input-group-text">x</span>
+  </div>
+  <div class="form-hint">1.20 = 120% del recomendado.</div>
+  @error('slider_max_pct')<div class="invalid-feedback">{{ $message }}</div>@enderror
+</div>
+
+
+              <div class="col-md-3">
                 <label class="form-label">Multiplicador noche</label>
                 <input id="night_multiplier" type="number" step="0.01" min="1.00" max="3.00"
                        class="form-control @error('night_multiplier') is-invalid @enderror"
@@ -228,14 +269,7 @@
                 @error('active_to')<div class="invalid-feedback">{{ $message }}</div>@enderror
               </div>
 
-              <div class="col-12">
-                <label class="form-label">Extras (opcional)</label>
-                <textarea class="form-control font-monospace @error('extras') is-invalid @enderror"
-                          rows="4" name="extras"
-                          placeholder='{"aeropuerto":30,"mascotas":10}'>{{ old('extras', $policy->extras ? json_encode($policy->extras, JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE) : '') }}</textarea>
-                <div class="form-hint">Solo si tu central maneja cargos extra (ej. aeropuerto, peaje).</div>
-                @error('extras')<div class="invalid-feedback">{{ $message }}</div>@enderror
-              </div>
+              
 
             </div>
           </div>

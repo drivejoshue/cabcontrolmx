@@ -67,82 +67,102 @@ class TenantController extends Controller
      * Form de creación
      * GET /sysadmin/tenants/create -> name: sysadmin.tenants.create
      */
-    public function create()
-    {
-        // Si quieres, podrías pasar una lista de timezones soportados.
-        return view('sysadmin.tenants.create');
-    }
+ public function create()
+{
+    $tenant = new Tenant([
+        'timezone' => 'America/Mexico_City',
+        'coverage_radius_km' => 30,
+        'allow_marketplace' => 1,
+
+        // defaults partners
+        'operating_mode' => 'traditional',
+        'partner_billing_wallet' => 'tenant_wallet',
+        'partner_require_assignment' => 1,
+        'partner_min_active_vehicles' => 0,
+        'partner_max_vehicles_per_partner' => null,
+    ]);
+
+    return view('sysadmin.tenants.create', compact('tenant'));
+}
+
 
     /**
      * POST /sysadmin/tenants -> name: sysadmin.tenants.store
      */
-    public function store(Request $request)
-    {
-        $data = $request->validate([
-            'name'               => ['required','string','max:255'],
-            'slug'               => ['nullable','string','max:255', 'regex:/^[a-z0-9\-]+$/i'],
-            'timezone'           => ['required','string','max:64'],
-            'latitud'            => ['nullable','numeric'],
-            'longitud'           => ['nullable','numeric'],
-            'coverage_radius_km' => ['nullable','numeric','min:0'],
-            'allow_marketplace'  => ['nullable','boolean'],
-           'role' => ['sometimes', Rule::in(['driver','admin','dispatcher','sysadmin'])],
+   public function store(Request $request)
+{
+    $data = $request->validate([
+        'name'               => ['required','string','max:255'],
+        'slug'               => ['nullable','string','max:255', 'regex:/^[a-z0-9\-]+$/i'],
+        'timezone'           => ['required','string','max:64'],
+        'latitud'            => ['nullable','numeric'],
+        'longitud'           => ['nullable','numeric'],
+        'coverage_radius_km' => ['nullable','numeric','min:0'],
+        'allow_marketplace'  => ['nullable','boolean'],
 
+        // modo operación
+        'operating_mode' => ['required', Rule::in(['traditional','partner_network','hybrid','whitelabel'])],
 
-            // Admin inicial del tenant
-            'admin_name'         => ['required','string','max:255'],
-            'admin_email'        => ['required','email','max:255', Rule::unique('users','email')],
-            'admin_password'     => ['required','string','min:6'],
+        // settings partners
+        'partner_billing_wallet' => ['required', Rule::in(['tenant_wallet','partner_wallet'])],
+        'partner_require_assignment' => ['nullable','boolean'],
+        'partner_min_active_vehicles' => ['nullable','integer','min:0'],
+        'partner_max_vehicles_per_partner' => ['nullable','integer','min:0'],
+
+        // Admin inicial del tenant
+        'admin_name'         => ['required','string','max:255'],
+        'admin_email'        => ['required','email','max:255', Rule::unique('users','email')],
+        'admin_password'     => ['required','string','min:6'],
+    ]);
+
+    $slug = $data['slug'] ?: Str::slug($data['name']);
+    $slug = $this->ensureUniqueSlug($slug);
+
+    try {
+        DB::beginTransaction();
+
+        $tenant = Tenant::create([
+            'name'               => $data['name'],
+            'slug'               => $slug,
+            'timezone'           => $data['timezone'],
+            'latitud'            => $data['latitud'] ?? null,
+            'longitud'           => $data['longitud'] ?? null,
+            'coverage_radius_km' => $data['coverage_radius_km'] ?? null,
+            'allow_marketplace'  => !empty($data['allow_marketplace']) ? 1 : 0,
+
+            // ✅ aquí van:
+            'operating_mode' => $data['operating_mode'],
+            'partner_billing_wallet' => $data['partner_billing_wallet'],
+            'partner_require_assignment' => !empty($data['partner_require_assignment']) ? 1 : 0,
+            'partner_min_active_vehicles' => (int)($data['partner_min_active_vehicles'] ?? 0),
+            'partner_max_vehicles_per_partner' => $data['partner_max_vehicles_per_partner'] ?? null,
         ]);
 
-        // Slug normalizado y único
-        $slug = $data['slug'] ?: Str::slug($data['name']);
-        $slug = $this->ensureUniqueSlug($slug);
+        User::create([
+            'tenant_id'         => $tenant->id,
+            'name'              => $data['admin_name'],
+            'email'             => $data['admin_email'],
+            'password'          => Hash::make($data['admin_password']),
+            'email_verified_at' => now(),
+            'role'              => UserRole::ADMIN,
+            'is_admin'          => true,
+            'is_dispatcher'     => false,
+            'is_sysadmin'       => false,
+            'active'            => 1,
+        ]);
 
-        try {
-            DB::beginTransaction();
+        DB::commit();
 
-            /** @var Tenant $tenant */
-            $tenant = Tenant::create([
-                'name'               => $data['name'],
-                'slug'               => $slug,
-                'timezone'           => $data['timezone'],
-                'latitud'            => $data['latitud'] ?? null,
-                'longitud'           => $data['longitud'] ?? null,
-                'coverage_radius_km' => $data['coverage_radius_km'] ?? null,
-                'allow_marketplace'  => !empty($data['allow_marketplace']) ? 1 : 0,
-            ]);
-
-            // Usuario admin del tenant
-            User::create([
-                'tenant_id'         => $tenant->id,
-                'name'              => $data['admin_name'],
-                'email'             => $data['admin_email'],
-                'password'          => Hash::make($data['admin_password']),
-                'email_verified_at' => now(),
-                 'role'      => UserRole::ADMIN,
-
-                'is_admin'          => true,
-                'is_dispatcher' => false,
-                'is_sysadmin'       => false,
-                'email_verified_at' => now(),
-            ]);
-
-            DB::commit();
-
-            return redirect()
-                ->route('sysadmin.tenants.edit', $tenant)
-                ->with('status', 'Tenant creado y usuario admin generado correctamente.');
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            Log::error('SYSADMIN: error al crear tenant', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-            return back()->withErrors(['create' => 'No se pudo crear el tenant: '.$e->getMessage()])
-                         ->withInput();
-        }
+        return redirect()
+            ->route('sysadmin.tenants.edit', $tenant)
+            ->with('status', 'Tenant creado y usuario admin generado correctamente.');
+    } catch (\Throwable $e) {
+        DB::rollBack();
+        Log::error('SYSADMIN: error al crear tenant', ['error' => $e->getMessage()]);
+        return back()->withErrors(['create' => 'No se pudo crear el tenant: '.$e->getMessage()])->withInput();
     }
+}
+
 
     /**
      * GET /sysadmin/tenants/{tenant}/edit -> name: sysadmin.tenants.edit
@@ -166,6 +186,14 @@ class TenantController extends Controller
             'longitud'           => ['nullable','numeric'],
             'coverage_radius_km' => ['nullable','numeric','min:0'],
             'allow_marketplace'  => ['nullable','boolean'],
+
+             'operating_mode' => ['required', Rule::in(['traditional','partner_network','hybrid','whitelabel'])],
+          'partner_billing_wallet' => ['required', Rule::in(['tenant_wallet','partner_wallet'])],
+          'partner_require_assignment' => ['nullable','boolean'],
+          'partner_min_active_vehicles' => ['nullable','integer','min:0'],
+          'partner_max_vehicles_per_partner' => ['nullable','integer','min:0'],
+
+
         ]);
 
         try {
@@ -177,6 +205,13 @@ class TenantController extends Controller
                 'longitud'           => $data['longitud'] ?? null,
                 'coverage_radius_km' => $data['coverage_radius_km'] ?? null,
                 'allow_marketplace'  => !empty($data['allow_marketplace']) ? 1 : 0,
+
+                 'operating_mode' => $data['operating_mode'],
+          'partner_billing_wallet' => $data['partner_billing_wallet'],
+          'partner_require_assignment' => !empty($data['partner_require_assignment']) ? 1 : 0,
+          'partner_min_active_vehicles' => $data['partner_min_active_vehicles'] ?? 0,
+          'partner_max_vehicles_per_partner' => $data['partner_max_vehicles_per_partner'] ?? null,
+
             ]);
 
             return redirect()

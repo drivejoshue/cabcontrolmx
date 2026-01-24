@@ -46,40 +46,59 @@ class TenantFarePolicyController extends Controller
         // 1) intenta clonar desde tenant 100
         $global = TenantFarePolicy::where('tenant_id', 100)->orderByDesc('id')->first();
 
-        $seed = $global ? [
-            'mode'             => $global->mode,
-            'base_fee'         => $global->base_fee,
-            'per_km'           => $global->per_km,
-            'per_min'          => $global->per_min,
-            'night_start_hour' => $global->night_start_hour,
-            'night_end_hour'   => $global->night_end_hour,
-            'round_mode'       => $global->round_mode,
-            'round_decimals'   => $global->round_decimals,
-            'round_step'       => $global->round_step,
-            'night_multiplier' => $global->night_multiplier,
-            'round_to'         => $global->round_to,
-            'min_total'        => $global->min_total,
-            'extras'           => $global->extras ?? [],
-            'active_from'      => null,
-            'active_to'        => null,
-        ] : [
-            // 2) fallback “demo”
-            'mode'             => 'meter',
-            'base_fee'         => 35,
-            'per_km'           => 12,
-            'per_min'          => 2,
-            'night_start_hour' => 22,
-            'night_end_hour'   => 6,
-            'round_mode'       => 'step',
-            'round_decimals'   => 0,
-            'round_step'       => 1.00,
-            'night_multiplier' => 1.20,
-            'round_to'         => 1.00,
-            'min_total'        => 50,
-            'extras'           => [],
-            'active_from'      => null,
-            'active_to'        => null,
-        ];
+       $seed = $global ? [
+    'mode'             => $global->mode,
+    'base_fee'         => $global->base_fee,
+    'per_km'           => $global->per_km,
+    'per_min'          => $global->per_min,
+
+    'night_start_hour' => $global->night_start_hour,
+    'night_end_hour'   => $global->night_end_hour,
+
+    'round_mode'       => $global->round_mode,
+    'round_decimals'   => $global->round_decimals,
+    'round_step'       => $global->round_step,
+    'round_to'         => $global->round_to,
+
+    'night_multiplier' => $global->night_multiplier,
+    'min_total'        => $global->min_total,
+
+    'stop_fee'         => $global->stop_fee ?? 0.00,
+
+    // Slider de puja en Passenger
+    'slider_min_pct'   => $global->slider_min_pct ?? 0.80,
+    'slider_max_pct'   => $global->slider_max_pct ?? 1.20,
+
+    'extras'           => $global->extras ?? [],
+    'active_from'      => null,
+    'active_to'        => null,
+] : [
+    'mode'             => 'meter',
+    'base_fee'         => 35,
+    'per_km'           => 12,
+    'per_min'          => 2,
+
+    'night_start_hour' => 22,
+    'night_end_hour'   => 6,
+
+    'round_mode'       => 'step',
+    'round_decimals'   => 0,
+    'round_step'       => 1.00,
+    'round_to'         => 1.00,
+
+    'night_multiplier' => 1.20,
+    'min_total'        => 50,
+
+    'stop_fee'         => 20.00,
+
+    'slider_min_pct'   => 0.80,
+    'slider_max_pct'   => 1.20,
+
+    'extras'           => [],
+    'active_from'      => null,
+    'active_to'        => null,
+];
+
 
         $policy = TenantFarePolicy::create(['tenant_id' => $tenantId] + $seed);
     }
@@ -123,7 +142,20 @@ class TenantFarePolicyController extends Controller
 
         // Extras
         'extras'           => 'nullable|json',
+
+        'stop_fee'         => 'required|numeric|min:0|max:9999',
+
+'slider_min_pct'   => 'required|numeric|min:0.50|max:1.00',
+'slider_max_pct'   => 'required|numeric|min:1.00|max:1.50',
+
     ]);
+// Slider: asegurar orden lógico
+$minPct = (float)($data['slider_min_pct'] ?? 0.80);
+$maxPct = (float)($data['slider_max_pct'] ?? 1.20);
+if ($maxPct < $minPct) {
+    // Corrige en caliente en vez de rebotar, para UX
+    $data['slider_max_pct'] = $minPct;
+}
 
     // Regla: según round_mode, exige el campo correspondiente
     if ($data['round_mode'] === 'step') {

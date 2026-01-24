@@ -9,38 +9,32 @@ use App\Services\OfferBroadcaster;
 
 // =====================================================
 // 1) Watchdog: marcar drivers OFFLINE por inactividad
-//    - NO cierra turnos
 // =====================================================
 Schedule::call(function () {
-   
-$cut = now()->subMinutes(10);
+    $cut = now()->subMinutes(10);
 
-$activeDriverIds = DB::table('driver_locations')
-    ->whereNotNull('reported_at')
-    ->where('reported_at', '>=', $cut)
-    ->select('driver_id')
-    ->distinct();
+    $activeDriverIds = DB::table('driver_locations')
+        ->whereNotNull('reported_at')
+        ->where('reported_at', '>=', $cut)
+        ->select('driver_id')
+        ->distinct();
 
-DB::table('drivers')
-    ->where('status', '!=', 'offline')
-    ->whereNotIn('id', $activeDriverIds)
-    ->update([
-        'status' => 'offline',
-        'updated_at' => now(),
-    ]);
-    // ✅ Ya NO se autocierra driver_shifts
+    DB::table('drivers')
+        ->where('status', '!=', 'offline')
+        ->whereNotIn('id', $activeDriverIds)
+        ->update([
+            'status' => 'offline',
+            'updated_at' => now(),
+        ]);
 })->everyMinute()
   ->name('drivers.watchdog.offline')
   ->withoutOverlapping();
 
-
 // =====================================================
-// 2) Disparar rides programados (por tenant) cada minuto
+// 2) Disparar rides programados
 // =====================================================
 Schedule::call(function () {
     $tenantIds = DB::table('tenants')->pluck('id')->all();
-
-    // fallback defensivo si no hay tenants (local)
     if (empty($tenantIds)) $tenantIds = [1];
 
     foreach ($tenantIds as $tenId) {
@@ -57,66 +51,78 @@ Schedule::call(function () {
   ->name('rides.fireScheduled')
   ->withoutOverlapping();
 
+// =====================================================
+// 3) Dispatch Ticks - Sistema de Colas Mejorado
+// =====================================================
+
+// A) Tick RÁPIDO de procesamiento de colas (5 segundos)
+// Schedule::command('orbanamx:dispatch-tick')
+//     ->everyFiveSeconds()
+//     ->withoutOverlapping(10)
+//     ->runInBackground()
+//     ->name('dispatch.tick.fast')
+//     ->appendOutputTo(storage_path('logs/dispatch_tick_fast.log'));
+
+// B) Tick de bootstrap (crea tracks nuevos) - cada minuto
+Schedule::command('orbanamx:autodispatch-tick --limit=100')
+    ->everyMinute()
+    ->withoutOverlapping(55)
+    ->runInBackground()
+    ->name('dispatch.bootstrap')
+    ->appendOutputTo(storage_path('logs/dispatch_bootstrap.log'));
+
 
 
 // =====================================================
-// 4) Billing (deja SOLO una estrategia; no dupliques)
+// 4) Expiración de rides (MODIFICADO para evitar interferencia)
 // =====================================================
+// Solo expirar passenger rides, NO los de dispatch
+Schedule::command('orbana:expire-passenger-rides')
+    ->everyMinute()
+    ->withoutOverlapping(55)
+    ->runInBackground()
+    ->name('expire.passenger.rides')
+    ->appendOutputTo(storage_path('logs/expire_passenger_rides.log'));
 
-// Diario: tu comando diario
+// =====================================================
+// 5) Billing
+// =====================================================
 Schedule::command('tenants:billing-daily')
     ->dailyAt('02:10')
     ->name('tenants.billingDaily')
     ->withoutOverlapping();
 
-// Día 1: generar mes completo
 Schedule::command('tenants:bill-month-start')
     ->monthlyOn(1, '02:20')
     ->name('tenants.billMonthStart')
     ->withoutOverlapping();
 
-// suepende despues del dia 5 sin pago 
-
-    Schedule::command('billing:suspend-overdue --days=0')
+Schedule::command('billing:suspend-overdue --days=0')
     ->dailyAt('02:15')
     ->name('billing.suspend_overdue')
     ->withoutOverlapping();
 
-    //expira rides despues del tiempo en settings 
-
-      Schedule::command('orbana:expire-passenger-rides')
-    ->everyMinute()
-    ->name('orbana.expire_passenger_rides')
-    ->withoutOverlapping();
-
-
-    Schedule::command('orbanamx:autodispatch-tick')
-        ->everyMinute()
-        ->withoutOverlapping(55)
-        ->runInBackground()
-        ->appendOutputTo(storage_path('logs/autodispatch_tick.log'));
-
-
-
-        Schedule::command('orbana:normalize-runtime')
+// =====================================================
+// 6) Mantenimiento y limpieza
+// =====================================================
+Schedule::command('orbana:normalize-runtime')
     ->hourly()
-    ->name('orbana.normalize_runtime')
     ->withoutOverlapping(55)
+    ->name('orbana.normalize_runtime')
     ->appendOutputTo(storage_path('logs/normalize_runtime.log'));
 
-
-// Si todavía ocupas tenants:bill, deja SOLO UNO (NO por clase y por firma a la vez)
-// Schedule::command('tenants:bill')->dailyAt('03:00')->name('tenants.bill')->withoutOverlapping();
-
-
-// =====================================================
-// 5) Purga chat (si lo reactivas, solo una vez)
-// =====================================================
 Schedule::command('chat:purge-old --days=30')
     ->dailyAt('03:00')
     ->name('chat.purgeOld')
     ->withoutOverlapping();
 
+Schedule::command('orbanamx:partner-prepaid-daily')
+    ->hourly()
+    ->name('partner.prepaid.daily')
+    ->withoutOverlapping();
 
-
-
+     
+Schedule::command('dispatch:outbox-offernew --sleep=50 --limit=300')
+        ->everySecond()
+        ->name('dispatch.outbox.offernew')
+        ->withoutOverlapping();

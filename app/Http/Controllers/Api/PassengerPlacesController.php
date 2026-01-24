@@ -14,109 +14,130 @@ class PassengerPlacesController extends Controller
      * Upsert Casa/Trabajo (kind=home|work, slot=0)
      */
     public function upsert(Request $request, CityResolver $resolver)
-    {
-        $data = $request->validate([
-            'firebase_uid' => 'required|string|max:128',
-            'kind'         => 'required|in:home,work',
-            'label'        => 'required|string|max:160',
-            'address'      => 'nullable|string|max:255',
-            'lat'          => 'required|numeric',
-            'lng'          => 'required|numeric',
-        ]);
+{
+    $data = $request->validate([
+        'firebase_uid' => 'required|string|max:128',
+        'kind'         => 'required|in:home,work,fav', // 👈 permitir fav
+        'label'        => 'required|string|max:160',
+        'address'      => 'nullable|string|max:255',
+        'lat'          => 'required|numeric',
+        'lng'          => 'required|numeric',
+    ]);
 
-        $passenger = Passenger::where('firebase_uid', $data['firebase_uid'])->first();
-        if (! $passenger) {
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'Pasajero no encontrado, llama primero a /passenger/auth-sync.',
-            ], 404);
-        }
-
-        $lat = (float) $data['lat'];
-        $lng = (float) $data['lng'];
-
-        $cityId = null;
-        $resolved = $resolver->resolve($lat, $lng);
-        if ($resolved && isset($resolved['city'])) {
-            $cityId = $resolved['city']->id;
-        }
-
-        $place = PassengerPlace::updateOrCreate(
-            [
-                'passenger_id' => $passenger->id,
-                'kind'         => $data['kind'],
-                'slot'         => 0,
-            ],
-            [
-                'city_id'      => $cityId,
-                'label'        => $data['label'],
-                'address'      => $data['address'] ?? null,
-                'lat'          => $lat,
-                'lng'          => $lng,
-                'is_active'    => 1,
-            ]
-        );
-
+    $passenger = Passenger::where('firebase_uid', $data['firebase_uid'])->first();
+    if (! $passenger) {
         return response()->json([
-            'ok'   => true,
-            'data' => [
-                'id'           => $place->id,
-                'passenger_id' => $passenger->id,
-                'kind'         => $place->kind,
-                'slot'         => $place->slot,
-                'label'        => $place->label,
-                'address'      => $place->address,
-                'lat'          => $place->lat,
-                'lng'          => $place->lng,
-                'city_id'      => $place->city_id,
-            ],
-        ]);
+            'ok'  => false,
+            'msg' => 'Pasajero no encontrado, llama primero a /passenger/auth-sync.',
+        ], 404);
     }
+
+    $lat = (float) $data['lat'];
+    $lng = (float) $data['lng'];
+
+    $cityId = null;
+    $resolved = $resolver->resolve($lat, $lng);
+    if ($resolved && isset($resolved['city'])) {
+        $cityId = $resolved['city']->id;
+    }
+
+    // ✅ slot fijo: home/work=0, fav=1 (un solo favorito)
+    $slot = ($data['kind'] === 'fav') ? 1 : 0;
+
+    $place = PassengerPlace::updateOrCreate(
+        [
+            'passenger_id' => $passenger->id,
+            'kind'         => $data['kind'],
+            'slot'         => $slot,
+        ],
+        [
+            'city_id'   => $cityId,
+            'label'     => $data['label'],
+            'address'   => $data['address'] ?? null,
+            'lat'       => $lat,
+            'lng'       => $lng,
+            'is_active' => 1,
+        ]
+    );
+
+    return response()->json([
+        'ok'   => true,
+        'data' => [
+            'id'           => $place->id,
+            'passenger_id' => $passenger->id,
+            'kind'         => $place->kind,
+            'slot'         => $place->slot,
+            'label'        => $place->label,
+            'address'      => $place->address,
+            'lat'          => $place->lat,
+            'lng'          => $place->lng,
+            'city_id'      => $place->city_id,
+        ],
+    ]);
+}
 
     /**
      * Agregar Favorito (kind=fav, slot auto 1..N)
      */
-    public function addFavorite(Request $request, CityResolver $resolver)
-    {
-        $data = $request->validate([
-            'firebase_uid' => 'required|string|max:128',
-            'label'        => 'required|string|max:160',
-            'address'      => 'nullable|string|max:255',
-            'lat'          => 'required|numeric',
-            'lng'          => 'required|numeric',
+  public function addFavorite(Request $request, CityResolver $resolver)
+{
+    $data = $request->validate([
+        'firebase_uid' => 'required|string|max:128',
+        'label'        => 'required|string|max:160',
+        'address'      => 'nullable|string|max:255',
+        'lat'          => 'required|numeric',
+        'lng'          => 'required|numeric',
+    ]);
+
+    $passenger = Passenger::where('firebase_uid', $data['firebase_uid'])->first();
+    if (! $passenger) {
+        return response()->json([
+            'ok'  => false,
+            'msg' => 'Pasajero no encontrado, llama primero a /passenger/auth-sync.',
+        ], 404);
+    }
+
+    $lat = (float) $data['lat'];
+    $lng = (float) $data['lng'];
+
+    $cityId = null;
+    $resolved = $resolver->resolve($lat, $lng);
+    if ($resolved && isset($resolved['city'])) {
+        $cityId = $resolved['city']->id;
+    }
+
+    // siguiente slot SOLO considerando activos
+    $maxSlot = PassengerPlace::where('passenger_id', $passenger->id)
+        ->where('kind', 'fav')
+        ->where('is_active', 1)
+        ->max('slot');
+
+    $nextSlot = max(1, (int) $maxSlot + 1);
+
+    if ($nextSlot > 30) {
+        return response()->json([
+            'ok'  => false,
+            'msg' => 'Límite de favoritos alcanzado (30).',
+        ], 422);
+    }
+
+    // si existe un registro inactivo con ese slot, lo "revivimos"
+    $place = PassengerPlace::where('passenger_id', $passenger->id)
+        ->where('kind', 'fav')
+        ->where('slot', $nextSlot)
+        ->where('is_active', 0)
+        ->first();
+
+    if ($place) {
+        $place->update([
+            'city_id'   => $cityId,
+            'label'     => $data['label'],
+            'address'   => $data['address'] ?? null,
+            'lat'       => $lat,
+            'lng'       => $lng,
+            'is_active' => 1,
         ]);
-
-        $passenger = Passenger::where('firebase_uid', $data['firebase_uid'])->first();
-        if (! $passenger) {
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'Pasajero no encontrado, llama primero a /passenger/auth-sync.',
-            ], 404);
-        }
-
-        $lat = (float) $data['lat'];
-        $lng = (float) $data['lng'];
-
-        $cityId = null;
-        $resolved = $resolver->resolve($lat, $lng);
-        if ($resolved && isset($resolved['city'])) {
-            $cityId = $resolved['city']->id;
-        }
-
-        $maxSlot = PassengerPlace::where('passenger_id', $passenger->id)
-            ->where('kind', 'fav')
-            ->max('slot');
-
-        $nextSlot = max(1, (int)$maxSlot + 1);
-
-        // límite opcional para no crecer infinito (ajusta si quieres)
-        if ($nextSlot > 30) {
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'Límite de favoritos alcanzado (30).',
-            ], 422);
-        }
-
+    } else {
         $place = PassengerPlace::create([
             'passenger_id' => $passenger->id,
             'city_id'      => $cityId,
@@ -128,22 +149,23 @@ class PassengerPlacesController extends Controller
             'lng'          => $lng,
             'is_active'    => 1,
         ]);
-
-        return response()->json([
-            'ok'   => true,
-            'data' => [
-                'id'           => $place->id,
-                'passenger_id' => $passenger->id,
-                'kind'         => $place->kind,
-                'slot'         => $place->slot,
-                'label'        => $place->label,
-                'address'      => $place->address,
-                'lat'          => $place->lat,
-                'lng'          => $place->lng,
-                'city_id'      => $place->city_id,
-            ],
-        ]);
     }
+
+    return response()->json([
+        'ok'   => true,
+        'data' => [
+            'id'           => $place->id,
+            'passenger_id' => $passenger->id,
+            'kind'         => $place->kind,
+            'slot'         => $place->slot,
+            'label'        => $place->label,
+            'address'      => $place->address,
+            'lat'          => (float) $place->lat,
+            'lng'          => (float) $place->lng,
+            'city_id'      => $place->city_id,
+        ],
+    ]);
+}
 
     /**
      * Listar lugares guardados (home/work + favs)

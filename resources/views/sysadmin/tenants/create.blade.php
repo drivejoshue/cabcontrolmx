@@ -185,9 +185,92 @@
             </button>
           </div>
         </div>
+
+
+
+        <div class="card mt-3">
+  <div class="card-header">
+    <div class="card-title">
+      <i class="ti ti-settings me-1"></i> Operación
+    </div>
+  </div>
+  <div class="card-body">
+
+    <div class="mb-3">
+      <label class="form-label">Modo de operación</label>
+      <select name="operating_mode" class="form-select" id="operating_mode">
+        @php($om = old('operating_mode', $tenant->operating_mode ?? 'traditional'))
+        <option value="traditional" @selected($om==='traditional')>Traditional (sin partners)</option>
+        <option value="partner_network" @selected($om==='partner_network')>Partner network</option>
+        <option value="hybrid" @selected($om==='hybrid')>Hybrid</option>
+        <option value="whitelabel" @selected($om==='whitelabel')>Whitelabel</option>
+      </select>
+      <div class="text-muted small">Esto controla si el tenant verá el módulo de Partners en su panel.</div>
+    </div>
+
+    <div id="partner_settings_box" class="border rounded p-3">
+      <div class="fw-semibold mb-2">Settings de partners</div>
+
+      @php($pbw = old('partner_billing_wallet', $tenant->partner_billing_wallet ?? 'tenant_wallet'))
+      <div class="mb-3">
+        <label class="form-label">Cartera de facturación</label>
+        <select name="partner_billing_wallet" class="form-select">
+          <option value="tenant_wallet" @selected($pbw==='tenant_wallet')>Tenant wallet (depósitos al tenant)</option>
+          <option value="partner_wallet" @selected($pbw==='partner_wallet')>Partner wallet (depósitos al partner)</option>
+        </select>
+      </div>
+
+      <label class="form-check mb-2">
+        @php($pra = old('partner_require_assignment', ($tenant->partner_require_assignment ?? 1)))
+        <input class="form-check-input" type="checkbox" name="partner_require_assignment" value="1" @checked($pra)>
+        <span class="form-check-label">Requerir asignación de vehículos a partner</span>
+      </label>
+
+      <div class="row g-2">
+        <div class="col-md-6">
+          <label class="form-label">Mínimo vehículos activos</label>
+          <input type="number" min="0" name="partner_min_active_vehicles"
+                 class="form-control"
+                 value="{{ old('partner_min_active_vehicles', $tenant->partner_min_active_vehicles ?? 0) }}">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Máximo vehículos por partner</label>
+          <input type="number" min="0" name="partner_max_vehicles_per_partner"
+                 class="form-control"
+                 value="{{ old('partner_max_vehicles_per_partner', $tenant->partner_max_vehicles_per_partner) }}">
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+
+
+
+
+
       </div>
     </div>
   </form>
 
 </div>
 @endsection
+
+
+@push('scripts')
+<script>
+(function(){
+  const sel = document.getElementById('operating_mode');
+  const box = document.getElementById('partner_settings_box');
+  function sync(){
+    const v = (sel?.value || 'traditional');
+    const show = (v === 'partner_network' || v === 'hybrid' || v === 'whitelabel');
+    if (box) box.style.display = show ? '' : 'none';
+  }
+  if (sel) sel.addEventListener('change', sync);
+  sync();
+})();
+</script>
+@endpush

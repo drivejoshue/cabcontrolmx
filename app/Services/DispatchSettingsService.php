@@ -7,29 +7,36 @@ use Illuminate\Support\Facades\Cache;
 
 final class DispatchSettingsService
 {
-    private const VER = 2;            // súbela porque cambia el comportamiento/cache-key
+    private const VER = 3;            // sube versión por cambio de comportamiento/cache-key
     private const CACHE_TTL = 15;     // segundos
     private const CORE_TENANT_ID = 100;
 
     /**
-     * Fuente única de verdad de settings.
-     * HOY: autodespacho global => siempre toma settings del tenant 100 (Orbana Core).
-     * Mañana: si vuelves a individual, solo cambias effectiveTenantId().
+     * Lee settings del tenant actual; fallback a 100 solo si un campo viene vacío (NULL / '').
      */
     public static function forTenant(int $tenantId): object
     {
-        $requestedTenantId = (int)$tenantId;
-        $effectiveTenantId = self::effectiveTenantId($requestedTenantId);
+        $requestedTenantId = (int) $tenantId;
 
-        $key = "dispatch:settings:v".self::VER.":tenant:{$effectiveTenantId}";
+        // Cache por tenant solicitado (no por 100)
+        $key = "dispatch:settings:v" . self::VER . ":tenant:{$requestedTenantId}";
 
-        return Cache::remember($key, self::CACHE_TTL, function () use ($requestedTenantId, $effectiveTenantId) {
-            $row = DispatchSetting::query()
-                ->where('tenant_id', $effectiveTenantId)
+        return Cache::remember($key, self::CACHE_TTL, function () use ($requestedTenantId) {
+
+            $rowTenant = DispatchSetting::query()
+                ->where('tenant_id', $requestedTenantId)
                 ->orderByDesc('id')
                 ->first();
 
-            // Defaults consistentes
+            $rowCore = null;
+            if ($requestedTenantId !== self::CORE_TENANT_ID) {
+                $rowCore = DispatchSetting::query()
+                    ->where('tenant_id', self::CORE_TENANT_ID)
+                    ->orderByDesc('id')
+                    ->first();
+            }
+
+            // Defaults consistentes (último fallback)
             $d = [
                 'auto_dispatch_radius_km' => 4.00,
                 'nearby_search_radius_km' => 4.00,
@@ -51,83 +58,68 @@ final class DispatchSettingsService
                 'availability_min_ratio'  => null,
             ];
 
-            // Helper normalizador
-            $build = function(array $src) use ($requestedTenantId, $effectiveTenantId) {
-                return (object) [
-                    // debug informativo (no rompe contrato; si no lo quieres, bórralo)
-                    'requested_tenant_id' => $requestedTenantId,
-                    'effective_tenant_id' => $effectiveTenantId,
-
-                    // aliases “bonitos”
-                    'enabled'               => (bool)  $src['auto_enabled'],
-                    'delay_s'               => (int)   (($src['auto_dispatch_delay_s'] ?? null) ?? $src['auto_delay_sec']),
-                    'radius_km'             => (float) $src['auto_dispatch_radius_km'],
-                    'nearby_radius_km'      => (float) $src['nearby_search_radius_km'],
-                    'stand_radius_km'       => (float) $src['stand_radius_km'],
-                    'limit_n'               => (int)   (($src['auto_dispatch_preview_n'] ?? null) ?? $src['wave_size_n']),
-                    'preview_n'             => (int)   (($src['auto_dispatch_preview_n'] ?? null) ?? $src['wave_size_n']),
-                    'expires_s'             => (int)   $src['offer_expires_sec'],
-                    'lead_time_min'         => (int)   $src['lead_time_min'],
-                    'use_google_for_eta'    => (bool)  $src['use_google_for_eta'],
-                    'allow_fare_bidding'    => (bool)  $src['allow_fare_bidding'],
-                    'auto_assign_if_single' => (bool)  $src['auto_assign_if_single'],
-                    'max_queue'             => (int)   $src['max_queue'],
-                    'queue_sla_minutes'     => (int)   $src['queue_sla_minutes'],
-                    'central_priority'      => (bool)  $src['central_priority'],
-                    'availability_min_ratio'=> $src['availability_min_ratio'] !== null ? (float)$src['availability_min_ratio'] : null,
-                    'extras'                => $src['extras'],
-                ];
+            // Vacío = NULL o '' (NO trata 0 como vacío)
+            $isEmpty = static function ($v): bool {
+                return $v === null || (is_string($v) && trim($v) === '');
             };
 
-            // Si no hay fila, defaults
-            if (!$row) {
-                return $build($d);
-            }
-
-            // Normalización usando la fila real + defaults
-            $val = fn($k) => $row->$k ?? $d[$k];
+            // Valor por campo: tenant -> core(100) -> default
+            $pick = static function (string $k) use ($rowTenant, $rowCore, $d, $isEmpty) {
+                if ($rowTenant && isset($rowTenant->$k) && !$isEmpty($rowTenant->$k)) return $rowTenant->$k;
+                if ($rowCore   && isset($rowCore->$k)   && !$isEmpty($rowCore->$k))   return $rowCore->$k;
+                return $d[$k] ?? null;
+            };
 
             $src = [
-                'auto_dispatch_radius_km' => $val('auto_dispatch_radius_km'),
-                'nearby_search_radius_km' => $val('nearby_search_radius_km'),
-                'stand_radius_km'         => $val('stand_radius_km'),
-                'offer_expires_sec'       => $val('offer_expires_sec'),
-                'wave_size_n'             => $val('wave_size_n'),
-                'lead_time_min'           => $val('lead_time_min'),
-                'use_google_for_eta'      => $val('use_google_for_eta'),
-                'allow_fare_bidding'      => $val('allow_fare_bidding'),
-                'extras'                  => $val('extras'),
-                'auto_enabled'            => $val('auto_enabled'),
-                'auto_delay_sec'          => $val('auto_delay_sec'),
-                'auto_assign_if_single'   => $val('auto_assign_if_single'),
-                'auto_dispatch_delay_s'   => $val('auto_dispatch_delay_s'),
-                'auto_dispatch_preview_n' => $val('auto_dispatch_preview_n'),
-                'max_queue'               => $val('max_queue'),
-                'queue_sla_minutes'       => $val('queue_sla_minutes'),
-                'central_priority'        => $val('central_priority'),
-                'availability_min_ratio'  => $val('availability_min_ratio'),
+                'auto_dispatch_radius_km' => $pick('auto_dispatch_radius_km'),
+                'nearby_search_radius_km' => $pick('nearby_search_radius_km'),
+                'stand_radius_km'         => $pick('stand_radius_km'),
+                'offer_expires_sec'       => $pick('offer_expires_sec'),
+                'wave_size_n'             => $pick('wave_size_n'),
+                'lead_time_min'           => $pick('lead_time_min'),
+                'use_google_for_eta'      => $pick('use_google_for_eta'),
+                'allow_fare_bidding'      => $pick('allow_fare_bidding'),
+                'extras'                  => $pick('extras'),
+                'auto_enabled'            => $pick('auto_enabled'),
+                'auto_delay_sec'          => $pick('auto_delay_sec'),
+                'auto_assign_if_single'   => $pick('auto_assign_if_single'),
+                'auto_dispatch_delay_s'   => $pick('auto_dispatch_delay_s'),
+                'auto_dispatch_preview_n' => $pick('auto_dispatch_preview_n'),
+                'max_queue'               => $pick('max_queue'),
+                'queue_sla_minutes'       => $pick('queue_sla_minutes'),
+                'central_priority'        => $pick('central_priority'),
+                'availability_min_ratio'  => $pick('availability_min_ratio'),
             ];
 
-            return $build($src);
+            // Normalizador (mismo contrato que ya usabas)
+            return (object) [
+                'requested_tenant_id' => $requestedTenantId,
+                'fallback_tenant_id'  => self::CORE_TENANT_ID,
+
+                'enabled'               => (bool)  $src['auto_enabled'],
+                'delay_s'               => (int)   (($src['auto_dispatch_delay_s'] ?? null) ?? $src['auto_delay_sec']),
+                'radius_km'             => (float) $src['auto_dispatch_radius_km'],
+                'nearby_radius_km'      => (float) $src['nearby_search_radius_km'],
+                'stand_radius_km'       => (float) $src['stand_radius_km'],
+                'limit_n'               => (int)   (($src['auto_dispatch_preview_n'] ?? null) ?? $src['wave_size_n']),
+                'preview_n'             => (int)   (($src['auto_dispatch_preview_n'] ?? null) ?? $src['wave_size_n']),
+                'expires_s'             => (int)   $src['offer_expires_sec'],
+                'lead_time_min'         => (int)   $src['lead_time_min'],
+                'use_google_for_eta'    => (bool)  $src['use_google_for_eta'],
+                'allow_fare_bidding'    => (bool)  $src['allow_fare_bidding'],
+                'auto_assign_if_single' => (bool)  $src['auto_assign_if_single'],
+                'max_queue'             => (int)   $src['max_queue'],
+                'queue_sla_minutes'     => (int)   $src['queue_sla_minutes'],
+                'central_priority'      => (bool)  $src['central_priority'],
+                'availability_min_ratio'=> $src['availability_min_ratio'] !== null ? (float)$src['availability_min_ratio'] : null,
+                'extras'                => $src['extras'],
+            ];
         });
     }
 
-    /**
-     * HOY: siempre 100 (Orbana Core).
-     * Mañana: return $requestedTenantId; para volver a individual.
-     */
-    private static function effectiveTenantId(int $requestedTenantId): int
-    {
-        return self::CORE_TENANT_ID;
-    }
-
-    /**
-     * (Opcional) si ya lo usas en otros lados: invalidación de cache.
-     */
     public static function forgetTenant(int $tenantId): void
     {
-        $effectiveTenantId = self::effectiveTenantId((int)$tenantId);
-        $key = "dispatch:settings:v".self::VER.":tenant:{$effectiveTenantId}";
-        Cache::forget($key);
+        $tenantId = (int) $tenantId;
+        Cache::forget("dispatch:settings:v" . self::VER . ":tenant:{$tenantId}");
     }
 }

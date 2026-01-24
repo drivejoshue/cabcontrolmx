@@ -160,7 +160,7 @@ private function pickCityFallback(int $cityId, int $passengerId, array &$usedKey
         ->where('is_active', 1)
         ->where('is_featured', 1)
         ->orderByDesc('priority')
-        ->get(['label','lat','lng','address']);
+        ->get(['id','label','lat','lng','address','category']); // 👈 id + category opcional
 
     if ($candidates->isEmpty()) return null;
 
@@ -179,18 +179,22 @@ private function pickCityFallback(int $cityId, int $passengerId, array &$usedKey
         $this->markUsed($lat, $lng, $usedKeys);
 
         return [
-            'id'      => null,
+            'id'      => (int)$p->id,     // ✅ ahora sí regresamos id real
             'type'    => 'suggested',
             'label'   => $p->label,
             'lat'     => $lat,
             'lng'     => $lng,
             'address' => $p->address,
             'source'  => 'suggested',
+            'meta'    => [
+                'category' => $p->category, // opcional, útil para UI
+            ],
         ];
     }
 
     return null;
 }
+
 
 private function usedKey(float $lat, float $lng): string
 {
@@ -206,18 +210,20 @@ private function markUsed(float $lat, float $lng, array &$usedKeys): void
 }
 
 
-    private function mapPlaceItem(string $type, string $label, float $lat, float $lng, ?string $address, string $source): array
-    {
-        return [
-        	'id' => $id,
-            'type' => $type,         // home|work|recent|city
-            'label' => $label,
-            'lat' => $lat,
-            'lng' => $lng,
-            'address' => $address,
-            'source' => $source,     // saved|recent|city
-        ];
-    }
+   private function mapPlaceItem(?int $id, string $type, string $label, float $lat, float $lng, ?string $address, string $source, array $meta = []): array
+{
+    return [
+        'id'      => $id,
+        'type'    => $type,
+        'label'   => $label,
+        'lat'     => $lat,
+        'lng'     => $lng,
+        'address' => $address,
+        'source'  => $source,
+        'meta'    => $meta,
+    ];
+}
+
 
     private function haversineKm(float $lat1, float $lng1, float $lat2, float $lng2): float
     {

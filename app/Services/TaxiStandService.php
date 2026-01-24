@@ -70,15 +70,15 @@ class TaxiStandService
         }
 
 
-            $inQueue = DB::table('taxi_stand_queue')
-              ->where('tenant_id', $tenantId)
-              ->where('driver_id', $driverId)
-              ->where('active_key', 1)              // ya implica en_cola|saltado
-              ->exists();
+            // $inQueue = DB::table('taxi_stand_queue')
+            //   ->where('tenant_id', $tenantId)
+            //   ->where('driver_id', $driverId)
+            //   ->where('active_key', 1)              // ya implica en_cola|saltado
+            //   ->exists();
 
-            if ($inQueue) {
-              abort(422, 'Ya estás en una base. Sal primero para cambiar.');
-            }
+            // if ($inQueue) {
+            //   abort(422, 'Ya estás en una base. Sal primero para cambiar.');
+            // }
 
         // Aquí luego se puede validar:
         //  - rides activos
@@ -109,42 +109,48 @@ class TaxiStandService
         ->select('last_lat', 'last_lng')
         ->first();
 
-   $freshSec = 120; // o desde settings si quieres
-    $loc = self::getFreshLocation($tenantId, $driverId, $freshSec);
+  $freshSec = 120;
+$loc = self::getFreshLocation($tenantId, $driverId, $freshSec);
 
-    if (!$loc) {
-        return [
-            'ok' => false,
-            'message' => "Ubicación no disponible o desactualizada. Mantén la app enviando ping y reintenta.",
-        ];
-    }
+if (!$loc) {
+    return [
+        'ok' => false,
+        'message' => "Ubicación no disponible o desactualizada. Mantén la app enviando ping y reintenta.",
+    ];
+}
 
-    $distKm = self::haversineKm(
-        (float)$stand->latitud,
-        (float)$stand->longitud,
-        $loc['lat'],
-        $loc['lng']
-    );
+// settings → radius
+$settings = DB::table('dispatch_settings')->where('tenant_id', $tenantId)->first();
+$radiusKm = 0.2;
+if ($settings) {
+    $radiusKm = (float)($settings->stand_radius_km ?? $settings->auto_dispatch_radius_km ?? 0.2);
+}
 
+// distancia con la ubicación fresca (NO con drivers.last_lat/last_lng)
+$distKm = self::haversineKm(
+    (float)$stand->latitud,
+    (float)$stand->longitud,
+    (float)$loc['lat'],
+    (float)$loc['lng']
+);
 
-    $settings = DB::table('dispatch_settings')->where('tenant_id', $tenantId)->first();
-    $radiusKm = 0.2;
-    if ($settings) {
-        $radiusKm = $settings->stand_radius_km ?? $settings->auto_dispatch_radius_km ?? 0.2;
-    }
+if ($distKm > $radiusKm) {
+    return [
+        'ok' => false,
+        'message' => 'No estás dentro de la base. Acércate al paradero para unirte.',
+        'dist_km' => $distKm,
+        'radius_km' => $radiusKm,
+        'age_sec' => $loc['age_sec'] ?? null,
+    ];
+}
 
-    $distKm = self::haversineKm((float)$stand->latitud, (float)$stand->longitud, (float)$driver->last_lat, (float)$driver->last_lng);
-    if ($distKm > $radiusKm) {
-        return ['ok' => false, 'message' => 'No estás dentro de la base. Acércate al paradero para unirte.', 'dist_km' => $distKm, 'radius_km' => $radiusKm];
-    }
+try {
+    DB::statement('CALL sp_queue_join_stand_v1(?, ?, ?)', [$tenantId, $standId, $driverId]);
+    return ['ok' => true, 'message' => 'Te uniste a la base.'];
+} catch (UniqueConstraintViolationException $e) {
+    return ['ok' => true, 'message' => 'Ya estabas en una base.'];
+}
 
-    try {
-        DB::statement('CALL sp_queue_join_stand_v1(?, ?, ?)', [$tenantId, $standId, $driverId]);
-        return ['ok' => true, 'message' => 'Te uniste a la base.'];
-    } catch (UniqueConstraintViolationException $e) {
-        // Si llegó doble request, lo tomamos como idempotente
-        return ['ok' => true, 'message' => 'Ya estabas en una base.'];
-    }
 }
 
     /**

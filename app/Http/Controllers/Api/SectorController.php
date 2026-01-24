@@ -11,8 +11,9 @@ class SectorController extends Controller
    // App\Http\Controllers\Api\SectorController.php
 public function index(Request $request)
 {
-    $tenantId = optional($request->user())->tenant_id
-        ?: (int) $request->header('X-Tenant-ID');
+   $tenantId = optional($request->user())->tenant_id
+    ?: (int) $request->header('X-Tenant-ID')
+    ?: (int) $request->query('tenant_id');
 
     if (!$tenantId) {
         return response()->json(['message' => 'Tenant required'], 401);

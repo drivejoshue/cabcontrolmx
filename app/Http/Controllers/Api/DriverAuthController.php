@@ -83,8 +83,10 @@ private function enforceSingleDriverToken(Request $r)
         return response()->json(['ok'=>true]);
     }
 
- public function me(Request $r)
-{ if ($resp = $this->enforceSingleDriverToken($r)) return $resp;
+public function me(Request $r)
+{
+    if ($resp = $this->enforceSingleDriverToken($r)) return $resp;
+
     // ============================================================
     // FASE 0) Usuario autenticado y tenant consistente
     // ============================================================
@@ -95,7 +97,6 @@ private function enforceSingleDriverToken(Request $r)
         return response()->json(['ok'=>false,'message'=>'Driver sin tenant asignado'], 403);
     }
 
-    // Si el cliente manda X-Tenant-ID, debe coincidir con el tenant del token.
     $headerTenant = $r->header('X-Tenant-ID');
     if ($headerTenant && (int)$headerTenant !== $userTenant) {
         return response()->json(['ok'=>false,'message'=>'Tenant inválido para este driver'], 403);
@@ -140,8 +141,31 @@ private function enforceSingleDriverToken(Request $r)
         $vehicle = DB::table('vehicles')
             ->where('tenant_id', $tenantId)
             ->where('id', $shift->vehicle_id)
-            ->select('id','economico','plate','brand','model','type')
+            ->select('id','economico','plate','brand','model','type','partner_id')
             ->first();
+    }
+
+    $partner = null;
+    $partnerShort = null;
+
+    if ($vehicle && !empty($vehicle->partner_id)) {
+        $partner = DB::table('partners')
+            ->where('tenant_id', $tenantId)
+            ->where('id', (int)$vehicle->partner_id)
+            ->select('id','tenant_id','code','name','slug')
+            ->first();
+
+        if ($partner) {
+            $partnerShort = trim((string)($partner->code ?? ''));
+            if ($partnerShort === '') {
+                $parts = preg_split('/\s+/', trim((string)$partner->name));
+                $ini = '';
+                foreach (array_slice($parts ?: [], 0, 2) as $p) {
+                    $ini .= mb_strtoupper(mb_substr($p, 0, 1));
+                }
+                $partnerShort = $ini ?: mb_strtoupper(mb_substr((string)$partner->name, 0, 3));
+            }
+        }
     }
 
     // ============================================================
@@ -156,6 +180,56 @@ private function enforceSingleDriverToken(Request $r)
             'public_active'
         )
         ->first();
+
+    // ============================================================
+    // FASE 3.5) Dispatch settings subset (features + client config)
+    // ============================================================
+    $settings = DB::table('dispatch_settings')
+        ->where('tenant_id', $tenantId)
+        ->select(
+            'taxi_stands_enabled',
+            'client_config_version',
+
+            // Bid pills tuning (driver)
+            'driver_bid_step_bps',
+            'driver_bid_step_min_amount',
+            'driver_bid_step_max_amount',
+            'driver_bid_tiers',
+            'driver_bid_round_to'
+        )
+        ->first();
+
+    $taxiStandsEnabled = (bool)($settings->taxi_stands_enabled ?? true);
+    $clientConfigVersion = (int)($settings->client_config_version ?? 1);
+
+    // bps -> percent double (800 => 0.08)
+    $bidStepBps = (int)($settings->driver_bid_step_bps ?? 800);
+    $bidStepPercent = max(0.0, min(1.0, $bidStepBps / 10000.0)); // guardrail 0..1
+
+    $bidMinStep = (float)($settings->driver_bid_step_min_amount ?? 5);
+    $bidMaxStep = (float)($settings->driver_bid_step_max_amount ?? 25);
+    if ($bidMinStep <= 0) $bidMinStep = 5.0;
+    if ($bidMaxStep < $bidMinStep) $bidMaxStep = $bidMinStep;
+
+    $bidTiers = (int)($settings->driver_bid_tiers ?? 3);
+    if ($bidTiers < 1) $bidTiers = 1;
+    if ($bidTiers > 6) $bidTiers = 6;
+
+    $bidRoundTo = (int)($settings->driver_bid_round_to ?? 5);
+    if ($bidRoundTo < 1) $bidRoundTo = 1;
+    if ($bidRoundTo > 50) $bidRoundTo = 50;
+
+    $features = [
+        'taxi_stands_enabled' => $taxiStandsEnabled,
+    ];
+
+    $bidPills = [
+        'step_percent' => $bidStepPercent,
+        'min_step'     => $bidMinStep,
+        'max_step'     => $bidMaxStep,
+        'tiers'        => $bidTiers,
+        'round_to'     => $bidRoundTo,
+    ];
 
     // ============================================================
     // FASE 4) Billing profile del tenant (subset)
@@ -186,12 +260,10 @@ private function enforceSingleDriverToken(Request $r)
     } else {
         $st = strtolower((string)$billing->status);
 
-        // Bloqueo duro por suspensión (impago / bloqueo manual)
         if (!empty($billing->suspended_at) || in_array($st, ['paused','canceled'], true)) {
             $billingState = 'suspended';
             $billingMsg   = $billing->suspension_reason ?: 'Servicio suspendido por facturación.';
         } elseif ($st === 'trial') {
-            // Si trial venció => requiere aceptación + recarga (según tu nueva política)
             if (!empty($billing->trial_ends_at) && now()->toDateString() > $billing->trial_ends_at) {
                 $billingState = 'trial_expired';
                 $billingMsg   = 'Tu periodo de prueba finalizó. Recarga saldo para continuar.';
@@ -204,22 +276,49 @@ private function enforceSingleDriverToken(Request $r)
 
     return response()->json([
         'ok'             => true,
+
         'user'           => [
             'id'        => $user->id,
             'name'      => $user->name,
             'email'     => $user->email,
             'tenant_id' => $tenantId,
         ],
+
         'driver'         => $driver,
         'has_open_shift' => (bool)$shift,
         'current_shift'  => $shift,
         'vehicle'        => $vehicle,
+
+        // Mantienes tenant por compatibilidad
         'tenant'         => $tenant,
+
+        // Alias explícito para branding/UI (central = tenant)
+        'central'        => $tenant ? [
+            'id'       => (int)$tenant->id,
+            'name'     => (string)$tenant->name,
+            'slug'     => $tenant->slug,
+            'timezone' => $tenant->timezone,
+        ] : null,
+
+        // Partner opcional (solo si vehículo tiene partner_id)
+        'partner'        => $partner ? [
+            'id'    => (int)$partner->id,
+            'name'  => (string)$partner->name,
+            'code'  => $partner->code,
+            'short' => $partnerShort,
+        ] : null,
+
+        // Client config flags (aunque no se usen hoy)
+        'client_config_version' => $clientConfigVersion,
+        'features'              => $features,
+        'bid_pills'             => $bidPills,
+
         'billing_profile'=> $billing,
         'billing_state'  => $billingState,
         'billing_message'=> $billingMsg,
     ]);
 }
+
 
 
 

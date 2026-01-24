@@ -129,6 +129,7 @@ class TenantSignupController extends Controller
                     'public_phone'       => $data['phone'] ?? null,
                     'public_city'        => $data['city'] ?? null,
                     'public_active'      => 0,
+                    'operating_mode'     => 'traditional',
                 ]);
             } catch (\Illuminate\Database\QueryException $e) {
                 // Si es colisión de UNIQUE slug, reintenta

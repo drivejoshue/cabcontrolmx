@@ -76,6 +76,10 @@ use App\Http\Controllers\SysAdmin\TenantConsoleVehicleController;
 use App\Http\Controllers\SysAdmin\SysRidesGenerationReportController;
 
 use App\Http\Controllers\SysAdmin\TenantDocumentsReviewController;
+
+use App\Http\Controllers\SysAdmin\TenantPartnerBillingController;
+use App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController;
+
 // Debug/events
 use App\Events\TestEvent;
 
@@ -87,6 +91,24 @@ use App\Http\Controllers\SysAdmin\BillingPlanController;
 
 
 use App\Http\Middleware\VerifyCsrfToken;
+
+//partners
+use App\Http\Controllers\Partner\PartnerDashboardController;
+use App\Http\Controllers\Partner\PartnerVehicleController;
+use App\Http\Controllers\Partner\PartnerDriverController;
+use App\Http\Controllers\Partner\PartnerContextController;
+use App\Http\Controllers\Admin\PartnerController;
+use App\Http\Controllers\Partner\PartnerWalletController;
+use App\Http\Controllers\Partner\PartnerTopupController;
+use App\Http\Controllers\Admin\PartnerTopupAdminController;
+use App\Http\Controllers\Partner\VehicleDocsController as PartnerVehicleDocsController;
+use App\Http\Controllers\Partner\DriverDocsController as PartnerDriverDocsController;
+use App\Http\Controllers\Partner\PartnerRideController;
+use App\Http\Controllers\Partner\Reports\PartnerRidesReportController;
+use App\Http\Controllers\Partner\Reports\PartnerDriverQualityReportController;
+use App\Http\Controllers\Partner\Reports\PartnerVehiclesReportController;
+
+
 
 
 /*
@@ -294,6 +316,48 @@ Route::prefix('admin')
                     ->name('tenant.documents.download');
 
 
+             Route::resource('partners', PartnerController::class);
+
+
+        Route::get('/partner-topups', [PartnerTopupAdminController::class, 'index'])->name('partner_topups.index');
+        Route::get('/partner-topups/{id}', [PartnerTopupAdminController::class, 'show'])->name('partner_topups.show');
+        Route::post('/partner-topups/{id}/approve', [PartnerTopupAdminController::class, 'approve'])->name('partner_topups.approve');
+        Route::post('/partner-topups/{id}/reject', [PartnerTopupAdminController::class, 'reject'])->name('partner_topups.reject');
+
+
+
+
+                    // -----------------------------------------------------
+        // Partner Support Inbox (Tenant Admin)
+        // Tablas: partner_threads / partner_thread_messages
+        // -----------------------------------------------------
+        Route::prefix('partner-support')->name('partner_support.')->group(function () {
+
+            // Inbox / listado
+            Route::get('/', [\App\Http\Controllers\Admin\Support\TenantPartnerSupportController::class, 'index'])
+                ->name('index');
+
+            // Crear NO aplica en tenant (solo partner). Tenant solo ve/contesta.
+            // Ver thread
+            Route::get('/{thread}', [\App\Http\Controllers\Admin\Support\TenantPartnerSupportController::class, 'show'])
+                ->whereNumber('thread')->name('show');
+
+            // Responder thread
+            Route::post('/{thread}/reply', [\App\Http\Controllers\Admin\Support\TenantPartnerSupportController::class, 'reply'])
+                ->whereNumber('thread')->name('reply');
+
+            // Cambiar estado (open|in_review|closed)
+            Route::post('/{thread}/status', [\App\Http\Controllers\Admin\Support\TenantPartnerSupportController::class, 'setStatus'])
+                ->whereNumber('thread')->name('status');
+
+            // (Opcional) Marcar “leído por tenant” (usa last_tenant_read_at)
+            Route::post('/{thread}/read', [\App\Http\Controllers\Admin\Support\TenantPartnerSupportController::class, 'markRead'])
+                ->whereNumber('thread')->name('read');
+        });
+
+
+
+
 
 
 
@@ -423,10 +487,10 @@ Route::prefix('admin')
 
 
 
-               Route::middleware(['orbana.core'])->group(function () {
+             
                 Route::get('/dispatch-settings', [DispatchSettingsController::class, 'edit'])->name('dispatch_settings.edit');
                 Route::put('/dispatch-settings', [DispatchSettingsController::class, 'update'])->name('dispatch_settings.update');
-            });
+           
 
 
                 Route::get('/fare-policies', [TenantFarePolicyController::class, 'index'])->name('fare_policies.index');
@@ -474,6 +538,12 @@ Route::prefix('admin')
                 Route::prefix('api')->group(function () {
                     Route::get('/sectores', [ApiSectorController::class, 'index']);
                     Route::get('/taxistands', [ApiTaxiStandController::class, 'index']);
+
+
+
+
+
+
                 });
             });
         });
@@ -747,7 +817,40 @@ Route::post('/topups/transfer/{topup}/reject', [\App\Http\Controllers\SysAdmin\T
   ->name('sysadmin.topups.transfer.reject');
 
 
+  Route::get('/topups/partner-transfer', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'index'])
+  ->name('sysadmin.topups.partner_transfer.index');
 
+Route::get('/topups/partner-transfer/{topup}', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'show'])
+  ->name('sysadmin.topups.partner_transfer.show');
+
+Route::post('/topups/partner-transfer/{topup}/approve', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'approve'])
+  ->name('sysadmin.topups.partner_transfer.approve');
+
+Route::post('/topups/partner-transfer/{topup}/reject', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'reject'])
+  ->name('sysadmin.topups.partner_transfer.reject');
+
+
+
+ Route::prefix('tenants/{tenant}')->group(function () {
+
+   Route::get('partners/{partner}/billing', [TenantPartnerBillingController::class, 'show'])
+          ->name('sysadmin.tenants.partners.billing.show');
+
+    // Route::get('partner-topups', [\App\Http\Controllers\SysAdmin\PartnerTopupReviewController::class, 'index'])
+    //         ->name('sysadmin.tenants.billing.partners._topups_table');
+
+    // Route::get('partner-topups', [PartnerTopupReviewController::class, 'index'])
+    //         ->name('sysadmin.tenants.partner_topups.index');
+
+    //   Route::get('partner-topups/{topup}', [\App\Http\Controllers\SysAdmin\PartnerTopupReviewController::class, 'show'])
+    //     ->name('sysadmin.tenants.partner_topups.show');
+
+    //   Route::post('partner-topups/{topup}/approve', [\App\Http\Controllers\SysAdmin\PartnerTopupReviewController::class, 'approve'])
+    //     ->name('sysadmin.tenants.partner_topups.approve');
+
+    //   Route::post('partner-topups/{topup}/reject', [\App\Http\Controllers\SysAdmin\PartnerTopupReviewController::class, 'reject'])
+    //     ->name('sysadmin.tenants.partner_topups.reject');
+    });
 
 // =====================================================
 // Shifts (control manual total)
@@ -758,6 +861,192 @@ Route::post('/topups/transfer/{topup}/reject', [\App\Http\Controllers\SysAdmin\T
 Route::post('/tenants/{tenant}/billing/vehicles/{vehicle}/toggle-active', [TenantConsoleVehicleController::class, 'toggleActive'])
     ->name('sysadmin.tenants.billing.vehicles.toggle_active');
 });
+
+
+
+
+
+// =====================================================
+// Partner Portal
+// =====================================================
+// Requiere sesión web, usuario autenticado/verificado y contexto de partner activo.
+Route::middleware(['web', 'auth', 'verified', 'partner.ctx', 'partner.billing.gate'])
+
+  ->prefix('partner')
+  ->name('partner.')
+  ->group(function () {
+
+    // -------------------------------------------------
+    // Dashboard / Contexto
+    // -------------------------------------------------
+    Route::get('/', [PartnerDashboardController::class, 'index'])
+      ->name('dashboard');
+
+    // Cambiar partner activo (si un user pertenece a varios partners)
+    Route::post('/switch', [PartnerContextController::class, 'switch'])
+      ->name('switch');
+
+    // -------------------------------------------------
+    // Flota: Vehículos
+    // -------------------------------------------------
+    Route::get('/vehicles', [PartnerVehicleController::class, 'index'])->name('vehicles.index');
+    Route::get('/vehicles/create', [PartnerVehicleController::class, 'create'])->name('vehicles.create');
+    Route::post('/vehicles', [PartnerVehicleController::class, 'store'])->name('vehicles.store');
+    Route::get('/vehicles/{id}', [PartnerVehicleController::class, 'show'])->name('vehicles.show');
+    Route::get('/vehicles/{id}/edit', [PartnerVehicleController::class, 'edit'])->name('vehicles.edit');
+    Route::put('/vehicles/{id}', [PartnerVehicleController::class, 'update'])->name('vehicles.update');
+
+    // Activación / Suspensión (ya tienes botón activar/desactivar)
+    Route::post('/vehicles/{id}/suspend', [PartnerVehicleController::class, 'suspend'])->name('vehicles.suspend');
+    Route::post('/vehicles/{id}/activate', [PartnerVehicleController::class, 'activate'])->name('vehicles.activate');
+
+    // Documentos de vehículo
+    Route::get('/vehicles/{id}/documents', [PartnerVehicleDocsController::class, 'index'])->name('vehicles.documents.index');
+    Route::post('/vehicles/{id}/documents', [PartnerVehicleDocsController::class, 'store'])->name('vehicles.documents.store');
+    Route::get('/vehicle-documents/{doc}/download', [PartnerVehicleDocsController::class, 'download'])->name('vehicles.documents.download');
+    Route::post('/vehicle-documents/{doc}/delete', [PartnerVehicleDocsController::class, 'destroy'])->name('vehicles.documents.delete');
+
+    // -------------------------------------------------
+    // Flota: Conductores
+    // -------------------------------------------------
+    Route::get('/drivers', [PartnerDriverController::class, 'index'])->name('drivers.index');
+    Route::get('/drivers/create', [PartnerDriverController::class, 'create'])->name('drivers.create');
+    Route::post('/drivers', [PartnerDriverController::class, 'store'])->name('drivers.store');
+    Route::get('/drivers/{id}', [PartnerDriverController::class, 'show'])->name('drivers.show');
+    Route::get('/drivers/{id}/edit', [PartnerDriverController::class, 'edit'])->name('drivers.edit');
+    Route::put('/drivers/{id}', [PartnerDriverController::class, 'update'])->name('drivers.update');
+    Route::delete('/drivers/{id}', [PartnerDriverController::class, 'destroy'])->name('drivers.destroy');
+
+    // Activación / Suspensión
+    Route::post('/drivers/{id}/suspend', [PartnerDriverController::class, 'suspend'])->name('drivers.suspend');
+    Route::post('/drivers/{id}/activate', [PartnerDriverController::class, 'activate'])->name('drivers.activate');
+
+    // Reset password (nota: ya estabas usando FQCN distinto; lo dejé consistente)
+    Route::post('/drivers/{id}/reset-password', [PartnerDriverController::class, 'resetPassword'])
+      ->name('drivers.resetPassword');
+
+    // Documentos de conductor
+    Route::get('/drivers/{id}/documents', [PartnerDriverDocsController::class, 'index'])->name('drivers.documents.index');
+    Route::post('/drivers/{id}/documents', [PartnerDriverDocsController::class, 'store'])->name('drivers.documents.store');
+    Route::get('/driver-documents/{doc}/download', [PartnerDriverDocsController::class, 'download'])->name('drivers.documents.download');
+    Route::post('/driver-documents/{doc}/delete', [PartnerDriverDocsController::class, 'destroy'])->name('drivers.documents.delete');
+
+    // -------------------------------------------------
+    // Asignaciones (driver -> vehicle)
+    // -------------------------------------------------
+    Route::post('/drivers/{id}/assign-vehicle', [PartnerDriverController::class, 'assignVehicle'])
+      ->name('drivers.assignVehicle');
+
+    Route::post('/assignments/{assignmentId}/close', [PartnerDriverController::class, 'closeAssignment'])
+      ->name('assignments.close');
+
+    // -------------------------------------------------
+    // Finanzas: Wallet + Recargas
+    // -------------------------------------------------
+    Route::get('/wallet', [PartnerWalletController::class, 'index'])->name('wallet.index');
+
+    Route::get('/topups', [PartnerTopupController::class, 'index'])->name('topups.index');
+    Route::get('/topups/create', [PartnerTopupController::class, 'create'])->name('topups.create');
+    Route::post('/topups', [PartnerTopupController::class, 'store'])->name('topups.store');
+    Route::get('/topups/{topup}', [PartnerTopupController::class, 'show'])->name('topups.show');
+    Route::post('/topups/{topup}/resubmit', [PartnerTopupController::class, 'resubmit'])->name('topups.resubmit');
+
+    // -------------------------------------------------
+    // Reportes (solo lectura)
+    // -------------------------------------------------
+    Route::prefix('reports')->name('reports.')->group(function () {
+
+      // Rides
+      Route::get('/rides', [PartnerRidesReportController::class, 'index'])->name('rides.index');
+      Route::get('/rides/export-csv', [PartnerRidesReportController::class, 'exportCsv'])->name('rides.exportCsv');
+      Route::get('/rides/{ride}', [PartnerRidesReportController::class, 'show'])
+        ->whereNumber('ride')->name('rides.show');
+
+      // Driver Quality
+      Route::get('/driver-quality', [PartnerDriverQualityReportController::class, 'index'])->name('driver_quality.index');
+      Route::get('/driver-quality/export.csv', [PartnerDriverQualityReportController::class, 'exportCsv'])->name('driver_quality.export');
+      Route::get('/driver-quality/{driver}', [PartnerDriverQualityReportController::class, 'show'])->name('driver_quality.show');
+
+      // Vehicles
+      Route::get('/vehicles', [PartnerVehiclesReportController::class, 'index'])->name('vehicles.index');
+      Route::get('/vehicles/export-csv', [PartnerVehiclesReportController::class, 'exportCsv'])->name('vehicles.exportCsv');
+      Route::get('/vehicles/{vehicle}', [PartnerVehiclesReportController::class, 'show'])
+        ->whereNumber('vehicle')->name('vehicles.show');
+    });
+
+    // -------------------------------------------------
+    // Ride detail (vista completa 1 ride)
+    // Nota: esta ruta chocaba con partner.reports.rides.show si usabas el mismo name.
+    // La dejo como partner.rides.show (fuera de reports) porque es la que usan enlaces desde tablas.
+    // -------------------------------------------------
+    Route::get('/rides/{rideId}', [\App\Http\Controllers\Partner\PartnerRideController::class, 'show'])
+      ->name('rides.show');
+
+    // -------------------------------------------------
+    // API interna para Partner (polling)
+    // -------------------------------------------------
+    Route::prefix('api')->name('api.')->group(function () {
+
+      Route::get('/dashboard', [\App\Http\Controllers\Partner\Api\PartnerApiController::class, 'dashboard'])
+        ->name('dashboard');
+
+      Route::get('/reports/rides-summary', [\App\Http\Controllers\Partner\Api\PartnerReportsApiController::class, 'ridesSummary'])
+        ->name('reports.ridesSummary');
+    });
+
+    // -------------------------------------------------
+    // Monitor (mapa solo lectura)
+    // -------------------------------------------------
+    Route::get('/monitor', [\App\Http\Controllers\Partner\PartnerMonitorController::class, 'index'])
+      ->name('monitor.index');
+
+    Route::get('/monitor/bootstrap', [\App\Http\Controllers\Partner\PartnerMonitorApiController::class, 'bootstrap'])
+      ->name('monitor.bootstrap');
+
+    Route::get('/monitor/active-rides', [\App\Http\Controllers\Partner\PartnerMonitorApiController::class, 'activeRides'])
+      ->name('monitor.activeRides');
+
+    Route::get('/monitor/rides/{ride}', [\App\Http\Controllers\Partner\PartnerMonitorApiController::class, 'rideShow'])
+      ->whereNumber('ride')
+      ->name('monitor.rideShow');
+
+    // -------------------------------------------------
+    // Inbox (partner_notifications)
+    // -------------------------------------------------
+    Route::get('/inbox', [\App\Http\Controllers\Partner\Inbox\PartnerInboxController::class, 'index'])
+      ->name('inbox.index');
+
+    Route::post('/inbox/{id}/read', [\App\Http\Controllers\Partner\Inbox\PartnerInboxController::class, 'markRead'])
+      ->whereNumber('id')->name('inbox.read');
+
+    Route::post('/inbox/read-all', [\App\Http\Controllers\Partner\Inbox\PartnerInboxController::class, 'markAllRead'])
+      ->name('inbox.readAll');
+
+    // Deep-link “Ver relacionado”
+    Route::get('/inbox/{id}/go', [\App\Http\Controllers\Partner\Inbox\PartnerInboxController::class, 'go'])
+      ->whereNumber('id')->name('inbox.go');
+
+    // -------------------------------------------------
+    // Soporte / Solicitudes (tickets)
+    // -------------------------------------------------
+    Route::get('/support', [\App\Http\Controllers\Partner\Support\PartnerSupportController::class, 'index'])
+      ->name('support.index');
+
+    Route::get('/support/create', [\App\Http\Controllers\Partner\Support\PartnerSupportController::class, 'create'])
+      ->name('support.create');
+
+    Route::post('/support', [\App\Http\Controllers\Partner\Support\PartnerSupportController::class, 'store'])
+      ->name('support.store');
+
+    Route::get('/support/{thread}', [\App\Http\Controllers\Partner\Support\PartnerSupportController::class, 'show'])
+      ->whereNumber('thread')->name('support.show');
+
+    Route::post('/support/{thread}/reply', [\App\Http\Controllers\Partner\Support\PartnerSupportController::class, 'reply'])
+      ->whereNumber('thread')->name('support.reply');
+
+    Route::post('/support/{thread}/close', [\App\Http\Controllers\Partner\Support\PartnerSupportController::class, 'close'])
+      ->whereNumber('thread')->name('support.close');
+  });
 
 
 /*

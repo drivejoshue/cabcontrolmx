@@ -71,3 +71,12 @@ Broadcast::channel('tenant.{tenantId}.ride.{rideId}', function ($user, int $tena
 
     return $owns;
 });
+
+
+Broadcast::channel('partner.{partnerId}.drivers', function ($user, $partnerId) {
+    return (int) session('partner_id') === (int) $partnerId;
+});
+
+Broadcast::channel('partner.{partnerId}.rides', function ($user, $partnerId) {
+    return (int) session('partner_id') === (int) $partnerId;
+});

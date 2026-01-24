@@ -1268,197 +1268,204 @@ class RideController extends Controller
 
     /** GET /api/driver/history */
     /** GET /api/driver/history */
-    public function historyForDriver(Request $req)
-    {
-        $user = $req->user();
-        if (!$user) {
-            return response()->json([
-                'ok'      => false,
-                'message' => 'Unauthenticated',
-            ], 401);
-        }
+  public function historyForDriver(Request $req)
+{
+    $user = $req->user();
+    if (!$user) {
+        return response()->json(['ok' => false, 'message' => 'Unauthenticated'], 401);
+    }
 
-        $tenantId = $this->tenantIdFrom($req);
+    $tenantId = $this->tenantIdFrom($req);
 
-        // Driver asociado al usuario
-        $driverId = DB::table('drivers')
-            ->where('tenant_id', $tenantId)
-            ->where('user_id', $user->id)
-            ->value('id');
+    $driverId = DB::table('drivers')
+        ->where('tenant_id', $tenantId)
+        ->where('user_id', $user->id)
+        ->value('id');
 
-        if (!$driverId) {
-            return response()->json([
-                'ok'      => false,
-                'message' => 'Driver no encontrado',
-            ], 404);
-        }
+    if (!$driverId) {
+        return response()->json(['ok' => false, 'message' => 'Driver no encontrado'], 404);
+    }
 
-        // range / payment / channel
-        $range   = $req->query('range', $req->query('filter', 'today')); // compat
-        $payment = $req->query('payment'); // cash|transfer|card|corp|null
-        $channel = $req->query('channel'); // dispatch|passenger_app|driver_app|api|null
+    // ---- query params ----
+    $range   = $req->query('range', $req->query('filter', 'today')); // compat
+    $payment = $req->query('payment');  // cash|transfer|card|corp|null
+    $channel = $req->query('channel');  // dispatch|passenger_app|driver_app|api|null
 
-        $page    = (int) $req->query('page', 1);
-        $perPage = (int) $req->query('per_page', 20);
+    $page    = max(1, (int)$req->query('page', 1));
+   $perPageRaw = (int) $req->query('per_page', 20);
+    // 0, negativos o null => default
+    $perPage = $perPageRaw > 0 ? $perPageRaw : 20;
+    // clamp duro
+    $perPage = min(max($perPage, 5), 50);
 
-        $tz  = config('app.timezone');
-        $now = now($tz);
+    $tz  = config('app.timezone');
+    $now = now($tz);
 
-        // Rango de fechas
-        $from = null;
-        $to   = null;
+    $fromQ = $req->query('from'); // yyyy-mm-dd
+    $toQ   = $req->query('to');   // yyyy-mm-dd
 
-        switch ($range) {
-            case 'week':
-                $from = $now->copy()->startOfWeek();
-                $to   = $now->copy()->endOfDay();
-                break;
+    // ---- date range ----
+    $from = null;
+    $to   = null;
 
-            case 'month':
+    switch ($range) {
+        case 'week':
+            $from = $now->copy()->startOfWeek();
+            $to   = $now->copy()->endOfDay();
+            break;
+
+        case 'month':
+            $from = $now->copy()->startOfMonth();
+            $to   = $now->copy()->endOfDay();
+            break;
+
+        case 'custom':
+            if ($fromQ && $toQ) {
+                $from = \Carbon\Carbon::parse($fromQ, $tz)->startOfDay();
+                $to   = \Carbon\Carbon::parse($toQ, $tz)->endOfDay();
+            } else {
                 $from = $now->copy()->startOfMonth();
                 $to   = $now->copy()->endOfDay();
-                break;
-
-            case 'all':
-                $range = 'all';
-                break;
-
-            case 'today':
-            default:
-                $from  = $now->copy()->startOfDay();
-                $to    = $now->copy()->endOfDay();
-                $range = 'today';
-                break;
-        }
-
-        /**
-         * BASE para el resumen (sin joins para que no truene los COUNT/SUM)
-         */
-        $base = DB::table('rides')
-            ->where('tenant_id', $tenantId)
-            ->where('driver_id', $driverId)
-            ->whereIn('status', ['finished', 'canceled']);
-
-        if ($from && $to) {
-            $base->whereBetween('created_at', [$from, $to]);
-        }
-
-        if ($payment) {
-            $base->where('payment_method', $payment);
-        }
-
-        if ($channel) {
-            $base->where('requested_channel', $channel);
-        }
-
-        // --- Resumen (sólo viajes terminados) ---
-           $summaryRow = (clone $base)
-            ->where('status', 'finished')
-            ->selectRaw("
-                COUNT(*) as finished_trips,
-                SUM(
-                    CASE
-                        WHEN requested_channel = 'passenger_app'
-                            THEN COALESCE(agreed_amount, passenger_offer, total_amount, quoted_amount, 0)
-                        ELSE
-                            COALESCE(total_amount, agreed_amount, passenger_offer, quoted_amount, 0)
-                    END
-                ) as gross_amount
-            ")
-            ->first();
-
-
-        $canceledCount = (clone $base)
-            ->where('status', 'canceled')
-            ->count();
-
-        $summary = [
-            'finishedTrips' => (int)($summaryRow->finished_trips ?? 0),
-            'canceledTrips' => (int)$canceledCount,
-            'grossAmount'   => (float)($summaryRow->gross_amount ?? 0),
-        ];
-
-        /**
-         * BASE para la lista, aquí sí hacemos LEFT JOIN con ratings
-         * rating = calificación que el PASAJERO le puso al DRIVER en ese ride.
-         */
-        $listBase = DB::table('rides as r')
-            ->leftJoin('ratings as rt', function ($q) use ($tenantId, $driverId) {
-                $q->on('rt.ride_id', '=', 'r.id')
-                  ->where('rt.tenant_id', '=', $tenantId)
-                  ->where('rt.rated_type', '=', 'driver')
-                  ->where('rt.rater_type', '=', 'passenger')
-                  ->where('rt.rated_id', '=', $driverId);
-            })
-            ->where('r.tenant_id', $tenantId)
-            ->where('r.driver_id', $driverId)
-            ->whereIn('r.status', ['finished', 'canceled']);
-
-        if ($from && $to) {
-            $listBase->whereBetween('r.created_at', [$from, $to]);
-        }
-
-        if ($payment) {
-            $listBase->where('r.payment_method', $payment);
-        }
-
-        if ($channel) {
-            $listBase->where('r.requested_channel', $channel);
-        }
-
-        // --- Paginación ---
-        $paginator = $listBase
-            ->orderByDesc('r.created_at')
-            ->select([
-                'r.*',
-                'rt.rating as driver_rating',
-            ])
-            ->paginate($perPage, ['*'], 'page', $page);
-
-        $todayDate = $now->toDateString();
-
-        $trips = collect($paginator->items())->map(function ($r) use ($tz, $todayDate) {
-            $createdAt = $r->requested_at ?? $r->created_at;
-            $created   = $createdAt ? \Carbon\Carbon::parse($createdAt, $tz) : null;
-
-            if ($created && $created->toDateString() === $todayDate) {
-                $dateLabel = 'Hoy, ' . $created->format('d M');
-            } else {
-                $dateLabel = $created ? $created->format('d M Y') : '';
             }
+            break;
 
-            $timeLabel = $created ? $created->format('H:i') : '';
+        case 'all':
+            $from = null;
+            $to   = null;
+            break;
 
-            $status = strtolower($r->status ?? '');
-            $amount = $this->resolveFinalAmount($r);
-            return [
-                'id'            => (int)$r->id,
-                'startedAt'     => $createdAt,
-                'finishedAt'    => $r->finished_at,
-                'dateLabel'     => $dateLabel,
-                'timeLabel'     => $timeLabel,
-                'passengerName' => $r->passenger_name ?? 'Pasajero',
-                'originLabel'   => $r->origin_label ?? 'Origen sin nombre',
-                'destLabel'     => $r->dest_label ?? null,
-                'amount'        => $amount !== null ? $amount : 0.0,
-                'rating'        => $r->driver_rating !== null ? (float)$r->driver_rating : null,
-                'paymentMethod' => $r->payment_method ?? null,
-                'status'        => $status,   // finished | canceled
-            ];
-        });
-
-        return response()->json([
-            'ok' => true,
-            'pagination' => [
-                'page'      => $paginator->currentPage(),
-                'per_page'  => $paginator->perPage(),
-                'total'     => $paginator->total(),
-                'last_page' => $paginator->lastPage(),
-            ],
-            'summary' => $summary,
-            'trips'   => $trips,
-        ]);
+        case 'today':
+        default:
+            $from  = $now->copy()->startOfDay();
+            $to    = $now->copy()->endOfDay();
+            $range = 'today';
+            break;
     }
+
+    // =========================================================
+    // BASE para resumen
+    // =========================================================
+    $base = DB::table('rides')
+        ->where('tenant_id', $tenantId)
+        ->where('driver_id', $driverId)
+        ->whereIn('status', ['finished', 'canceled']);
+
+    if ($from && $to) {
+        $base->whereRaw("COALESCE(requested_at, created_at) BETWEEN ? AND ?", [$from, $to]);
+    }
+
+    if ($payment) {
+        $base->where('payment_method', $payment);
+    }
+
+    if ($channel) {
+        $base->where('requested_channel', $channel);
+    }
+
+    $summaryRow = (clone $base)
+        ->where('status', 'finished')
+        ->selectRaw("
+            COUNT(*) as finished_trips,
+            SUM(
+                CASE
+                    WHEN requested_channel = 'passenger_app'
+                        THEN COALESCE(agreed_amount, passenger_offer, total_amount, quoted_amount, 0)
+                    ELSE
+                        COALESCE(total_amount, agreed_amount, passenger_offer, quoted_amount, 0)
+                END
+            ) as gross_amount
+        ")
+        ->first();
+
+    $canceledCount = (clone $base)
+        ->where('status', 'canceled')
+        ->count();
+
+    $summary = [
+        'finishedTrips' => (int)($summaryRow->finished_trips ?? 0),
+        'canceledTrips' => (int)$canceledCount,
+        'grossAmount'   => (float)($summaryRow->gross_amount ?? 0),
+    ];
+
+    // =========================================================
+    // BASE para lista (con ratings)
+    // =========================================================
+    $listBase = DB::table('rides as r')
+        ->leftJoin('ratings as rt', function ($q) use ($tenantId, $driverId) {
+            $q->on('rt.ride_id', '=', 'r.id')
+              ->where('rt.tenant_id', '=', $tenantId)
+              ->where('rt.rated_type', '=', 'driver')
+              ->where('rt.rater_type', '=', 'passenger')
+              ->where('rt.rated_id', '=', $driverId);
+        })
+        ->where('r.tenant_id', $tenantId)
+        ->where('r.driver_id', $driverId)
+        ->whereIn('r.status', ['finished', 'canceled']);
+
+    if ($from && $to) {
+        $listBase->whereRaw("COALESCE(r.requested_at, r.created_at) BETWEEN ? AND ?", [$from, $to]);
+    }
+
+    if ($payment) {
+        $listBase->where('r.payment_method', $payment);
+    }
+
+    if ($channel) {
+        $listBase->where('r.requested_channel', $channel);
+    }
+
+   $paginator = $listBase
+    ->orderByRaw("COALESCE(r.requested_at, r.created_at) DESC")
+    ->select(['r.*', 'rt.rating as driver_rating'])
+    ->paginate($perPage, ['*'], 'page', $page);
+
+
+    $todayDate = $now->toDateString();
+
+    $trips = collect($paginator->items())->map(function ($r) use ($tz, $todayDate) {
+        $createdAt = $r->requested_at ?? $r->created_at;
+        $created   = $createdAt ? \Carbon\Carbon::parse($createdAt, $tz) : null;
+
+        $dateLabel = '';
+        if ($created) {
+            $dateLabel = ($created->toDateString() === $todayDate)
+                ? ('Hoy, ' . $created->format('d M'))
+                : $created->format('d M Y');
+        }
+
+        $timeLabel = $created ? $created->format('H:i') : '';
+
+        $status = strtolower($r->status ?? '');
+        $amount = $this->resolveFinalAmount($r);
+
+        return [
+            'id'            => (int)$r->id,
+            'startedAt'     => $createdAt,
+            'finishedAt'    => $r->finished_at,
+            'dateLabel'     => $dateLabel,
+            'timeLabel'     => $timeLabel,
+            'passengerName' => $r->passenger_name ?? 'Pasajero',
+            'originLabel'   => $r->origin_label ?? 'Origen sin nombre',
+            'destLabel'     => $r->dest_label ?? null,
+            'amount'        => $amount !== null ? (float)$amount : 0.0,
+            'rating'        => $r->driver_rating !== null ? (float)$r->driver_rating : null,
+            'paymentMethod' => $r->payment_method ?? null,
+            'status'        => $status, // finished|canceled
+        ];
+    });
+
+    return response()->json([
+        'ok' => true,
+        'pagination' => [
+            'page'      => $paginator->currentPage(),
+            'per_page'  => $paginator->perPage(),
+            'total'     => $paginator->total(),
+            'last_page' => $paginator->lastPage(),
+        ],
+        'summary' => $summary,
+        'trips'   => $trips,
+    ]);
+}
 
    /**
      * Resuelve el monto final canónico de un viaje.

@@ -4,6 +4,7 @@ use App\Http\Middleware\EnsureTenantOnboarded;
 use App\Http\Middleware\EnsureUserIsAdmin;
 use App\Http\Middleware\EnsureUserIsSysAdmin;
 use App\Http\Middleware\SetTenantFromUser;
+use App\Http\Middleware\PartnerBillingGate;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -34,6 +35,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'staff' => \App\Http\Middleware\EnsureStaff::class,
             'public.key' => \App\Http\Middleware\PublicApiKeyMiddleware::class,
             'orbana.core' => \App\Http\Middleware\OrbanaCoreOnly::class,
+            'partner.ctx' => \App\Http\Middleware\EnsurePartnerContext::class,
+            'partner.billing.gate' => \App\Http\Middleware\PartnerBillingGate::class,
+
 
         ]);
     })

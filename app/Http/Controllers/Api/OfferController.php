@@ -1030,101 +1030,162 @@ class OfferController extends Controller
     }
 
 
-    public function expire(Request $req, int $offerId)
+public function expire(Request $req, int $offerId)
 {
     $now = now();
     $user = $req->user();
-    if (!$user) return response()->json(['ok'=>false,'msg'=>'No auth'], 401);
+    
+    if (!$user) {
+        return response()->json(['ok'=>false,'msg'=>'No auth'], 401);
+    }
 
     // Resolver driverId del user
     $driverId = DB::table('drivers')->where('user_id', $user->id)->value('id');
-    if (!$driverId) return response()->json(['ok'=>false,'msg'=>'No driver bound'], 400);
+    if (!$driverId) {
+        return response()->json(['ok'=>false,'msg'=>'No driver bound'], 400);
+    }
 
-    return DB::transaction(function () use ($offerId, $driverId, $now) {
+    // LOGGING CRÍTICO - Para ver quién llama
+    \Log::info('🚨 DRIVER CALLED /expire ENDPOINT', [
+        'offer_id' => $offerId,
+        'driver_id' => $driverId,
+        'user_id' => $user->id,
+        'user_name' => $user->name ?? 'unknown',
+        'ip' => $req->ip(),
+        'user_agent' => $req->userAgent(),
+        'time' => $now->format('Y-m-d H:i:s'),
+        'url' => $req->fullUrl()
+    ]);
 
-        // Lock oferta
+    return DB::transaction(function () use ($offerId, $driverId, $now, $req) {
+
+        // Lock oferta para leer
         $o = DB::table('ride_offers')
             ->where('id', $offerId)
             ->lockForUpdate()
             ->first();
 
-        if (!$o) return response()->json(['ok'=>false,'msg'=>'Offer not found'], 404);
-        if ((int)$o->driver_id !== (int)$driverId) return response()->json(['ok'=>false,'msg'=>'Forbidden'], 403);
+        if (!$o) {
+            \Log::warning('expire: offer not found', ['offer_id' => $offerId]);
+            return response()->json(['ok'=>false,'msg'=>'Offer not found'], 404);
+        }
+        
+        if ((int)$o->driver_id !== (int)$driverId) {
+            \Log::warning('expire: driver mismatch', [
+                'offer_driver' => $o->driver_id, 
+                'request_driver' => $driverId
+            ]);
+            return response()->json(['ok'=>false,'msg'=>'Forbidden'], 403);
+        }
+
+        $tenantId = (int)$o->tenant_id;
+        $rideId   = (int)$o->ride_id;
+        
+        // Log detallado del estado actual
+        \Log::info('📋 Estado actual de la oferta', [
+            'offer_id' => $offerId,
+            'current_status' => $o->status,
+            'expires_at' => $o->expires_at,
+            'ride_id' => $rideId,
+            'tenant_id' => $tenantId,
+            'is_expired' => !empty($o->expires_at) && $now->gte(\Carbon\Carbon::parse($o->expires_at))
+        ]);
 
         // Idempotencia: si ya no está offered, ok sin hacer nada
         if (($o->status ?? null) !== 'offered') {
-            return response()->json(['ok'=>true,'skipped'=>true,'status'=>$o->status]);
+            \Log::info('expire: skipped - offer already processed', [
+                'offer_id' => $offerId,
+                'current_status' => $o->status
+            ]);
+            
+            return response()->json([
+                'ok' => true,
+                'skipped' => true,
+                'status' => $o->status,
+                'message' => 'Oferta ya procesada'
+            ]);
         }
 
         // Guard de tiempo: solo expirar si ya venció realmente
         if (empty($o->expires_at) || $now->lt(\Carbon\Carbon::parse($o->expires_at))) {
-            return response()->json(['ok'=>true,'skipped'=>true,'reason'=>'not_expired_yet']);
+            \Log::info('expire: skipped - not expired yet', [
+                'offer_id' => $offerId,
+                'expires_at' => $o->expires_at,
+                'current_time' => $now->format('Y-m-d H:i:s')
+            ]);
+            
+            return response()->json([
+                'ok' => true,
+                'skipped' => true,
+                'reason' => 'not_expired_yet',
+                'expires_at' => $o->expires_at,
+                'message' => 'La oferta aún no ha expirado'
+            ]);
         }
 
-        // 1) Expirar oferta
+        // ✅✅✅ VERSIÓN DUMMY - SOLO LOGGING Y NOTIFICACIÓN ✅✅✅
+        
+        // 1) Marcar como "released" en lugar de "expired" (para que tick_flow lo maneje)
         DB::table('ride_offers')
             ->where('id', $offerId)
             ->where('status', 'offered')
             ->update([
-                'status'       => 'expired',
-                'response'     => DB::raw("COALESCE(response,'expired')"),
+                'status'       => 'released',  // ← Cambiado de 'expired' a 'released'
+                'response'     => DB::raw("COALESCE(response,'timeout_stand')"),
                 'responded_at' => DB::raw("COALESCE(responded_at,'{$now->format('Y-m-d H:i:s')}')"),
                 'updated_at'   => $now,
             ]);
 
-        $tenantId = (int)$o->tenant_id;
-        $rideId   = (int)$o->ride_id;
+        // Log del cambio
+        \Log::info('✅ Oferta marcada como released (no cancelar ride)', [
+            'offer_id' => $offerId,
+            'driver_id' => $driverId,
+            'ride_id' => $rideId,
+            'old_status' => $o->status,
+            'new_status' => 'released',
+            'note' => 'Ride NO cancelado - tick_flow manejará la transición'
+        ]);
 
-        // 2) Avisar driver inmediatamente
+        // 2) Notificar al driver que la oferta expiró (solo UI)
         OfferBroadcaster::emitStatus($tenantId, (int)$o->driver_id, $rideId, $offerId, 'expired');
         OfferBroadcaster::queueRemove($tenantId, (int)$o->driver_id, $rideId);
 
-        // 3) Intentar cancelar ride SOLO si aplica (mismo guard del expirador)
-        $hasAccepted = DB::table('ride_offers')
-            ->where('tenant_id', $tenantId)
-            ->where('ride_id', $rideId)
-            ->where('status', 'accepted')
-            ->exists();
-
+        // 3) ❌❌❌ NO CANCELAR EL RIDE ❌❌❌
+        // Dejar que tick_flow maneje la transición automáticamente
+        
+        // Log para debugging
         $hasLiveOffers = DB::table('ride_offers')
             ->where('tenant_id', $tenantId)
             ->where('ride_id', $rideId)
-            ->whereIn('status', ['offered','pending_passenger','queued'])
+            ->whereIn('status', ['offered','pending_passenger','queued','accepted'])
             ->exists();
+            
+        \Log::info('🔍 Estado del ride después de /expire', [
+            'ride_id' => $rideId,
+            'has_live_offers' => $hasLiveOffers,
+            'message' => 'Ride sigue activo - tick_flow buscará siguiente conductor'
+        ]);
 
-        if (!$hasAccepted && !$hasLiveOffers) {
-            $rideUpdated = DB::table('rides')
-                ->where('tenant_id', $tenantId)
-                ->where('id', $rideId)
-                ->whereNull('canceled_at')
-                ->whereNotIn('status', ['finished','canceled'])
-                ->update([
-                    'status'        => 'canceled',
-                    'canceled_at'   => $now,
-                    'canceled_by'   => 'system',
-                    'cancel_reason' => 'Oferta expirada',
-                    'updated_at'    => $now,
-                ]);
-
-            if ($rideUpdated) {
-                DB::table('ride_status_history')->insert([
-                    'tenant_id'   => $tenantId,
-                    'ride_id'     => $rideId,
-                    'prev_status' => 'offered',
-                    'new_status'  => 'canceled',
-                    'meta'        => json_encode(['by'=>'system','reason'=>'Oferta expirada','offer_id'=>$offerId]),
-                    'created_at'  => $now,
-                    'updated_at'  => $now,
-                ]);
-
-                RideBroadcaster::canceled($tenantId, $rideId, 'system', 'Oferta expirada');
-            }
-        }
-
-        return response()->json(['ok'=>true]);
+        // 4) Enviar snackbar message al driver
+        // Esto depende de cómo maneje la app las respuestas
+        return response()->json([
+            'ok' => true,
+            'dummy' => true,  // ← Flag para identificar que es versión dummy
+            'message' => 'Oferta expirada. El sistema buscará otro conductor automáticamente.',
+            'snackbar' => [
+                'message' => '⏰ Oferta expirada - Sistema en búsqueda de otro conductor',
+                'type' => 'info',
+                'duration' => 5000  // 5 segundos
+            ],
+            'data' => [
+                'offer_id' => $offerId,
+                'ride_id' => $rideId,
+                'new_status' => 'released',
+                'action' => 'tick_flow_will_handle'
+            ]
+        ]);
     });
 }
-
 
 
 

@@ -7,210 +7,249 @@ use Carbon\Carbon;
 
 class OfferBroadcaster
 {
-   public static function emitNew(int $offerId): void
-    {
-        try {
-            $o = DB::table('ride_offers as o')
-                ->join('rides as r', 'r.id', '=', 'o.ride_id')
-                ->join('drivers as d', 'd.id', '=', 'o.driver_id')
-                ->where('o.id', $offerId)
-                ->select([
-                    'o.id as offer_id',
-                    'o.tenant_id',
-                    'o.driver_id',
-                    'o.ride_id',
-                    'o.is_direct',
-                    'o.round_no',
-                    'o.expires_at',
-                    'o.eta_seconds',
-                    'o.distance_m',
+  public static function emitNew(int $offerId): void
+{
+    // ================================================
+    // 🔒 PROTECCIÓN CONTRA DUPLICADOS
+    // ================================================
+    
+    // 1) Verificar si ya fue enviada (sent_at)
+    $alreadySent = DB::table('ride_offers')
+        ->where('id', $offerId)
+        ->whereNotNull('sent_at')
+        ->exists();
+    
+    if ($alreadySent) {
+        \Log::warning('OfferBroadcaster::emitNew - Already sent, skipping', [
+            'offer_id' => $offerId,
+            'caller' => debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2)[1]['function'] ?? 'unknown',
+        ]);
+        return;
+    }
+    
+    // 2) Verificar si ya está en outbox (pendiente de procesar)
+    $inOutbox = DB::table('dispatch_outbox')
+        ->where('offer_id', $offerId)
+        ->where('topic', 'offer.new')
+        ->whereIn('status', ['PENDING', 'PROCESSING', 'FAILED'])
+        ->exists();
+    
+    if ($inOutbox) {
+        \Log::warning('OfferBroadcaster::emitNew - Already in outbox, skipping', [
+            'offer_id' => $offerId,
+        ]);
+        return;
+    }
+    
+    // 3) Marcar como enviada INMEDIATAMENTE (para prevenir duplicados)
+    DB::table('ride_offers')
+        ->where('id', $offerId)
+        ->update(['sent_at' => Carbon::now()]);
+    
+    // ================================================
+    // 📦 CÓDIGO ORIGINAL (con manejo de errores)
+    // ================================================
+    try {
+        $o = DB::table('ride_offers as o')
+            ->join('rides as r', 'r.id', '=', 'o.ride_id')
+            ->join('drivers as d', 'd.id', '=', 'o.driver_id')
+            ->where('o.id', $offerId)
+            ->select([
+                'o.id as offer_id',
+                'o.tenant_id',
+                'o.driver_id',
+                'o.ride_id',
+                'o.is_direct',
+                'o.round_no',
+                'o.expires_at',
+                'o.eta_seconds',
+                'o.distance_m',
 
-                    'r.requested_channel',
-                    'r.origin_lat',
-                    'r.origin_lng',
-                    'r.origin_label',
-                    'r.dest_lat',
-                    'r.dest_lng',
-                    'r.dest_label',
-                    'r.pax',
-                    'r.notes',
-                    'r.quoted_amount',
-                    'r.distance_m as route_distance_m',
-                    'r.duration_s as route_duration_s',
-                    'r.route_polyline',
-                    'r.stops_json',
+                'r.requested_channel',
+                'r.origin_lat',
+                'r.origin_lng',
+                'r.origin_label',
+                'r.dest_lat',
+                'r.dest_lng',
+                'r.dest_label',
+                'r.pax',
+                'r.notes',
+                'r.quoted_amount',
+                'r.distance_m as route_distance_m',
+                'r.duration_s as route_duration_s',
+                'r.route_polyline',
+                'r.stops_json',
 
-                    // campos de bidding / marketplace
-                    'r.passenger_offer',
-                    'r.agreed_amount',
+                // campos de bidding / marketplace
+                'r.passenger_offer',
+                'r.agreed_amount',
 
-                    'd.status as driver_status',
-                ])
-                ->first();
+                'd.status as driver_status',
+            ])
+            ->first();
 
-            if (!$o) {
-                \Log::warning('OfferBroadcaster::emitNew - Offer no encontrada', [
-                    'offerId' => $offerId
-                ]);
-                return;
-            }
-
-            $tenantId = (int) $o->tenant_id;
-            $driverId = (int) $o->driver_id;
-            $isPassengerChannel = ($o->requested_channel === 'passenger_app');
-
-            // Settings de Dispatch
-            try {
-                $s = \App\Services\DispatchSettingsService::forTenant($tenantId);
-                $offerExpiresSec   = $s->expires_s;
-                $allowFareBidding  = $s->allow_fare_bidding;
-            } catch (\Exception $e) {
-                \Log::error('OfferBroadcaster::emitNew - Error obteniendo settings', [
-                    'error' => $e->getMessage()
-                ]);
-                $offerExpiresSec  = 300;
-                $allowFareBidding = false;
-            }
-
-            // expires_at
-            $expiresAt = $o->expires_at;
-          if (empty($expiresAt)) {
-                $expiresAt = Carbon::now()
-                    ->addSeconds($offerExpiresSec)
-                    ->format('Y-m-d H:i:s');
-
-                // ✅ Persistir para que el expirador funcione
-                DB::table('ride_offers')
-                    ->where('id', $offerId)
-                    ->whereNull('expires_at')
-                    ->update([
-                        'expires_at'  => $expiresAt,
-                        'updated_at'  => Carbon::now(),
-                    ]);
-
-                \Log::info('OfferBroadcaster::emitNew - expires_at calculado y guardado', [
-                    'offerId'   => $offerId,
-                    'expiresAt' => $expiresAt
-                ]);
-            }
-
-            
-
-            // Preview
-            $etaSeconds = $o->eta_seconds ?? 60;
-            $distanceM  = $o->distance_m ?? 1000;
-
-            // Flags UI
-            $biddingAllowed = $allowFareBidding && $isPassengerChannel;
-            $popupAllowed   = ((int) $o->is_direct === 1)
-                || (
-                    (int) $o->is_direct === 0
-                    && strtolower((string) $o->driver_status) === 'idle'
-                );
-
-            // Stops
-            $stops = [];
-            if (!empty($o->stops_json)) {
-                $tmp = json_decode($o->stops_json, true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) {
-                    $stops = $tmp;
-                }
-            }
-
-            // === Normalizar montos ===
-            $quotedAmount    = $o->quoted_amount   !== null ? (float) $o->quoted_amount    : null;
-            $passengerOffer  = $o->passenger_offer !== null ? (float) $o->passenger_offer  : null;
-            $agreedAmount    = $o->agreed_amount   !== null ? (float) $o->agreed_amount    : null;
-
-            // Monto principal para el driver:
-            //  - Si ya hay acuerdo → agreed_amount
-            //  - Si es bidding y solo hay oferta del pasajero → passenger_offer
-            //  - Si viene de Dispatch tradicional → quoted_amount
-            $mainAmount = $agreedAmount
-                ?? $passengerOffer
-                ?? $quotedAmount;
-
-            // Base para bidding (principalmente Passenger App):
-            //  - Marketplace: slider parte de la oferta del pasajero
-            //  - Si no hay, de la cotización recomendada
-            $biddingBase = $passengerOffer ?? $quotedAmount;
-
-            // Payload final
-            $payload = [
-                'ride_id'          => (int) $o->ride_id,
-                'offer_id'         => (int) $o->offer_id,
-                'is_direct'        => (int) $o->is_direct,
-                'requested_channel'=> (string) $o->requested_channel,
-                'round_no'         => (int) ($o->round_no ?? 0),
-
-                'expires_at'       => $expiresAt,
-                'countdown_sec'    => $offerExpiresSec,
-
-              // 💰 Montos
-                'quoted_amount'     => $quotedAmount,
-                'passenger_offer'   => $passengerOffer,
-                'agreed_amount'     => $agreedAmount,
-                'amount'            => $mainAmount,
-                'bidding_base'      => $biddingBase,
-
-                'bidding_allowed'   => $biddingAllowed,
-                           
-
-                'origin' => [
-                    'lat'   => (float) $o->origin_lat,
-                    'lng'   => (float) $o->origin_lng,
-                    'label' => $o->origin_label ?? 'Origen',
-                ],
-                'dest' => [
-                    'lat'   => $o->dest_lat !== null ? (float) $o->dest_lat : null,
-                    'lng'   => $o->dest_lng !== null ? (float) $o->dest_lng : null,
-                    'label' => $o->dest_label ?? 'Destino',
-                ],
-                'stops' => $stops,
-
-                'pax'   => $o->pax ? (int) $o->pax : 1,
-                'notes' => $o->notes,
-
-                'preview' => [
-                    'eta_to_origin_s'  => (int) $etaSeconds,
-                    'dist_to_origin_m' => (int) $distanceM,
-                    'route_distance_m' => $o->route_distance_m !== null
-                        ? (int) $o->route_distance_m
-                        : (int) $distanceM,
-                    'route_duration_s' => $o->route_duration_s !== null
-                        ? (int) $o->route_duration_s
-                        : (int) $etaSeconds,
-                    'polyline'         => $o->route_polyline,
-                ],
-
-                'ui' => [
-                    'popup_allowed' => $popupAllowed,
-                    // Solo se muestra UI de bidding si es Passenger App
-                    'show_bidding'  => $biddingAllowed && $isPassengerChannel,
-                ],
-            ];
-
-            \Log::info('OfferBroadcaster::emitNew - Enviando payload', [
-                'offer_id'  => $offerId,
-                'tenant_id' => $tenantId,
-                'driver_id' => $driverId,
-                'expires_at'=> $expiresAt,
-                'quoted_amount' => $quotedAmount,
-                
-               
+        if (!$o) {
+            \Log::warning('OfferBroadcaster::emitNew - Offer no encontrada', [
+                'offerId' => $offerId
             ]);
+            
+            // Si no existe, desmarcar sent_at
+            DB::table('ride_offers')
+                ->where('id', $offerId)
+                ->update(['sent_at' => null]);
+            return;
+        }
 
-            // 🔔 Broadcast al driver
-            $event = new DriverEvent($tenantId, $driverId, 'offers.new', $payload);
-            broadcast($event);
+        $tenantId = (int) $o->tenant_id;
+        $driverId = (int) $o->driver_id;
+        $isPassengerChannel = ($o->requested_channel === 'passenger_app');
 
+        // Settings de Dispatch
+        try {
+            $s = \App\Services\DispatchSettingsService::forTenant($tenantId);
+            $offerExpiresSec   = $s->expires_s;
+            $allowFareBidding  = $s->allow_fare_bidding;
         } catch (\Exception $e) {
-            \Log::error('OfferBroadcaster::emitNew - Error', [
-                'offerId' => $offerId,
-                'error'   => $e->getMessage(),
+            \Log::error('OfferBroadcaster::emitNew - Error obteniendo settings', [
+                'error' => $e->getMessage()
+            ]);
+            $offerExpiresSec  = 300;
+            $allowFareBidding = false;
+        }
+
+        // expires_at
+        $expiresAt = $o->expires_at;
+        if (empty($expiresAt)) {
+            $expiresAt = Carbon::now()
+                ->addSeconds($offerExpiresSec)
+                ->format('Y-m-d H:i:s');
+
+            // ✅ Persistir para que el expirador funcione
+            DB::table('ride_offers')
+                ->where('id', $offerId)
+                ->whereNull('expires_at')
+                ->update([
+                    'expires_at'  => $expiresAt,
+                    'updated_at'  => Carbon::now(),
+                ]);
+
+            \Log::info('OfferBroadcaster::emitNew - expires_at calculado y guardado', [
+                'offerId'   => $offerId,
+                'expiresAt' => $expiresAt
             ]);
         }
+
+        // Preview
+        $etaSeconds = $o->eta_seconds ?? 60;
+        $distanceM  = $o->distance_m ?? 1000;
+
+        // Flags UI
+        $biddingAllowed = $allowFareBidding && $isPassengerChannel;
+        $popupAllowed   = ((int) $o->is_direct === 1)
+            || (
+                (int) $o->is_direct === 0
+                && strtolower((string) $o->driver_status) === 'idle'
+            );
+
+        // Stops
+        $stops = [];
+        if (!empty($o->stops_json)) {
+            $tmp = json_decode($o->stops_json, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) {
+                $stops = $tmp;
+            }
+        }
+
+        // === Normalizar montos ===
+        $quotedAmount    = $o->quoted_amount   !== null ? (float) $o->quoted_amount    : null;
+        $passengerOffer  = $o->passenger_offer !== null ? (float) $o->passenger_offer  : null;
+        $agreedAmount    = $o->agreed_amount   !== null ? (float) $o->agreed_amount    : null;
+
+        // Monto principal para el driver:
+        $mainAmount = $agreedAmount
+            ?? $passengerOffer
+            ?? $quotedAmount;
+
+        // Base para bidding
+        $biddingBase = $passengerOffer ?? $quotedAmount;
+
+        // Payload final
+        $payload = [
+            'ride_id'          => (int) $o->ride_id,
+            'offer_id'         => (int) $o->offer_id,
+            'is_direct'        => (int) $o->is_direct,
+            'requested_channel'=> (string) $o->requested_channel,
+            'round_no'         => (int) ($o->round_no ?? 0),
+
+            'expires_at'       => $expiresAt,
+            'countdown_sec'    => $offerExpiresSec,
+
+            'quoted_amount'     => $quotedAmount,
+            'passenger_offer'   => $passengerOffer,
+            'agreed_amount'     => $agreedAmount,
+            'amount'            => $mainAmount,
+            'bidding_base'      => $biddingBase,
+
+            'bidding_allowed'   => $biddingAllowed,
+                       
+
+            'origin' => [
+                'lat'   => (float) $o->origin_lat,
+                'lng'   => (float) $o->origin_lng,
+                'label' => $o->origin_label ?? 'Origen',
+            ],
+            'dest' => [
+                'lat'   => $o->dest_lat !== null ? (float) $o->dest_lat : null,
+                'lng'   => $o->dest_lng !== null ? (float) $o->dest_lng : null,
+                'label' => $o->dest_label ?? 'Destino',
+            ],
+            'stops' => $stops,
+
+            'pax'   => $o->pax ? (int) $o->pax : 1,
+            'notes' => $o->notes,
+
+            'preview' => [
+                'eta_to_origin_s'  => (int) $etaSeconds,
+                'dist_to_origin_m' => (int) $distanceM,
+                'route_distance_m' => $o->route_distance_m !== null
+                    ? (int) $o->route_distance_m
+                    : (int) $distanceM,
+                'route_duration_s' => $o->route_duration_s !== null
+                    ? (int) $o->route_duration_s
+                    : (int) $etaSeconds,
+                'polyline'         => $o->route_polyline,
+            ],
+
+            'ui' => [
+                'popup_allowed' => $popupAllowed,
+                'show_bidding'  => $biddingAllowed && $isPassengerChannel,
+            ],
+        ];
+
+        \Log::info('OfferBroadcaster::emitNew - Enviando payload', [
+            'offer_id'  => $offerId,
+            'tenant_id' => $tenantId,
+            'driver_id' => $driverId,
+            'expires_at'=> $expiresAt,
+            'quoted_amount' => $quotedAmount,
+        ]);
+
+        // 🔔 Broadcast al driver
+        $event = new DriverEvent($tenantId, $driverId, 'offers.new', $payload);
+        broadcast($event);
+
+    } catch (\Exception $e) {
+        // Si hay error, desmarcar sent_at para permitir reintento
+        DB::table('ride_offers')
+            ->where('id', $offerId)
+            ->update(['sent_at' => null]);
+            
+        \Log::error('OfferBroadcaster::emitNew - Error', [
+            'offerId' => $offerId,
+            'error'   => $e->getMessage(),
+        ]);
     }
+}
 
     public static function emitStatus(int $tenantId, int $driverId, int $rideId, int $offerId, string $status): void
     {

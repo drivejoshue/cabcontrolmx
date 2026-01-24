@@ -289,7 +289,27 @@ $homeUrl = $isTenantAdmin
           <li class="nav-item mt-3">
             <div class="nav-link text-uppercase text-muted fw-semibold small">ORBANA_CORE</div>
           </li>
+@php
+  $t = auth()->user()->tenant;
+  $partnerMode = $t && in_array($t->operating_mode, ['partner_network','hybrid','whitelabel'], true);
+@endphp
 
+@if($partnerMode)
+<li class="nav-item {{ $isActive('admin.partners.*') ? 'active' : '' }}">
+  <a class="nav-link" href="{{ route('admin.partners.index') }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block"><i class="ti ti-users-group"></i></span>
+    <span class="nav-link-title">Partners</span>
+  </a>
+</li>
+
+<li class="nav-item">
+  <a class="nav-link" href="{{ route('admin.partner_support.index') }}">
+    <i class="ti ti-messages me-2"></i>
+    <span class="nav-link-title">Soporte (Partners)</span>
+  </a>
+</li>
+
+@endif
 
 
 

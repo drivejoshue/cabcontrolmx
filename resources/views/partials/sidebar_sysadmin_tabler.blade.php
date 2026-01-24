@@ -102,10 +102,23 @@ $isActive = function ($patterns): bool {
       <i class="ti ti-cash-banknote"></i>
     </span>
     <span class="nav-link-title">
-      Transferencias (Recargas)
+      Transferencias (Tennant)
     </span>
   </a>
 </li>
+
+<li class="nav-item">
+  <a class="nav-link {{ request()->routeIs('sysadmin.topups.partner_transfer.*') ? 'active' : '' }}"
+     href="{{ route('sysadmin.topups.partner_transfer.index') }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block">
+      <i class="ti ti-building-bank"></i>
+    </span>
+    <span class="nav-link-title">
+      Transferencias (Partners)
+    </span>
+  </a>
+</li>
+
 
         {{-- Nota: Billing por tenant requiere ID, se accede desde editar tenant --}}
 

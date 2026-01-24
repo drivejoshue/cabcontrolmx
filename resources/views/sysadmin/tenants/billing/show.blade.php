@@ -76,7 +76,8 @@
     </div>
   @endif
 @php
-  $allowedTabs = ['billing','wallet','invoices','users','vehicles','documents'];
+  $allowedTabs = ['billing','wallet','invoices','users','vehicles','documents','partners'];
+
 
   // Normaliza tab: si no viene o es inválido, cae a billing
   $tabReq = request('tab', $tab ?? 'billing');
@@ -118,12 +119,23 @@
   <li class="nav-item">
     <a class="nav-link {{ $is('vehicles') }}" href="{{ route('sysadmin.tenants.billing.show',$tenant) }}?tab=vehicles">Vehículos</a>
   </li>
+
+
+
  <li class="nav-item">
   <a class="nav-link {{ $is('documents') }}"
      href="{{ route('sysadmin.tenants.billing.show',$tenant) }}?tab=documents">
     Documentos
   </a>
 </li>
+
+  <li class="nav-item">
+  <a class="nav-link {{ $is('partners') }}"
+     href="{{ route('sysadmin.tenants.billing.show',$tenant) }}?tab=partners">
+    Partners
+  </a>
+</li>
+
 </ul>
 
 @if(($tab ?? 'billing') === 'documents')
@@ -824,6 +836,74 @@
 
   </div>
 @endif
+
+@if($tab === 'partners')
+  @includeIf('sysadmin.tenants.billing.partners.index', [
+    'tenant' => $tenant,
+    'partners' => $partners ?? collect(),
+    'partnerTopups' => $partnerTopups ?? collect(),
+    'pstatus' => $pstatus ?? request('pstatus','pending'),
+  ])
+@endif
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <strong>Partners del tenant</strong>
+
+    <form class="d-flex gap-2" method="GET" action="{{ route('sysadmin.tenants.billing.show',$tenant) }}">
+      <input type="hidden" name="tab" value="partners">
+      <input type="text" name="pq" value="{{ $pq ?? '' }}" class="form-control form-control-sm"
+             placeholder="Buscar por nombre/email/teléfono...">
+      <button class="btn btn-primary btn-sm">Buscar</button>
+    </form>
+  </div>
+
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-striped tight mb-0">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Nombre</th>
+            <th>Email</th>
+            <th>Tel</th>
+            <th>Status</th>
+            <th class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+        @forelse($partners as $p)
+          <tr>
+            <td>{{ $p->id }}</td>
+            <td>{{ $p->name ?? '—' }}</td>
+            <td>{{ $p->email ?? '—' }}</td>
+            <td>{{ $p->phone ?? '—' }}</td>
+            <td>
+              @php $st = strtolower((string)($p->status ?? 'active')); @endphp
+              <span class="badge bg-{{ $st==='active' ? 'success' : 'secondary' }}">{{ strtoupper($st) }}</span>
+            </td>
+            <td class="text-end">
+              <a class="btn btn-outline-primary btn-xs"
+             href="{{ route('sysadmin.tenants.partners.billing.show', ['tenant' => $tenant->id, 'partner' => $p->id]) }}"
+
+                Ver billing
+              </a>
+            </td>
+          </tr>
+        @empty
+          <tr><td colspan="6" class="text-muted">Sin partners.</td></tr>
+        @endforelse
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  @if(method_exists($partners,'links'))
+    <div class="card-footer">
+      {{ $partners->links() }}
+    </div>
+  @endif
+</div>
+
 
 
 </div>

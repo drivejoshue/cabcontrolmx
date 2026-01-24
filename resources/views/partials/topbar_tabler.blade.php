@@ -42,6 +42,27 @@
           </button>
         </div>
 
+        @php
+  $b = $adminTopbarBadges ?? ['partner_support_unread' => 0];
+  $unread = (int)($b['partner_support_unread'] ?? 0);
+@endphp
+
+<div class="nav-item me-2">
+  <a class="btn btn-outline-secondary position-relative"
+     href="{{ route('admin.partner_support.index') }}"
+     title="Soporte Partners">
+    <i class="ti ti-lifebuoy"></i>
+
+    @if($unread > 0)
+      <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-red">
+        {{ $unread > 99 ? '99+' : $unread }}
+        <span class="visually-hidden">tickets nuevos</span>
+      </span>
+    @endif
+  </a>
+</div>
+
+
         <div class="nav-item">
           <form method="POST" action="{{ route('logout') }}" class="m-0">
             @csrf

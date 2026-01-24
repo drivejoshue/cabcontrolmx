@@ -12,6 +12,7 @@ use Illuminate\Http\Request;
 use Carbon\Carbon;
 use App\Models\User;
 use App\Models\TenantDocument;
+use App\Models\Partner;
 
 use Illuminate\Support\Facades\DB;
 
@@ -43,37 +44,37 @@ public function show(Request $request, Tenant $tenant, TenantBillingService $bil
         ]);
     }
 
-    // Tab actual (incluye documents)
+    // Tab actual
     $tab = (string)$request->query('tab', 'billing');
-    $allowedTabs = ['billing','wallet','invoices','users','vehicles','documents'];
+    $allowedTabs = ['billing','wallet','invoices','users','vehicles','documents','partners']; // ✅ add partners
     if (!in_array($tab, $allowedTabs, true)) {
         $tab = 'billing';
     }
 
-    // Conteos rápidos (útiles en varios tabs)
     $activeVehicles = Vehicle::where('tenant_id', $tenant->id)->where('active', 1)->count();
     $totalVehicles  = Vehicle::where('tenant_id', $tenant->id)->count();
 
-    // ¿Puede registrar nuevos vehículos?
     [$canRegisterNewVehicle, $canRegisterReason] = $billingService->canRegisterNewVehicle($tenant);
 
-    // Última factura (para header / contexto)
     $lastInvoice = TenantInvoice::where('tenant_id', $tenant->id)
         ->orderByDesc('issue_date')
         ->orderByDesc('id')
         ->first();
 
-    // Defaults para la vista (evita undefined variable)
+    // Defaults
     $wallet = null;
     $walletMovements = collect();
     $invoices = collect();
     $users = collect();
-    $vehicles = null;          // paginator o null
+    $vehicles = null;
     $vq = '';
     $vactive = '';
-    $docs = collect();         // keyBy(type)
+    $docs = collect();
 
-    // Cargar por tab (más pro: solo lo que se usa)
+    // ✅ NUEVO defaults partners
+    $partners = collect();
+    $pq = '';
+
     if ($tab === 'wallet') {
         $wallet = DB::table('tenant_wallets')->where('tenant_id', $tenant->id)->first();
 
@@ -101,7 +102,7 @@ public function show(Request $request, Tenant $tenant, TenantBillingService $bil
 
     if ($tab === 'vehicles') {
         $vq = trim((string)$request->query('vq', ''));
-        $vactive = (string)$request->query('vactive', ''); // '', '1', '0'
+        $vactive = (string)$request->query('vactive', '');
 
         $vehiclesQuery = Vehicle::query()
             ->where('tenant_id', $tenant->id)
@@ -118,12 +119,8 @@ public function show(Request $request, Tenant $tenant, TenantBillingService $bil
             })
             ->orderByDesc('id');
 
-        $vehicles = $vehiclesQuery
-            ->paginate(25)
-            ->appends($request->query());
+        $vehicles = $vehiclesQuery->paginate(25)->appends($request->query());
     }
-
-    $docs = collect();
 
     if ($tab === 'documents') {
         $docs = TenantDocument::where('tenant_id', $tenant->id)
@@ -143,10 +140,28 @@ public function show(Request $request, Tenant $tenant, TenantBillingService $bil
             });
     }
 
+    // ✅ TAB: PARTNERS (lista)
+    if ($tab === 'partners') {
+        $pq = trim((string)$request->query('pq', ''));
+
+        $partners = Partner::query()
+            ->where('tenant_id', $tenant->id)
+            ->when($pq !== '', function ($q) use ($pq) {
+                // usa campos que típicamente existen; ajusta si tus columnas son otras
+                $q->where(function ($w) use ($pq) {
+                    $w->where('name', 'like', "%{$pq}%")
+                      ->orWhere('email', 'like', "%{$pq}%")
+                      ->orWhere('phone', 'like', "%{$pq}%");
+                });
+            })
+            ->orderBy('id')
+            ->paginate(30)
+            ->appends($request->query());
+    }
+
     return view('sysadmin.tenants.billing.show', [
         'tenant'                => $tenant,
         'profile'               => $profile,
-
         'activeVehicles'        => $activeVehicles,
         'totalVehicles'         => $totalVehicles,
         'canRegisterNewVehicle' => $canRegisterNewVehicle,
@@ -162,8 +177,11 @@ public function show(Request $request, Tenant $tenant, TenantBillingService $bil
         'vq'       => $vq,
         'vactive'  => $vactive,
 
-        // NUEVO: docs para la pestaña documentos (sysadmin.tenant_documents.documents)
         'docs' => $docs,
+
+        // ✅ NUEVO
+        'partners' => $partners,
+        'pq'       => $pq,
 
         'tab' => $tab,
     ]);

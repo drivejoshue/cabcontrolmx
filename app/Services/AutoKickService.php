@@ -181,18 +181,28 @@ class AutoKickService
                 ->orderByDesc('id')
                 ->value('id');
 
-            if ($offerId) {
-                DB::table('ride_offers')->where('id', $offerId)->update(['is_direct' => 1]);
+           if ($offerId) {
+    DB::table('ride_offers')->where('id', $offerId)->update(['is_direct' => 1]);
 
-                try {
-                    \App\Services\OfferBroadcaster::emitNew($offerId);
-                } catch (\Throwable $e) {
-                    Log::warning('AutoKick.emitNew.fail', [
-                        'offer_id' => $offerId,
-                        'err'      => $e->getMessage(),
-                    ]);
-                }
-            }
+    // ✅ CANÓNICO: encolar outbox (no emitir aquí)
+    try {
+        \App\Services\DispatchOutbox::enqueueOfferNew(
+            tenantId: $tenantId,
+            offerId:  $offerId,
+            rideId:   $rideId,
+            driverId: $driverId,
+        );
+    } catch (\Throwable $e) {
+        Log::warning('AutoKick.outbox.enqueue.fail', [
+            'tenant_id' => $tenantId,
+            'ride_id'   => $rideId,
+            'driver_id' => $driverId,
+            'offer_id'  => $offerId,
+            'err'       => $e->getMessage(),
+        ]);
+    }
+}
+
 
             Log::info('AutoKick.direct_offer_created', [
                 'tenant_id' => $tenantId,

@@ -3,6 +3,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
 use App\Models\DispatchSetting;
+use App\Services\DispatchOutbox;
 
 class AutoDispatchService
 {   
@@ -19,23 +20,18 @@ class AutoDispatchService
      * Método privado para obtener settings unificados
      */
      /** Settings unificados: tenant 100 manda */
+   /** Settings unificados: tenant actual manda; fallback a 100 lo resuelve DispatchSettingsService */
     private static function getUnifiedSettings(int $tenantId): object
     {
-        // requestedTenantId = $tenantId (lo conservamos por si luego vuelves a individual)
-        // effectiveTenantId = 100 (cerebro Orbana)
-        $s = DispatchSettingsService::forTenant(self::CORE_TENANT_ID);
-
-        // (Opcional) debug sin romper contrato del objeto:
-        // $s->requested_tenant_id = $tenantId;
-        // $s->effective_tenant_id = self::CORE_TENANT_ID;
-
-        return $s;
+        // ✅ ahora lee el tenant actual (1, 101, etc.)
+        // y DispatchSettingsService se encarga del fallback a 100 solo si un campo viene vacío.
+        return DispatchSettingsService::forTenant($tenantId);
     }
 
     /**
      * Dispara una ola de ofertas para un ride.
      * Intenta SPs:
-     *  - sp_offer_wave_v1(tenant_id, ride_id, radius_km, limit_n, expires_s)
+     *  - sp_offer_wave_prio_v3(tenant_id, ride_id, radius_km, limit_n, expires_s)
      * Fallback: buscar candidatos y llamar sp_create_offer_v2 driver por driver.
      */
  public static function kickoff(
@@ -75,7 +71,7 @@ class AutoDispatchService
     }
 
     // ============================================================
-    // 0.25) LIMITAR A 2 OLAS POR RIDE (sin migraciones)
+    // 0.25) LIMITAR A 5 OLAS POR RIDE (sin migraciones)
     // Usamos ride_status_history como bitácora "wave_kickoff"
     // ============================================================
     $waveCount = (int) DB::table('ride_status_history')
@@ -116,7 +112,7 @@ class AutoDispatchService
     // ============================================================
     // 0.75) Si ya llegó a 6 olas y no hay offers vivas, CANCELA ride
     // ============================================================
-    if ($waveCount >= 6) {
+    if ($waveCount >= 5) {
         \Log::warning('kickoff blocked: max waves reached', [
             'tenant_id' => $tenantId,
             'ride_id' => $rideId,
@@ -224,18 +220,28 @@ class AutoDispatchService
                 ->all();
         }
 
-        foreach ($ids as $oid) {
-            try {
-                \App\Services\OfferBroadcaster::emitNew((int)$oid);
-            } catch (\Throwable $e) {
-                \Log::warning('kickoff emitNew fail', [
-                    'offer_id' => $oid,
-                    'msg' => $e->getMessage()
-                ]);
-            }
-        }
-        return $ids;
-    };
+        // 2) ENCOLAR EN OUTBOX (NO emitir directamente)
+    // foreach ($ids as $oid) {
+    //     try {
+    //         // Encolar para procesamiento asíncrono
+    //         \App\Services\DispatchOutbox::enqueueOfferNew(
+    //             tenantId: $tenantId,
+    //             offerId:  $oid,
+    //             rideId:   $rideId,
+    //             driverId: (int) DB::table('ride_offers')
+    //                 ->where('id', $oid)
+    //                 ->value('driver_id')
+    //         );
+    //     } catch (\Throwable $e) {
+    //         \Log::warning('kickoff outbox.enqueue.fail', [
+    //             'offer_id' => $oid,
+    //             'msg' => $e->getMessage()
+    //         ]);
+    //     }
+    // }
+    
+    return $ids;
+};
 
     // 1) Try: SP OLA v3
     try {
