@@ -160,7 +160,6 @@ Route::get('/ride_share/{token}/state', [RideShareController::class, 'state'])
     ->name('ride_share.state');
 
 
-
     
 
 Route::middleware('guest')->group(function () {

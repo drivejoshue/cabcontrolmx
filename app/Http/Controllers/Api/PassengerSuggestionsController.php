@@ -178,18 +178,19 @@ private function pickCityFallback(int $cityId, int $passengerId, array &$usedKey
 
         $this->markUsed($lat, $lng, $usedKeys);
 
-        return [
-            'id'      => (int)$p->id,     // ✅ ahora sí regresamos id real
-            'type'    => 'suggested',
-            'label'   => $p->label,
-            'lat'     => $lat,
-            'lng'     => $lng,
-            'address' => $p->address,
-            'source'  => 'suggested',
-            'meta'    => [
-                'category' => $p->category, // opcional, útil para UI
-            ],
-        ];
+       return [
+  'id'      => null,              // 👈 IMPORTANT: no es PassengerPlace
+  'type'    => 'suggested',
+  'label'   => $p->label,
+  'lat'     => $lat,
+  'lng'     => $lng,
+  'address' => $p->address,
+  'source'  => 'suggested',
+  'meta'    => [
+    'city_place_id' => (int)$p->id,   // 👈 si te sirve para analítica/UI
+    'category'      => $p->category,
+  ],
+];
     }
 
     return null;
