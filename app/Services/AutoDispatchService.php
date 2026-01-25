@@ -221,24 +221,24 @@ class AutoDispatchService
         }
 
         // 2) ENCOLAR EN OUTBOX (NO emitir directamente)
-    // foreach ($ids as $oid) {
-    //     try {
-    //         // Encolar para procesamiento asíncrono
-    //         \App\Services\DispatchOutbox::enqueueOfferNew(
-    //             tenantId: $tenantId,
-    //             offerId:  $oid,
-    //             rideId:   $rideId,
-    //             driverId: (int) DB::table('ride_offers')
-    //                 ->where('id', $oid)
-    //                 ->value('driver_id')
-    //         );
-    //     } catch (\Throwable $e) {
-    //         \Log::warning('kickoff outbox.enqueue.fail', [
-    //             'offer_id' => $oid,
-    //             'msg' => $e->getMessage()
-    //         ]);
-    //     }
-    // }
+    foreach ($ids as $oid) {
+        try {
+            // Encolar para procesamiento asíncrono
+            \App\Services\DispatchOutbox::enqueueOfferNew(
+                tenantId: $tenantId,
+                offerId:  $oid,
+                rideId:   $rideId,
+                driverId: (int) DB::table('ride_offers')
+                    ->where('id', $oid)
+                    ->value('driver_id')
+            );
+        } catch (\Throwable $e) {
+            \Log::warning('kickoff outbox.enqueue.fail', [
+                'offer_id' => $oid,
+                'msg' => $e->getMessage()
+            ]);
+        }
+    }
     
     return $ids;
 };

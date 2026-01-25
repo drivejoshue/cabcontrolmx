@@ -21,8 +21,5 @@ class PublicTestEvent implements ShouldBroadcastNow
         return new Channel('public-test');
     }
 
-    public function broadcastAs(): string
-    {
-        return 'public.test';
-    }
+   
 }

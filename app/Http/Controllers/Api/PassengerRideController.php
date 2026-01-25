@@ -452,6 +452,176 @@ class PassengerRideController extends Controller
 
 
 
+ private const ACTIVE_STATUSES = [
+        'requested',
+        'searching',
+        'bidding',
+        'pending',
+        'accepted',
+        'assigned',
+        'en_route',
+        'arrived',
+        'on_board',
+    ];
+
+    private function resolvePassengerOr422(string $firebaseUid)
+    {
+        $passenger = Passenger::where('firebase_uid', $firebaseUid)->first();
+
+        if (! $passenger) {
+            abort(response()->json([
+                'ok'  => false,
+                'msg' => 'Pasajero no encontrado, sincroniza primero /passenger/auth-sync.',
+            ], 422));
+        }
+
+        return $passenger;
+    }
+
+    private function baseCurrentRideQuery(int $passengerId)
+    {
+        return DB::table('rides')
+            ->join('tenants', 'tenants.id', '=', 'rides.tenant_id')
+            ->leftJoin('drivers', function ($j) {
+                $j->on('drivers.id', '=', 'rides.driver_id')
+                  ->on('drivers.tenant_id', '=', 'rides.tenant_id');
+            })
+            ->leftJoin('partners', function ($j) {
+                $j->on('partners.id', '=', 'drivers.partner_id')
+                  ->on('partners.tenant_id', '=', 'rides.tenant_id');
+            })
+            ->where('rides.passenger_id', $passengerId)
+            ->whereIn('rides.status', self::ACTIVE_STATUSES)
+            ->orderByDesc('rides.id')
+            ->select([
+                'rides.id',
+                'rides.tenant_id',
+                'rides.passenger_id',
+                'rides.status',
+                'rides.requested_channel',
+                'rides.passenger_name',
+                'rides.passenger_phone',
+
+                'rides.origin_label',
+                'rides.origin_lat',
+                'rides.origin_lng',
+
+                'rides.dest_label',
+                'rides.dest_lat',
+                'rides.dest_lng',
+
+                'rides.distance_m',
+                'rides.duration_s',
+                'rides.quoted_amount',
+                'rides.passenger_offer',
+                'rides.driver_offer',
+                'rides.agreed_amount',
+                'rides.total_amount',
+                'rides.payment_method',
+                'rides.driver_id',
+                'rides.cancel_reason',
+                'rides.canceled_by',
+
+                'rides.passenger_onway_at',
+                'rides.passenger_onboard_at',
+                'rides.passenger_finished_at',
+
+                'rides.created_at',
+                'rides.updated_at',
+
+                // tenant
+                'tenants.name as tenant_name',
+                'tenants.public_city as tenant_city',
+
+                // partner
+                'partners.code as partner_code',
+                'partners.name as partner_name',
+            ]);
+    }
+
+    private function buildTenantBadgeFromRow(object $row): ?string
+    {
+        $tenantName = trim((string)($row->tenant_name ?? ''));
+        $tenantCity = trim((string)($row->tenant_city ?? ''));
+
+        $partnerCode = trim((string)($row->partner_code ?? ''));
+        $partnerName = trim((string)($row->partner_name ?? ''));
+
+        $tenantShortRaw  = $tenantCity !== '' ? $tenantCity : $tenantName;
+        $partnerShortRaw = $partnerCode !== '' ? $partnerCode : $partnerName;
+
+        $tenantShort  = $this->shortBadgePart($tenantShortRaw, 18);  // ej. "Veracruz"
+        $partnerShort = $this->shortBadgePart($partnerShortRaw, 10); // ej. "P-014"
+
+        $badge = $tenantShort;
+        if ($partnerShort !== '') {
+            $badge = $badge !== '' ? ($badge . ' · ' . $partnerShort) : $partnerShort;
+        }
+
+        return $badge !== '' ? $badge : null;
+    }
+
+    private function buildRidePayload(object $row): array
+    {
+        $tenantId = (int) $row->tenant_id;
+
+        // OJO: si tu computeRideSearchExpiresAt ya contempla nulls/estados, perfecto.
+        $searchExpiresAt = $this->computeRideSearchExpiresAt($tenantId, (int)$row->id);
+
+        $tenantBadge = $this->buildTenantBadgeFromRow($row);
+
+        $driverId = $row->driver_id !== null ? (int)$row->driver_id : null;
+
+        return [
+            'id'                => (int) $row->id,
+            'tenant_id'         => $tenantId,
+            'passenger_id'      => (int) $row->passenger_id,
+            'status'            => (string) $row->status,
+            'requested_channel' => $row->requested_channel,
+
+            'passenger_name'    => $row->passenger_name,
+            'passenger_phone'   => $row->passenger_phone,
+
+            'tenant_badge'      => $tenantBadge,
+
+            'origin' => [
+                'label' => $row->origin_label,
+                'lat'   => $row->origin_lat !== null ? (float)$row->origin_lat : null,
+                'lng'   => $row->origin_lng !== null ? (float)$row->origin_lng : null,
+            ],
+            'destination' => [
+                'label' => $row->dest_label,
+                'lat'   => $row->dest_lat !== null ? (float)$row->dest_lat : null,
+                'lng'   => $row->dest_lng !== null ? (float)$row->dest_lng : null,
+            ],
+
+            'payment_method'   => $row->payment_method ? (string)$row->payment_method : 'cash',
+            'distance_m'       => $row->distance_m !== null ? (int)$row->distance_m : null,
+            'duration_s'       => $row->duration_s !== null ? (int)$row->duration_s : null,
+
+            'quoted_amount'    => $row->quoted_amount !== null ? (float)$row->quoted_amount : null,
+            'passenger_offer'  => $row->passenger_offer !== null ? (float)$row->passenger_offer : null,
+            'driver_offer'     => $row->driver_offer !== null ? (float)$row->driver_offer : null,
+            'agreed_amount'    => $row->agreed_amount !== null ? (float)$row->agreed_amount : null,
+            'total_amount'     => $row->total_amount !== null ? (float)$row->total_amount : null,
+
+            'driver_id'        => $driverId,
+            'has_driver'       => $driverId !== null, // ✅ mejor que !empty()
+
+            'passenger_onway_at'     => $row->passenger_onway_at,
+            'passenger_onboard_at'   => $row->passenger_onboard_at,
+            'passenger_finished_at'  => $row->passenger_finished_at,
+
+            'cancel_reason'    => $row->cancel_reason ? (string)$row->cancel_reason : null,
+            'canceled_by'      => $row->canceled_by ? (string)$row->canceled_by : null,
+
+            'created_at'       => $row->created_at,
+            'updated_at'       => $row->updated_at,
+
+            'search_expires_at'=> $searchExpiresAt,
+        ];
+    }
+
     public function current(Request $req)
     {
         $v = $req->validate([
@@ -460,340 +630,46 @@ class PassengerRideController extends Controller
         ]);
 
         $tenantId    = (int) $v['tenant_id'];
-        $firebaseUid = $v['firebase_uid'];
+        $firebaseUid = (string) $v['firebase_uid'];
 
-        // 1) Resolver pasajero por firebase_uid
-        $passenger = Passenger::where('firebase_uid', $firebaseUid)->first();
-        if (! $passenger) {
-            return response()->json([
-                'ok'  => false,
-                'msg' => 'Pasajero no encontrado, sincroniza primero /passenger/auth-sync.',
-            ], 422);
-        }
+        $passenger = $this->resolvePassengerOr422($firebaseUid);
 
-        // 2) Estados que consideramos "ride activo" para el pasajero
-        $activeStatuses = [
-            'requested',       // recién creado, buscando conductor
-            'searching',       // si lo llegas a usar
-            'bidding',         // ola de ofertas
-            'pending',         // variación si la usas
-            'accepted',        // ya hay conductor asignado
-            'assigned',
-            'en_route',        // conductor en camino
-            'arrived',  // conductor llegó al pickup
-            'on_board',        // viaje en curso
-        ];
+        $row = $this->baseCurrentRideQuery($passenger->id)
+            ->where('rides.tenant_id', $tenantId)
+            ->first();
 
-        // 3) Buscar el ride más reciente de este pasajero en estado activo
-    $row = DB::table('rides')
-    ->join('tenants', 'tenants.id', '=', 'rides.tenant_id')
-
-    // 👇 driver y partner (si ya hay driver asignado)
-    ->leftJoin('drivers', function ($j) {
-        $j->on('drivers.id', '=', 'rides.driver_id')
-          ->on('drivers.tenant_id', '=', 'rides.tenant_id');
-    })
-    ->leftJoin('partners', function ($j) {
-        $j->on('partners.id', '=', 'drivers.partner_id')
-          ->on('partners.tenant_id', '=', 'rides.tenant_id');
-    })
-
-    ->where('rides.tenant_id', $tenantId)
-    ->where('rides.passenger_id', $passenger->id)
-    ->whereIn('rides.status', $activeStatuses)
-    ->orderByDesc('rides.id')
-    ->select([
-        'rides.id',
-        'rides.tenant_id',
-        'rides.passenger_id',
-        'rides.status',
-        'rides.requested_channel',
-        'rides.passenger_name',
-        'rides.passenger_phone',
-
-        'rides.origin_label',
-        'rides.origin_lat',
-        'rides.origin_lng',
-
-        'rides.dest_label',
-        'rides.dest_lat',
-        'rides.dest_lng',
-
-        'rides.distance_m',
-        'rides.duration_s',
-        'rides.quoted_amount',
-        'rides.passenger_offer',
-        'rides.driver_offer',
-        'rides.agreed_amount',
-        'rides.total_amount',
-        'rides.payment_method',
-        'rides.driver_id',
-        'rides.cancel_reason',
-        'rides.canceled_by',
-
-        'rides.passenger_onway_at',
-        'rides.passenger_onboard_at',
-        'rides.passenger_finished_at',
-
-        'rides.created_at',
-        'rides.updated_at',
-
-        // ✅ tenant
-        'tenants.name as tenant_name',
-        'tenants.public_city as tenant_city',
-
-        // ✅ partner (si existe)
-        'partners.code as partner_code',
-        'partners.name as partner_name',
-    ])
-    ->first();
-
-
-
-          
-
-
-        // 4) Si no hay ride activo → ok:true, ride:null
         if (! $row) {
-            return response()->json([
-                'ok'   => true,
-                'ride' => null,
-            ]);
+            return response()->json(['ok' => true, 'ride' => null]);
         }
-
-          $searchExpiresAt = $this->computeRideSearchExpiresAt($tenantId, (int)$row->id);
-
-        $tenantName = trim((string)($row->tenant_name ?? ''));
-        $tenantCity = trim((string)($row->tenant_city ?? ''));
-
-        $partnerCode = trim((string)($row->partner_code ?? ''));
-        $partnerName = trim((string)($row->partner_name ?? ''));
-
-        // ✅ corto: preferir city, si no tenant name
-        $tenantShortRaw = $tenantCity !== '' ? $tenantCity : $tenantName;
-
-        // ✅ corto: preferir code, si no partner name
-        $partnerShortRaw = $partnerCode !== '' ? $partnerCode : $partnerName;
-
-        // caps
-        $tenantShort  = $this->shortBadgePart($tenantShortRaw, 18);   // ej: "Veracruz"
-        $partnerShort = $this->shortBadgePart($partnerShortRaw, 10);  // ej: "P-014"
-
-        // Badge final (un solo “·”)
-        $tenantBadge = $tenantShort;
-        if ($partnerShort !== '') {
-            $tenantBadge = $tenantBadge !== '' ? ($tenantBadge . ' · ' . $partnerShort) : $partnerShort;
-        }
-
-        if ($tenantBadge === '') $tenantBadge = null;
-
-        // 5) Armar payload compacto para el cliente
-        $ridePayload = [
-            'id'               => (int) $row->id,
-            'tenant_id'        => (int) $row->tenant_id,
-            'passenger_id'     => (int) $row->passenger_id,
-            'status'           => $row->status,
-            'requested_channel'=> $row->requested_channel,
-            'passenger_name'   => $row->passenger_name,
-            'passenger_phone'  => $row->passenger_phone,
-            'tenant_badge' => $tenantBadge,
-            'origin' => [
-                'label' => $row->origin_label,
-                'lat'   => $row->origin_lat !== null ? (float) $row->origin_lat : null,
-                'lng'   => $row->origin_lng !== null ? (float) $row->origin_lng : null,
-            ],
-
-            'destination' => [
-                'label' => $row->dest_label,
-                'lat'   => $row->dest_lat !== null ? (float) $row->dest_lat : null,
-                'lng'   => $row->dest_lng !== null ? (float) $row->dest_lng : null,
-            ],
-            'payment_method'  => $row->payment_method ?: 'cash',
-            'distance_m'      => $row->distance_m      !== null ? (int)   $row->distance_m      : null,
-            'duration_s'      => $row->duration_s      !== null ? (int)   $row->duration_s      : null,
-            'quoted_amount'   => $row->quoted_amount   !== null ? (float) $row->quoted_amount   : null,
-            'passenger_offer' => $row->passenger_offer !== null ? (float) $row->passenger_offer : null,
-            'driver_offer'    => $row->driver_offer    !== null ? (float) $row->driver_offer    : null,
-            'agreed_amount'   => $row->agreed_amount   !== null ? (float) $row->agreed_amount   : null,
-            'total_amount'    => $row->total_amount    !== null ? (float) $row->total_amount    : null,
-
-              'passenger_onway_at'    => $row->passenger_onway_at,
-                'passenger_onboard_at'  => $row->passenger_onboard_at,
-                'passenger_finished_at' => $row->passenger_finished_at,
-
-                'cancel_reason' => $row->cancel_reason ? (string) $row->cancel_reason : null,
-        'canceled_by'   => $row->canceled_by   ? (string) $row->canceled_by   : null,
-
-            'driver_id'  => $row->driver_id !== null ? (int) $row->driver_id : null,
-            'has_driver' => !empty($row->driver_id),
-
-            'created_at' => $row->created_at,
-            'updated_at' => $row->updated_at,
-            'search_expires_at' => $searchExpiresAt,
-
-        ];
 
         return response()->json([
             'ok'   => true,
-            'ride' => $ridePayload,
+            'ride' => $this->buildRidePayload($row),
         ]);
     }
 
-public function currentAny(Request $req)
-{
-    $v = $req->validate([
-        'firebase_uid' => 'required|string',
-    ]);
+        public function currentAny(Request $req)
+    {
+        $v = $req->validate([
+            'firebase_uid' => 'required|string',
+        ]);
 
-    $passenger = Passenger::where('firebase_uid', $v['firebase_uid'])->first();
-    if (! $passenger) {
+        $firebaseUid = (string) $v['firebase_uid'];
+
+        $passenger = $this->resolvePassengerOr422($firebaseUid);
+
+        $row = $this->baseCurrentRideQuery($passenger->id)->first();
+
+        if (! $row) {
+            return response()->json(['ok' => true, 'ride' => null]);
+        }
+
         return response()->json([
-            'ok'  => false,
-            'msg' => 'Pasajero no encontrado, sincroniza primero /passenger/auth-sync.',
-        ], 422);
+            'ok'   => true,
+            'ride' => $this->buildRidePayload($row),
+        ]);
     }
 
-    $activeStatuses = [
-        'requested','searching','bidding','pending',
-        'accepted','assigned','en_route','arrived','on_board',
-    ];
-
-    // ✅ NO filtrar por tenant_id aquí (es "Any")
-    $row = DB::table('rides')
-        ->join('tenants', 'tenants.id', '=', 'rides.tenant_id')
-        ->leftJoin('drivers', function ($j) {
-            $j->on('drivers.id', '=', 'rides.driver_id')
-              ->on('drivers.tenant_id', '=', 'rides.tenant_id');
-        })
-        ->leftJoin('partners', function ($j) {
-            $j->on('partners.id', '=', 'drivers.partner_id')
-              ->on('partners.tenant_id', '=', 'rides.tenant_id');
-        })
-        ->where('rides.passenger_id', $passenger->id)
-        ->whereIn('rides.status', $activeStatuses)
-        ->orderByDesc('rides.id')
-        ->select([
-            'rides.id',
-            'rides.tenant_id',
-            'rides.passenger_id',
-            'rides.status',
-            'rides.requested_channel',
-            'rides.passenger_name',
-            'rides.passenger_phone',
-
-            'rides.origin_label',
-            'rides.origin_lat',
-            'rides.origin_lng',
-
-            'rides.dest_label',
-            'rides.dest_lat',
-            'rides.dest_lng',
-
-            'rides.distance_m',
-            'rides.duration_s',
-            'rides.quoted_amount',
-            'rides.passenger_offer',
-            'rides.driver_offer',
-            'rides.agreed_amount',
-            'rides.total_amount',
-            'rides.payment_method',
-            'rides.driver_id',
-            'rides.cancel_reason',
-            'rides.canceled_by',
-
-            'rides.passenger_onway_at',
-            'rides.passenger_onboard_at',
-            'rides.passenger_finished_at',
-
-            'rides.created_at',
-            'rides.updated_at',
-
-            // tenant
-            'tenants.name as tenant_name',
-            'tenants.public_city as tenant_city',
-
-            // partner
-            'partners.code as partner_code',
-            'partners.name as partner_name',
-        ])
-        ->first();
-
-    if (! $row) {
-        return response()->json(['ok' => true, 'ride' => null]);
-    }
-
-    // ✅ ahora sí, tenantId viene del ride encontrado
-    $tenantId = (int) $row->tenant_id;
-
-    // ✅ y calculas expiración igual que en current()
-    $searchExpiresAt = $this->computeRideSearchExpiresAt($tenantId, (int) $row->id);
-
-    $tenantName = trim((string)($row->tenant_name ?? ''));
-    $tenantCity = trim((string)($row->tenant_city ?? ''));
-
-    $partnerCode = trim((string)($row->partner_code ?? ''));
-    $partnerName = trim((string)($row->partner_name ?? ''));
-
-    $tenantShortRaw  = $tenantCity !== '' ? $tenantCity : $tenantName;
-    $partnerShortRaw = $partnerCode !== '' ? $partnerCode : $partnerName;
-
-    $tenantShort  = $this->shortBadgePart($tenantShortRaw, 18);
-    $partnerShort = $this->shortBadgePart($partnerShortRaw, 10);
-
-    $tenantBadge = $tenantShort;
-    if ($partnerShort !== '') {
-        $tenantBadge = $tenantBadge !== '' ? ($tenantBadge . ' · ' . $partnerShort) : $partnerShort;
-    }
-    if ($tenantBadge === '') $tenantBadge = null;
-
-    $ridePayload = [
-        'id' => (int)$row->id,
-        'tenant_id' => $tenantId,
-        'passenger_id' => (int)$row->passenger_id,
-        'status' => $row->status,
-        'requested_channel' => $row->requested_channel,
-        'passenger_name' => $row->passenger_name,
-        'passenger_phone' => $row->passenger_phone,
-        'tenant_badge' => $tenantBadge,
-
-        'origin' => [
-            'label' => $row->origin_label,
-            'lat' => $row->origin_lat !== null ? (float)$row->origin_lat : null,
-            'lng' => $row->origin_lng !== null ? (float)$row->origin_lng : null,
-        ],
-        'destination' => [
-            'label' => $row->dest_label,
-            'lat' => $row->dest_lat !== null ? (float)$row->dest_lat : null,
-            'lng' => $row->dest_lng !== null ? (float)$row->dest_lng : null,
-        ],
-
-        'payment_method' => $row->payment_method ?: 'cash',
-        'distance_m' => $row->distance_m !== null ? (int)$row->distance_m : null,
-        'duration_s' => $row->duration_s !== null ? (int)$row->duration_s : null,
-        'quoted_amount' => $row->quoted_amount !== null ? (float)$row->quoted_amount : null,
-        'passenger_offer' => $row->passenger_offer !== null ? (float)$row->passenger_offer : null,
-        'driver_offer' => $row->driver_offer !== null ? (float)$row->driver_offer : null,
-        'agreed_amount' => $row->agreed_amount !== null ? (float)$row->agreed_amount : null,
-        'total_amount' => $row->total_amount !== null ? (float)$row->total_amount : null,
-
-        'driver_id' => $row->driver_id !== null ? (int)$row->driver_id : null,
-        'has_driver' => !empty($row->driver_id),
-
-        'passenger_onway_at' => $row->passenger_onway_at,
-        'passenger_onboard_at' => $row->passenger_onboard_at,
-        'passenger_finished_at' => $row->passenger_finished_at,
-
-        'cancel_reason' => $row->cancel_reason ? (string)$row->cancel_reason : null,
-        'canceled_by' => $row->canceled_by ? (string)$row->canceled_by : null,
-
-        'created_at' => $row->created_at,
-        'updated_at' => $row->updated_at,
-
-        'search_expires_at' => $searchExpiresAt,
-    ];
-
-    return response()->json(['ok' => true, 'ride' => $ridePayload]);
-}
 
 
  public function offers(Request $req, int $ride)

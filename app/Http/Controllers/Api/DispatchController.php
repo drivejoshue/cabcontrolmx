@@ -274,18 +274,21 @@ class DispatchController extends Controller
             'ON_BOARD','ONBOARD','BOARDING','EN_ROUTE','ARRIVED','ACCEPTED','ASSIGNED','REQUESTED','SCHEDULED'
         ]);
 
-    $liveOffers = DB::table('ride_offers as o')
-        ->join('rides as r', function ($j) use ($tenantId) {
-            $j->on('r.id', '=', 'o.ride_id')
-              ->where('r.tenant_id', '=', $tenantId);
-        })
-        ->select([
-            'o.driver_id',
-            DB::raw("'offered' as ride_status")
-        ])
-        ->where('o.tenant_id', $tenantId)
-        ->whereRaw('o.expires_at IS NULL OR o.expires_at > NOW()')
-        ->where(DB::raw('LOWER(o.status)'), 'offered');
+   $liveOffers = DB::table('ride_offers as o')
+    ->join('rides as r', function ($j) use ($tenantId) {
+        $j->on('r.id', '=', 'o.ride_id')
+          ->where('r.tenant_id', '=', $tenantId);
+    })
+    ->select([
+        'o.driver_id',
+        DB::raw("'offered' as ride_status")
+    ])
+    ->where('o.tenant_id', $tenantId)
+    ->where(DB::raw('LOWER(o.status)'), 'offered')
+    // ✅ ALINEADO a OutboxPump: solo si tiene expires_at y no expiró
+    ->whereNotNull('o.expires_at')
+    ->where('o.expires_at', '>', DB::raw('NOW()'));
+
 
 
         // =========================================================
@@ -524,9 +527,12 @@ $activeForDriver = DB::query()
     }
 
     try {
-        $row = \DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [
-            $tenantId, $rideId, $driverId, null
-        ]);
+        $settings = \App\Services\DispatchSettingsService::forTenant($tenantId);
+$expiresSec = (int)($settings->expires_s ?? 180);
+
+$row = DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [
+    $tenantId, $rideId, $driverId, $expiresSec
+]);
 
         $offerId = null;
 
@@ -558,7 +564,10 @@ $activeForDriver = DB::query()
                 'via'                => 'sp_create_offer_v2',
             ]);
 
-            OfferBroadcaster::emitNew((int)$offerId);
+       \App\Services\OfferBroadcaster::emitNew((int)$offerId);
+
+
+
         }
 
         return response()->json([
@@ -599,8 +608,15 @@ $activeForDriver = DB::query()
                         'is_direct'          => 1,
                         'via'                => 'sp_assign_direct_v1',
                     ]);
+\App\Services\OfferBroadcaster::emitNew((int)$offerId);
 
-                    OfferBroadcaster::emitNew((int)$offerId);
+//                    \App\Services\DispatchOutbox::enqueueOfferNew(
+//     tenantId: $tenantId,
+//     offerId:  (int)$offerId,
+//     rideId:   (int)$rideId,
+//     driverId: (int)$driverId
+// );
+
                 } else {
                     \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.active', [
                         'ride_id' => (int)$rideId,
@@ -804,7 +820,11 @@ public function reassign(Request $r, int $ride)
         }
 
         // ================== SPs FUERA DEL TX (evita “no active transaction”) ==================
-        $row = DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [$tenantId, $rideId, $newDriver, null]);
+       $settings = \App\Services\DispatchSettingsService::forTenant($tenantId);
+        $expiresSec = (int)($settings->expires_s ?? 180);
+
+        $row = DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [$tenantId, $rideId, $newDriver, $expiresSec]);
+
 
         $offerId = null;
         if ($row && isset($row->id)) {
@@ -837,8 +857,15 @@ public function reassign(Request $r, int $ride)
         if ($force) {
             try { DB::selectOne('CALL sp_accept_offer_v7(?)', [$offerId]); } catch (\Throwable $e) { /* ignore */ }
         }
+\App\Services\OfferBroadcaster::emitNew((int)$offerId);
 
-        OfferBroadcaster::emitNew($offerId);
+       \App\Services\DispatchOutbox::enqueueOfferNew(
+    tenantId: $tenantId,
+    offerId:  (int)$offerId,
+    rideId:   (int)$rideId,
+    driverId: (int)$newDriver
+);
+
 
         return response()->json([
             'ok'         => true,

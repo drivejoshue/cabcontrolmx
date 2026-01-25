@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use App\Services\DriverWalletService;
 use App\Models\Ride;
-use App\Http\Controllers\Api\AutoKickService;
+use App\Services\AutoKickService;
 
 
 
@@ -1268,6 +1268,11 @@ class RideController extends Controller
 
     /** GET /api/driver/history */
     /** GET /api/driver/history */
+  
+
+
+
+
   public function historyForDriver(Request $req)
 {
     $user = $req->user();

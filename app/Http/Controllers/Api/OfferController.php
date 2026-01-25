@@ -430,7 +430,8 @@ class OfferController extends Controller
                 ->join('drivers as d', 'd.id', '=', 'o2.driver_id')
                 ->where('o2.ride_id', $rideId)
                 ->where('o2.driver_id', '<>', $driverId)
-                ->whereIn('o2.status', ['offered', 'queued', 'pending_passenger'])
+                ->whereIn('o2.status', ['offered', 'queued', 'pending_passenger', 'released'])
+
                 ->select('o2.id', 'o2.driver_id', 'd.tenant_id')
                 ->get();
 
