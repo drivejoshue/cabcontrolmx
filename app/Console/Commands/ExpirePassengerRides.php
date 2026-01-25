@@ -121,7 +121,7 @@ class ExpirePassengerRides extends Command
 
             DB::table('taxi_stand_queue')
                 ->where('status', 'saltado')
-                ->update(['active_key' => 0]);
+               ;
         } else {
             $count = DB::table('taxi_stand_queue as q')
                 ->join('drivers as d', function ($j) {
