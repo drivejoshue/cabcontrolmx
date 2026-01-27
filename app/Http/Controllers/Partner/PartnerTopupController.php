@@ -152,7 +152,7 @@ class PartnerTopupController extends Controller
         ));
     }
 
-   public function store(Request $r)
+public function store(Request $r)
 {
     $tenantId  = $this->tenantId();
     $partnerId = $this->partnerId();
@@ -160,10 +160,19 @@ class PartnerTopupController extends Controller
     $data = $r->validate([
         'amount'                => ['required','numeric','min:50','max:50000'],
         'method'                => ['required','in:transfer'],
+        // del form llega acc_1 / acc_2
         'provider_account_slot' => ['required','in:acc_1,acc_2'],
         'bank_ref'              => ['nullable','string','max:190'],
         'proof'                 => ['nullable','file','max:4096','mimes:jpg,jpeg,png,pdf'],
     ]);
+
+    // acc_1/acc_2 -> 1/2 (DB espera tinyint)
+    $slotMap = [
+        'acc_1' => 1,
+        'acc_2' => 2,
+    ];
+    $slotInt = $slotMap[$data['provider_account_slot']] ?? null;
+    abort_if(!$slotInt, 422, 'Cuenta destino inválida.');
 
     $proofPath = null;
     if ($r->hasFile('proof')) {
@@ -179,10 +188,10 @@ class PartnerTopupController extends Controller
         'provider' => 'bank',
         'method'   => 'transfer',
 
-        // ✅ cuenta destino elegida por el partner
-        'provider_account_slot' => $data['provider_account_slot'],
+        // ✅ tinyint en BD
+        'provider_account_slot' => $slotInt,
 
-        'amount'   => round((float)$data['amount'], 2),
+        'amount'   => round((float) $data['amount'], 2),
         'currency' => 'MXN',
 
         'bank_ref'   => $data['bank_ref'] ?? null,
@@ -194,9 +203,11 @@ class PartnerTopupController extends Controller
 
         'external_reference' => $externalRef,
 
+        // útil para auditoría / UI
         'meta' => [
             'source' => 'partner_portal',
             'suggested_ref' => "ORBANA-P{$partnerId}-T{$tenantId}",
+            'provider_account_slot' => $data['provider_account_slot'], // acc_1/acc_2 (texto)
             'submitted_by' => [
                 'user_id' => auth()->id(),
                 'email'   => auth()->user()->email ?? null,
@@ -209,6 +220,7 @@ class PartnerTopupController extends Controller
         ->route('partner.topups.show', $topup)
         ->with('ok', 'Recarga enviada a revisión.');
 }
+
 
 
     public function show(PartnerTopup $topup)
