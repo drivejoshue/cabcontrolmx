@@ -11,6 +11,7 @@ export default defineConfig({
          'resources/css/app.css',
          'resources/js/adminkit.js',
         'resources/js/pages/dispatch.js',
+        'resources/js/pages/partner_monitor.js',
       ],
       refresh: true,
     }),
