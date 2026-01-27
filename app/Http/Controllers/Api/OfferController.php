@@ -362,6 +362,37 @@ class OfferController extends Controller
                 return response()->json(['ok' => false, 'msg' => 'Offer no encontrada'], 404);
             }
 
+            // ... regresamos pendingpassenger a offered para que pueda aceptar el driver
+
+            if (($chk->status ?? '') === 'pending_passenger') {
+                $o2 = DB::table('ride_offers')
+                    ->where('id', $offerId)
+                    ->where('tenant_id', $tenantId)
+                    ->select('bid_expires_at')
+                    ->first();
+
+                $bidExpired = true;
+                if ($o2 && !empty($o2->bid_expires_at)) {
+                    $bidExpired = now()->greaterThan(\Carbon\Carbon::parse($o2->bid_expires_at));
+                }
+
+                if (!$bidExpired) {
+                    return response()->json(['ok' => false, 'msg' => 'Aún esperando respuesta del pasajero'], 409);
+                }
+
+                // volver a offered para que la SP lo acepte
+                DB::table('ride_offers')
+                    ->where('id', $offerId)
+                    ->where('tenant_id', $tenantId)
+                    ->update([
+                        'status' => 'offered',
+                        'updated_at' => now(),
+                    ]);
+
+                OfferBroadcaster::emitStatus($tenantId, $driverId, (int)$chk->ride_id, $offerId, 'offered');
+            }
+
+
             if ((int) $chk->driver_id !== $driverId || (int) $chk->tenant_id !== $tenantId) {
                 return response()->json(['ok' => false, 'msg' => 'Offer inválida o de otro tenant'], 404);
             }
@@ -553,140 +584,159 @@ class OfferController extends Controller
      * BID del driver: propone un monto al pasajero.
      * NO activa el ride, solo deja la oferta en status pending_passenger.
      */
-    public function bid(Request $req, int $offer)
-    {
-        $data = $req->validate([
-            'amount' => 'required|numeric|min:10',
-        ]);
 
-        $tenantId = (int) ($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
 
-        $driverId = DB::table('drivers')
-            ->where('tenant_id', $tenantId)
-            ->where('user_id', $req->user()->id)
-            ->value('id');
+public function bid(Request $req, int $offer)
+{
+    $data = $req->validate([
+        'amount' => 'required|numeric|min:10',
+    ]);
 
-        if (!$driverId) {
-            return response()->json(['ok' => false, 'msg' => 'Driver no encontrado'], 404);
-        }
+    $tenantId = (int) ($req->header('X-Tenant-ID') ?? optional($req->user())->tenant_id ?? 1);
 
-        $amount = (float) $data['amount'];
+    $driverId = DB::table('drivers')
+        ->where('tenant_id', $tenantId)
+        ->where('user_id', $req->user()->id)
+        ->value('id');
 
-        DB::beginTransaction();
-        try {
-            // 1) Oferta
-            $o = DB::table('ride_offers')
-                ->where('tenant_id', $tenantId)
-                ->where('id', $offer)
-                ->lockForUpdate()
-                ->first();
-
-            if (!$o) {
-                DB::rollBack();
-                return response()->json(['ok' => false, 'msg' => 'Offer no encontrada'], 404);
-            }
-
-            if ((int) $o->driver_id !== (int) $driverId) {
-                DB::rollBack();
-                return response()->json(['ok' => false, 'msg' => 'Offer no pertenece a este driver'], 403);
-            }
-
-            // expiración
-            if (!empty($o->expires_at)) {
-                $expiresAt = Carbon::parse($o->expires_at);
-                if (Carbon::now()->greaterThan($expiresAt)) {
-                    DB::rollBack();
-                    return response()->json(['ok' => false, 'msg' => 'Offer expirada'], 409);
-                }
-            }
-
-            // sólo si sigue viva
-            if (!in_array($o->status, ['offered', 'pending_passenger'], true)) {
-                DB::rollBack();
-                return response()->json(['ok' => false, 'msg' => 'Offer ya no disponible'], 409);
-            }
-
-            // 2) Ride
-            $ride = DB::table('rides')
-                ->where('tenant_id', $tenantId)
-                ->where('id', $o->ride_id)
-                ->lockForUpdate()
-                ->first();
-
-            if (!$ride) {
-                DB::rollBack();
-                return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
-            }
-
-            $rideStatus = strtolower($ride->status ?? '');
-            if (!in_array($rideStatus, ['requested', 'offered'], true)) {
-                DB::rollBack();
-                return response()->json(['ok' => false, 'msg' => 'Ride no elegible para bidding'], 409);
-            }
-
-            if (($ride->requested_channel ?? '') !== 'passenger_app' || !(int) ($ride->allow_bidding ?? 0)) {
-                DB::rollBack();
-                return response()->json(['ok' => false, 'msg' => 'Bidding no habilitado para este ride'], 409);
-            }
-
-            // regla: mínimo lo que ofreció el pasajero
-            $passengerOffer = $ride->passenger_offer !== null ? (float) $ride->passenger_offer : null;
-            if ($passengerOffer !== null && $amount < $passengerOffer) {
-                $amount = $passengerOffer;
-            }
-
-            // 3) guardar propuesta
-            DB::table('ride_offers')
-                ->where('tenant_id', $tenantId)
-                ->where('id', $offer)
-                ->update([
-                    'driver_offer' => $amount,
-                    'status'       => 'pending_passenger',
-                    'responded_at' => now(),
-                    'updated_at'   => now(),
-                ]);
-
-            DB::table('rides')
-                ->where('tenant_id', $tenantId)
-                ->where('id', $o->ride_id)
-                ->update([
-                    'driver_offer' => $amount,
-                    'status'       => $rideStatus === 'requested' ? 'offered' : $rideStatus,
-                    'updated_at'   => now(),
-                ]);
-
-            DB::commit();
-
-            // notificar passenger/panel
-            RideBroadcaster::bidProposed(
-                tenantId:       $tenantId,
-                rideId:         (int) $o->ride_id,
-                offerId:        (int) $o->id,
-                driverId:       (int) $driverId,
-                driverAmount:   $amount,
-                passengerOffer: $passengerOffer,
-            );
-
-            // actualizar estado en driver
-            OfferBroadcaster::emitStatus(
-                tenantId: $tenantId,
-                driverId: (int) $driverId,
-                rideId:   (int) $o->ride_id,
-                offerId:  (int) $o->id,
-                status:   'pending_passenger',
-            );
-
-            return response()->json(['ok' => true]);
-
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            \Log::error('OfferController@bid error', [
-                'offer' => $offer,
-                'error' => $e->getMessage(),
-            ]);
-            return response()->json(['ok' => false, 'msg' => 'Error interno del servidor'], 500);
-        }
+    if (!$driverId) {
+        return response()->json(['ok' => false, 'msg' => 'Driver no encontrado'], 404);
     }
+
+    $amount = (float) $data['amount'];
+    $bidTtlSec = 30;
+
+    DB::beginTransaction();
+    try {
+        $o = DB::table('ride_offers')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $offer)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$o) {
+            DB::rollBack();
+            return response()->json(['ok' => false, 'msg' => 'Offer no encontrada'], 404);
+        }
+
+        if ((int) $o->driver_id !== (int) $driverId) {
+            DB::rollBack();
+            return response()->json(['ok' => false, 'msg' => 'Offer no pertenece a este driver'], 403);
+        }
+
+        // Expiración "wave offer"
+        if (!empty($o->expires_at)) {
+            $expiresAt = Carbon::parse($o->expires_at);
+            if (now()->greaterThan($expiresAt)) {
+                DB::rollBack();
+                return response()->json(['ok' => false, 'msg' => 'Offer expirada'], 409);
+            }
+        }
+
+        $status = strtolower($o->status ?? '');
+
+        // Si passenger ya lo rechazó, ya no se puede
+        if ($status === 'rejected') {
+            DB::rollBack();
+            return response()->json(['ok' => false, 'msg' => 'Bid rechazado por el pasajero'], 409);
+        }
+
+        if (!in_array($status, ['offered', 'pending_passenger'], true)) {
+            DB::rollBack();
+            return response()->json(['ok' => false, 'msg' => 'Offer ya no disponible'], 409);
+        }
+
+        // Si ya está pending_passenger, solo permitir resend si el BID anterior ya expiró
+        if ($status === 'pending_passenger') {
+            $bidExp = !empty($o->bid_expires_at) ? Carbon::parse($o->bid_expires_at) : null;
+            if ($bidExp && now()->lessThanOrEqualTo($bidExp)) {
+                DB::rollBack();
+                return response()->json(['ok' => false, 'msg' => 'Aún esperando respuesta del pasajero'], 409);
+            }
+        }
+
+        // Ride lock
+        $ride = DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $o->ride_id)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$ride) {
+            DB::rollBack();
+            return response()->json(['ok' => false, 'msg' => 'Ride no encontrado'], 404);
+        }
+
+        $rideStatus = strtolower($ride->status ?? '');
+        if (!in_array($rideStatus, ['requested', 'offered'], true)) {
+            DB::rollBack();
+            return response()->json(['ok' => false, 'msg' => 'Ride no elegible para bidding'], 409);
+        }
+
+        if (($ride->requested_channel ?? '') !== 'passenger_app' || !(int)($ride->allow_bidding ?? 0)) {
+            DB::rollBack();
+            return response()->json(['ok' => false, 'msg' => 'Bidding no habilitado para este ride'], 409);
+        }
+
+        $passengerOffer = $ride->passenger_offer !== null ? (float) $ride->passenger_offer : null;
+        if ($passengerOffer !== null && $amount < $passengerOffer) {
+            $amount = $passengerOffer;
+        }
+
+        $nextSeq = ((int)($o->bid_seq ?? 0)) + 1;
+        $bidExpiresAt = now()->addSeconds($bidTtlSec);
+
+        DB::table('ride_offers')
+  ->where('tenant_id', $tenantId)
+  ->where('id', $offer)
+  ->update([
+    'driver_offer'   => $amount,
+    'status'         => 'pending_passenger',
+    'bid_seq'        => $nextSeq,
+    'bid_expires_at' => DB::raw("DATE_ADD(NOW(), INTERVAL $bidTtlSec SECOND)"),
+    'responded_at'   => DB::raw("NOW()"),
+    'updated_at'     => DB::raw("NOW()"),
+  ]);
+
+        DB::table('rides')
+            ->where('tenant_id', $tenantId)
+            ->where('id', $o->ride_id)
+            ->update([
+                'driver_offer' => $amount,
+                'status'       => $rideStatus === 'requested' ? 'offered' : $rideStatus,
+                'updated_at'   => now(),
+            ]);
+
+        DB::commit();
+
+        RideBroadcaster::bidProposed(
+            tenantId:       $tenantId,
+            rideId:         (int) $o->ride_id,
+            offerId:        (int) $o->id,
+            driverId:       (int) $driverId,
+            driverAmount:   $amount,
+            passengerOffer: $passengerOffer,
+            bidSeq:         $nextSeq,
+            bidExpiresAt:   $bidExpiresAt->format('Y-m-d H:i:s'),
+        );
+
+        OfferBroadcaster::emitStatus(
+            tenantId: $tenantId,
+            driverId: (int) $driverId,
+            rideId:   (int) $o->ride_id,
+            offerId:  (int) $o->id,
+            status:   'pending_passenger',
+        );
+
+        return response()->json(['ok' => true]);
+
+    } catch (\Throwable $e) {
+        DB::rollBack();
+        \Log::error('OfferController@bid error', ['offer' => $offer, 'error' => $e->getMessage()]);
+        return response()->json(['ok' => false, 'msg' => 'Error interno del servidor'], 500);
+    }
+}
+
 
     public function reject($offerId, Request $req)
     {

@@ -450,13 +450,35 @@ class PassengerRideController extends Controller
     }
 
 
+  private function buildTenantBadgeFromRow(object $row): ?string
+    {
+        $tenantName = trim((string)($row->tenant_name ?? ''));
+        $tenantCity = trim((string)($row->tenant_city ?? ''));
+
+        $partnerCode = trim((string)($row->partner_code ?? ''));
+        $partnerName = trim((string)($row->partner_name ?? ''));
+
+        $tenantShortRaw  = $tenantCity !== '' ? $tenantCity : $tenantName;
+        $partnerShortRaw = $partnerCode !== '' ? $partnerCode : $partnerName;
+
+        $tenantShort  = $this->shortBadgePart($tenantShortRaw, 18);  // ej. "Veracruz"
+        $partnerShort = $this->shortBadgePart($partnerShortRaw, 10); // ej. "P-014"
+
+        $badge = $tenantShort;
+        if ($partnerShort !== '') {
+            $badge = $badge !== '' ? ($badge . ' · ' . $partnerShort) : $partnerShort;
+        }
+
+        return $badge !== '' ? $badge : null;
+    }
 
 
  private const ACTIVE_STATUSES = [
         'requested',
         'searching',
+
         'bidding',
-        'pending',
+        'pending_passenger',
         'accepted',
         'assigned',
         'en_route',
@@ -539,28 +561,7 @@ class PassengerRideController extends Controller
             ]);
     }
 
-    private function buildTenantBadgeFromRow(object $row): ?string
-    {
-        $tenantName = trim((string)($row->tenant_name ?? ''));
-        $tenantCity = trim((string)($row->tenant_city ?? ''));
-
-        $partnerCode = trim((string)($row->partner_code ?? ''));
-        $partnerName = trim((string)($row->partner_name ?? ''));
-
-        $tenantShortRaw  = $tenantCity !== '' ? $tenantCity : $tenantName;
-        $partnerShortRaw = $partnerCode !== '' ? $partnerCode : $partnerName;
-
-        $tenantShort  = $this->shortBadgePart($tenantShortRaw, 18);  // ej. "Veracruz"
-        $partnerShort = $this->shortBadgePart($partnerShortRaw, 10); // ej. "P-014"
-
-        $badge = $tenantShort;
-        if ($partnerShort !== '') {
-            $badge = $badge !== '' ? ($badge . ' · ' . $partnerShort) : $partnerShort;
-        }
-
-        return $badge !== '' ? $badge : null;
-    }
-
+  
     private function buildRidePayload(object $row): array
     {
         $tenantId = (int) $row->tenant_id;
@@ -740,6 +741,9 @@ class PassengerRideController extends Controller
                 'o.distance_m',
                 'o.eta_seconds',
 
+                'o.bid_seq',
+                'o.bid_expires_at',
+
                 DB::raw('CEIL(o.eta_seconds / 60) as eta_minutes'),
 
                 // Campos del driver
@@ -754,30 +758,30 @@ class PassengerRideController extends Controller
             ])
             ->get()
             ->map(function ($o) {
-                // casteos básicos
-                $o->driver_offer = $o->driver_offer !== null ? (float) $o->driver_offer : null;
-                $o->distance_m   = $o->distance_m   !== null ? (int)   $o->distance_m   : null;
-                $o->eta_seconds  = $o->eta_seconds  !== null ? (int)   $o->eta_seconds  : null;
-                $o->eta_minutes  = $o->eta_minutes  !== null ? (int)   $o->eta_minutes  : null;
+            $o->driver_offer = $o->driver_offer !== null ? (float)$o->driver_offer : null;
+            $o->distance_m   = $o->distance_m   !== null ? (int)$o->distance_m   : null;
+            $o->eta_seconds  = $o->eta_seconds  !== null ? (int)$o->eta_seconds  : null;
+            $o->eta_minutes  = $o->eta_minutes  !== null ? (int)$o->eta_minutes  : null;
 
-                // URL pública del avatar (a partir de foto_path)
-                if (!empty($o->driver_foto_path)) {
-                    $o->avatar_url = Storage::disk('public')->url($o->driver_foto_path);
-                } else {
-                    $o->avatar_url = null;
-                }
+            $o->bid_seq = $o->bid_seq !== null ? (int)$o->bid_seq : null;
+            $o->bid_expires_at = $o->bid_expires_at; // string
 
-                // Opcional: etiqueta compacta de vehículo (marca + modelo)
-                $brand = $o->vehicle_brand ?? '';
-                $model = $o->vehicle_model ?? '';
-                $label = trim($brand.' '.$model);
-                $o->vehicle_label = $label !== '' ? $label : null;
+            if (!empty($o->driver_foto_path)) {
+                $o->avatar_url = Storage::disk('public')->url($o->driver_foto_path);
+            } else {
+                $o->avatar_url = null;
+            }
+            unset($o->driver_foto_path);
 
-                // si no quieres exponer foto_path crudo:
-                unset($o->driver_foto_path);
+            $brand = $o->vehicle_brand ?? '';
+            $model = $o->vehicle_model ?? '';
+            $label = trim($brand.' '.$model);
+            $o->vehicle_label = $label !== '' ? $label : null;
 
-                return $o;
-            });
+            $o->event_id = ($o->bid_seq !== null) ? "bid:{$o->offer_id}:{$o->bid_seq}" : null;
+
+            return $o;
+        });
 
         return response()->json([
             'ok'    => true,
@@ -860,7 +864,7 @@ class PassengerRideController extends Controller
 
             // validar expiración de la oferta
             if (!empty($o->expires_at)) {
-                $expiresAt = now()->parse($o->expires_at);
+               $expiresAt = \Carbon\Carbon::parse($o->expires_at);
                 if (now()->greaterThan($expiresAt)) {
                     DB::table('ride_offers')
                         ->where('id', $o->id)
@@ -874,6 +878,14 @@ class PassengerRideController extends Controller
                     return response()->json(['ok' => false, 'msg' => 'Oferta expirada'], 409);
                 }
             }
+
+            if ($offerStatus === 'pending_passenger' && !empty($o->bid_expires_at)) {
+                if (now()->greaterThan(\Carbon\Carbon::parse($o->bid_expires_at))) {
+                    DB::rollBack();
+                    return response()->json(['ok'=>false,'msg'=>'Bid expirado'], 409);
+                }
+            }
+
 
             // monto acordado: driver_offer si existe, sino passenger_offer, sino quoted_amount
             $agreed = $o->driver_offer ?? $r->passenger_offer ?? $r->quoted_amount;

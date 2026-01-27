@@ -42,24 +42,39 @@ class DispatchController extends Controller
     }
 
     private static function emitFreshOffers(int $tenantId, int $rideId, int $freshWindowSeconds = 8): void
-    {
-        $nowMinus = \Carbon\Carbon::now()->subSeconds($freshWindowSeconds);
+{
+    $nowMinus = \Carbon\Carbon::now()->subSeconds($freshWindowSeconds);
 
-        $ids = \DB::table('ride_offers')
-            ->where('tenant_id', $tenantId)
-            ->where('ride_id',   $rideId)
-            ->where('status',    'offered')
-            ->whereNull('responded_at')
-            ->where(function($q) use ($nowMinus) {
-                $q->where('sent_at', '>=', $nowMinus)
-                  ->orWhere('created_at','>=', $nowMinus);
-            })
-            ->pluck('id');
+    $rows = \DB::table('ride_offers')
+        ->where('tenant_id', $tenantId)
+        ->where('ride_id',   $rideId)
+        ->where('status',    'offered')
+        ->whereNull('responded_at')
+        ->where(function($q) use ($nowMinus) {
+            $q->where('sent_at', '>=', $nowMinus)
+              ->orWhere('created_at','>=', $nowMinus);
+        })
+        ->get(['id','driver_id']);
 
-        foreach ($ids as $oid) {
-            \App\Services\OfferBroadcaster::emitNew((int)$oid);
+    foreach ($rows as $r) {
+        try {
+            \App\Services\DispatchOutbox::enqueueOfferNew(
+                tenantId: $tenantId,
+                offerId:  (int)$r->id,
+                rideId:   $rideId,
+                driverId: (int)$r->driver_id
+            );
+        } catch (\Throwable $e) {
+            \Log::warning('emitFreshOffers enqueue failed', [
+                'tenant_id' => $tenantId,
+                'ride_id'   => $rideId,
+                'offer_id'  => (int)$r->id,
+                'msg'       => $e->getMessage(),
+            ]);
         }
     }
+}
+
 
     public function quote(Request $r, FareQuoteService $fareQuote)
     {
@@ -608,14 +623,14 @@ $row = DB::selectOne('CALL sp_create_offer_v2(?,?,?,?)', [
                         'is_direct'          => 1,
                         'via'                => 'sp_assign_direct_v1',
                     ]);
-\App\Services\OfferBroadcaster::emitNew((int)$offerId);
+                        \App\Services\OfferBroadcaster::emitNew((int)$offerId);
 
-//                    \App\Services\DispatchOutbox::enqueueOfferNew(
-//     tenantId: $tenantId,
-//     offerId:  (int)$offerId,
-//     rideId:   (int)$rideId,
-//     driverId: (int)$driverId
-// );
+                        //                    \App\Services\DispatchOutbox::enqueueOfferNew(
+                        //     tenantId: $tenantId,
+                        //     offerId:  (int)$offerId,
+                        //     rideId:   (int)$rideId,
+                        //     driverId: (int)$driverId
+                        // );
 
                 } else {
                     \App\Services\Realtime::toDriver($tenantId, $driverId)->emit('ride.active', [

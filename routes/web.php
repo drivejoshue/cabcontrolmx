@@ -174,6 +174,8 @@ Route::middleware('guest')->group(function () {
 
 Route::view('/pending', 'public.pending')->name('public.pending-tenant');
 
+
+
 /*
 |--------------------------------------------------------------------------
 | Email verification (Breeze-like)

@@ -181,67 +181,88 @@ class AutoDispatchService
         'updated_at'  => $now,
     ]);
 
-    // Marcas para detectar lo NUEVO de esta corrida
-    $t0 = $now;
-    $beforeMaxId = (int)(DB::table('ride_offers')
+// Marcas para detectar lo NUEVO de esta corrida
+$t0 = $now;
+$beforeMaxId = (int)(DB::table('ride_offers')
+    ->where('tenant_id', $tenantId)
+    ->where('ride_id',   $rideId)
+    ->max('id') ?? 0);
+
+// Helper: detecta offers NUEVAS de esta corrida y las ENCOLA en outbox.
+// Regla: aquí NO se emite directo (OfferBroadcaster) NUNCA.
+$enqueueNewOffers = function() use ($tenantId, $rideId, $beforeMaxId, $t0) : array {
+    // 1) Preferimos por id (más exacto)
+    $ids = DB::table('ride_offers')
         ->where('tenant_id', $tenantId)
         ->where('ride_id',   $rideId)
-        ->max('id') ?? 0);
+        ->where('status',    'offered')
+        ->whereNull('responded_at')
+        ->where('id', '>', $beforeMaxId)
+        ->orderBy('id')
+        ->pluck('id')
+        ->map(fn($id)=>(int)$id)
+        ->all();
 
-    // Helper para emitir todas las 'offered' creadas desde t0 / id>beforeMaxId
-    $emitNewOffers = function() use ($tenantId, $rideId, $beforeMaxId, $t0) : array {
-        // 1) Por id
+    // 2) Fallback por tiempo si por id no detectó (por clock/lag/updates)
+    if (empty($ids)) {
         $ids = DB::table('ride_offers')
             ->where('tenant_id', $tenantId)
             ->where('ride_id',   $rideId)
             ->where('status',    'offered')
             ->whereNull('responded_at')
-            ->where('id', '>', $beforeMaxId)
+            ->where(function($q) use ($t0){
+                $q->where('sent_at', '>=', $t0)
+                  ->orWhere('created_at','>=',$t0)
+                  ->orWhere('updated_at','>=',$t0);
+            })
+            ->orderBy('id','desc')
+            ->limit(50)
             ->pluck('id')
             ->map(fn($id)=>(int)$id)
             ->all();
+    }
 
-        // 2) Fallback por tiempo
-        if (empty($ids)) {
-            $ids = DB::table('ride_offers')
-                ->where('tenant_id', $tenantId)
-                ->where('ride_id',   $rideId)
-                ->where('status',    'offered')
-                ->whereNull('responded_at')
-                ->where(function($q) use ($t0){
-                    $q->where('sent_at', '>=', $t0)
-                      ->orWhere('created_at','>=',$t0)
-                      ->orWhere('updated_at','>=',$t0);
-                })
-                ->orderBy('id','desc')
-                ->limit(50)
-                ->pluck('id')
-                ->map(fn($id)=>(int)$id)
-                ->all();
+    if (empty($ids)) return [];
+
+    // 3) Cargar driver_id en batch (evita N queries)
+    $driverByOffer = DB::table('ride_offers')
+        ->where('tenant_id', $tenantId)
+        ->where('ride_id',   $rideId)
+        ->whereIn('id', $ids)
+        ->pluck('driver_id', 'id'); // [offer_id => driver_id]
+
+    // 4) Encolar a outbox (dedupe_key lo evita si ya está)
+    foreach ($ids as $oid) {
+        $driverId = (int)($driverByOffer[$oid] ?? 0);
+        if ($driverId <= 0) {
+            \Log::warning('kickoff outbox.enqueue.skip_no_driver', [
+                'tenant_id' => $tenantId,
+                'ride_id'   => $rideId,
+                'offer_id'  => $oid,
+            ]);
+            continue;
         }
 
-        // 2) ENCOLAR EN OUTBOX (NO emitir directamente)
-    foreach ($ids as $oid) {
         try {
-            // Encolar para procesamiento asíncrono
             \App\Services\DispatchOutbox::enqueueOfferNew(
                 tenantId: $tenantId,
                 offerId:  $oid,
                 rideId:   $rideId,
-                driverId: (int) DB::table('ride_offers')
-                    ->where('id', $oid)
-                    ->value('driver_id')
+                driverId: $driverId
             );
         } catch (\Throwable $e) {
             \Log::warning('kickoff outbox.enqueue.fail', [
-                'offer_id' => $oid,
-                'msg' => $e->getMessage()
+                'tenant_id' => $tenantId,
+                'ride_id'   => $rideId,
+                'offer_id'  => $oid,
+                'msg'       => $e->getMessage(),
             ]);
         }
     }
-    
+
     return $ids;
 };
+
 
     // 1) Try: SP OLA v3
     try {

@@ -99,29 +99,49 @@ class RideBroadcaster
     /* -----------------------------------------------------------------
      * 3) Propuesta del driver (BID) → Passenger ve oferta
      * -----------------------------------------------------------------*/
-    public static function bidProposed(
-        int $tenantId,
-        int $rideId,
-        int $offerId,
-        int $driverId,
-        int $driverAmount,
-        ?int $passengerOffer = null
-    ): void {
-        $extra = [
-            'phase'           => 'bidding_proposed',
-            'offer_id'        => $offerId,
-            'driver_id'       => $driverId,
-            'driver_offer'    => $driverAmount,
-            'passenger_offer' => $passengerOffer,
-        ];
+public static function bidProposed(
+    int $tenantId,
+    int $rideId,
+    int $offerId,
+    int $driverId,
+    int $driverAmount,
+    ?int $passengerOffer = null,
+    ?int $bidSeq = null,
+    ?string $bidExpiresAt = null
+): void {
+    $extra = [
+        'phase'           => 'bidding_proposed',
+        'offer_id'        => $offerId,
+        'driver_id'       => $driverId,
+        'driver_offer'    => $driverAmount,
+        'passenger_offer' => $passengerOffer,
 
-        self::update($tenantId, $rideId, 'requested', $extra);
+        // nuevos campos
+        'bid_seq'         => $bidSeq,
+        'bid_expires_at'  => $bidExpiresAt,
+        'event_id'        => ($bidSeq !== null) ? "bid:$offerId:$bidSeq" : null,
+        'at'              => now()->format('Y-m-d H:i:s'),
+    ];
 
-        
+    // limpia nulls (sin matar 0)
+    $extra = array_filter($extra, fn ($v) => $v !== null);
 
-        // De paso actualizamos el contador de “drivers viendo tu viaje”
-        self::offersSummary($tenantId, $rideId);
-    }
+    // ✅ MISMO CANAL / MISMO EVENTO que ya procesa Passenger (ride.update)
+    self::update($tenantId, $rideId, 'requested', $extra);
+
+    // summary si lo sigues usando
+    self::offersSummary($tenantId, $rideId);
+
+    \Log::info('RideBroadcaster.bidProposed OUT', [
+        'tenant_id' => $tenantId,
+        'ride_id'   => $rideId,
+        'offer_id'  => $offerId,
+        'bid_seq'   => $bidSeq,
+        'event_id'  => $extra['event_id'] ?? null,
+    ]);
+}
+
+
 
     /* -----------------------------------------------------------------
      * 4) Resultado del bidding (aceptado / rechazado por passenger)
