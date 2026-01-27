@@ -86,6 +86,7 @@ class PartnerVehicleController extends BasePartnerController
         $minYear = $this->allowedYearMin();
         $maxYear = $this->allowedYearMax();
 
+       $maxFotoKb = 4096; // 4 MB (ajusta a lo que quieras)
         $data = $r->validate([
             'economico'  => ['required','string','max:20'],
             'plate'      => ['required','string','max:20'],
@@ -94,11 +95,19 @@ class PartnerVehicleController extends BasePartnerController
             'color'      => ['nullable','string','max:40'],
             'year'       => ["nullable","integer","min:$minYear","max:$maxYear"],
             'policy_id'  => ['nullable','string','max:60'],
-            'foto'       => ['nullable','image','max:2048'],
+
+            // ✅ Foto: image + tipos permitidos + tamaño
+            'foto'       => ['nullable','file','image','mimes:jpg,jpeg,png,webp','max:'.$maxFotoKb],
+
             'catalog_id' => ['nullable','integer','exists:vehicle_catalog,id'],
             'brand'      => ['nullable','string','max:60'],
             'model'      => ['nullable','string','max:80'],
+        ], [
+            'foto.image' => 'La foto debe ser una imagen válida.',
+            'foto.mimes' => 'La foto debe ser JPG, PNG o WEBP.',
+            'foto.max'   => 'La foto supera el tamaño máximo permitido (4 MB).',
         ]);
+
 
         // Unique per tenant
         if (DB::table('vehicles')->where('tenant_id',$tenantId)->where('economico',$data['economico'])->exists()) {
