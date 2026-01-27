@@ -278,7 +278,7 @@ $enqueueNewOffers = function() use ($tenantId, $rideId, $beforeMaxId, $t0) : arr
             ->whereNull('responded_at')
             ->update(['is_direct' => 0]);
 
-        $createdIds = $emitNewOffers();
+        //$createdIds = $emitNewOffers();
 
         \Log::info('kickoff wave done', [
             'tenant_id' => $tenantId,
