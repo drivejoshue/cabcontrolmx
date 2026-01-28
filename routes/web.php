@@ -72,6 +72,7 @@ use App\Http\Controllers\SysAdmin\TenantConsoleWalletController;
 use App\Http\Controllers\SysAdmin\TenantConsoleInvoiceController;
 use App\Http\Controllers\SysAdmin\TenantConsoleUserController;
 use App\Http\Controllers\SysAdmin\TenantConsoleVehicleController;
+use App\Http\Controllers\SysAdmin\AppRemoteConfigController;
 
 use App\Http\Controllers\SysAdmin\SysRidesGenerationReportController;
 
@@ -80,6 +81,10 @@ use App\Http\Controllers\SysAdmin\TenantDocumentsReviewController;
 use App\Http\Controllers\SysAdmin\TenantPartnerBillingController;
 use App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController;
 use App\Http\Controllers\SysAdmin\PartnerManualTopupController;
+
+use App\Http\Controllers\SysAdmin\SysAdminStepUpController;
+use App\Http\Middleware\EnsureUserIsSysAdmin;
+use App\Http\Middleware\EnsureSysAdminStepUp;
 // Debug/events
 use App\Events\TestEvent;
 
@@ -558,136 +563,143 @@ Route::prefix('admin')
 */        // routes/web.php (dentro del mismo group)
 
 
-Route::prefix('sysadmin')->middleware(['auth','sysadmin'])->group(function () {
+Route::prefix('sysadmin')
+    ->middleware(['auth:sanctum', EnsureUserIsSysAdmin::class])
+    ->name('sysadmin.')
+    ->group(function () {
 
-    // Dashboard
-    Route::get('/', [SysAdminDashboardController::class,'index'])
-        ->name('sysadmin.dashboard');
+        Route::get('stepup', [SysAdminStepUpController::class, 'show'])->name('stepup.show');
+        Route::post('stepup', [SysAdminStepUpController::class, 'verify'])
+            ->name('stepup.verify')
+            ->middleware('throttle:sysadmin-stepup');
 
-        Route::resource('provider-profiles', \App\Http\Controllers\SysAdmin\ProviderProfileController::class)
-    ->except(['show'])
-    ->names('sysadmin.provider-profiles');
+        Route::middleware([EnsureSysAdminStepUp::class])->group(function () {
+            Route::get('/', [SysAdminDashboardController::class,'index'])->name('dashboard');
 
+
+        Route::resource('provider-profiles', ProviderProfileController::class)
+              ->except(['show'])
+              ->names('provider-profiles');
     // Tenants (CRUD básico)
-    Route::get('/tenants', [SysTenantController::class, 'index'])->name('sysadmin.tenants.index');
-    Route::get('/tenants/create', [SysTenantController::class, 'create'])->name('sysadmin.tenants.create');
-    Route::post('/tenants', [SysTenantController::class, 'store'])->name('sysadmin.tenants.store');
-    Route::get('/tenants/{tenant}/edit', [SysTenantController::class, 'edit'])->name('sysadmin.tenants.edit');
-   Route::put('/tenants/{tenant}', [SysTenantController::class, 'update'])->name('sysadmin.tenants.update');
+    Route::get('/tenants', [SysTenantController::class, 'index'])->name('tenants.index');
+    Route::get('/tenants/create', [SysTenantController::class, 'create'])->name('tenants.create');
+    Route::post('/tenants', [SysTenantController::class, 'store'])->name('tenants.store');
+    Route::get('/tenants/{tenant}/edit', [SysTenantController::class, 'edit'])->name('tenants.edit');
+   Route::put('/tenants/{tenant}', [SysTenantController::class, 'update'])->name('tenants.update');
 
 
     // Billing del tenant (show/update) + generar factura mensual de prueba
     Route::get('/tenants/{tenant}/billing', [TenantBillingController::class,'show'])
-        ->name('sysadmin.tenants.billing.show');
+        ->name('tenants.billing.show');
     Route::post('/tenants/{tenant}/billing', [TenantBillingController::class,'update'])
-        ->name('sysadmin.tenants.billing.update');
+        ->name('tenants.billing.update');
     Route::post('/tenants/{tenant}/billing/generate-monthly', [TenantBillingController::class,'generateMonthly'])
-        ->name('sysadmin.tenants.billing.generate-monthly');
+        ->name('tenants.billing.generate-monthly');
 
         Route::post('/tenants/{tenant}/billing/run-monthly', [\App\Http\Controllers\SysAdmin\TenantBillingController::class, 'runMonthly'])
-    ->name('sysadmin.tenants.billing.runMonthly');
+    ->name('tenants.billing.runMonthly');
 
     // Facturas (listar/ver). NO se define export_csv para evitar "route not defined".
-    Route::get('/invoices', [TenantInvoiceController::class, 'index'])->name('sysadmin.invoices.index');
-    Route::get('/invoices/{invoice}', [TenantInvoiceController::class, 'show'])->name('sysadmin.invoices.show');
+    Route::get('/invoices', [TenantInvoiceController::class, 'index'])->name('invoices.index');
+    Route::get('/invoices/{invoice}', [TenantInvoiceController::class, 'show'])->name('invoices.show');
 
     Route::get('/invoices/export/csv', [TenantInvoiceController::class, 'exportCsv'])
-    ->name('sysadmin.invoices.export_csv');
+    ->name('invoices.export_csv');
 
      Route::get('/invoices/export/pdf', [TenantInvoiceController::class, 'downloadPdf'])
-    ->name('sysadmin.invoices.pdf');
+    ->name('invoices.pdf');
 
 
 
     // Documentos de VEHÍCULO
     Route::get('/tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'index'])
-        ->name('sysadmin.vehicles.documents.index');
+        ->name('vehicles.documents.index');
     Route::post('/tenants/{tenant}/vehicles/{vehicle}/documents', [VehicleDocumentController::class, 'store'])
-        ->name('sysadmin.vehicles.documents.store');
+        ->name('vehicles.documents.store');
     Route::post('/vehicle-documents/{document}/review', [VehicleDocumentController::class, 'review'])
-        ->name('sysadmin.vehicle-documents.review');
+        ->name('vehicle-documents.review');
     Route::get('/vehicle-documents/{document}/download', [VehicleDocumentController::class, 'download'])
-        ->name('sysadmin.vehicle-documents.download');
+        ->name('vehicle-documents.download');
     Route::get('/vehicle-documents/{document}/view', [VehicleDocumentController::class, 'view'])
-        ->name('sysadmin.vehicle-documents.view');
+        ->name('vehicle-documents.view');
 
     // Documentos de DRIVER
     Route::get('/tenants/{tenant}/drivers/{driver}/documents', [SysDriverDocumentController::class, 'index'])
-        ->name('sysadmin.drivers.documents.index');
+        ->name('drivers.documents.index');
     Route::post('/tenants/{tenant}/drivers/{driver}/documents', [SysDriverDocumentController::class, 'store'])
-        ->name('sysadmin.drivers.documents.store');
+        ->name('drivers.documents.store');
     Route::post('/driver-documents/{document}/review', [SysDriverDocumentController::class, 'review'])
-        ->name('sysadmin.driver-documents.review');
+        ->name('driver-documents.review');
     Route::get('/driver-documents/{document}/download', [SysDriverDocumentController::class, 'download'])
-        ->name('sysadmin.driver-documents.download');
+        ->name('driver-documents.download');
     Route::get('/driver-documents/{document}/view', [SysDriverDocumentController::class, 'view'])
-        ->name('sysadmin.driver-documents.view');
+        ->name('driver-documents.view');
 
 
 
         //docs  tenannt   
 
      Route::get('/tenants/{tenant}/documents', [TenantDocumentsReviewController::class, 'index'])
-      ->name('sysadmin.tenants.documents.index');
+      ->name('tenants.documents.index');
 
     Route::get('/tenant-documents/{doc}/download', [TenantDocumentsReviewController::class, 'download'])
-      ->name('sysadmin.tenant-documents.download');
+      ->name('tenant-documents.download');
 
     Route::post('/tenant-documents/{doc}/approve', [TenantDocumentsReviewController::class, 'approve'])
-      ->name('sysadmin.tenant-documents.approve');
+      ->name('tenant-documents.approve');
 
     Route::post('/tenant-documents/{doc}/reject', [TenantDocumentsReviewController::class, 'reject'])
-      ->name('sysadmin.tenant-documents.reject');
+      ->name('tenant-documents.reject');
 
     Route::post('/tenant-documents/{doc}/reopen', [TenantDocumentsReviewController::class, 'reopen'])
-      ->name('sysadmin.tenant-documents.reopen');
+      ->name('tenant-documents.reopen');
 
 
 
 
     // Cola de verificación + acciones específicas
     Route::get('/verifications', [VerificationQueueController::class, 'index'])
-        ->name('sysadmin.verifications.index');
+        ->name('verifications.index');
     Route::get('/verifications/vehicles/{vehicle}', [VerificationQueueController::class, 'showVehicle'])
-        ->name('sysadmin.verifications.vehicles.show');
+        ->name('verifications.vehicles.show');
     Route::get('/verifications/drivers/{driver}', [VerificationQueueController::class, 'showDriver'])
-        ->name('sysadmin.verifications.drivers.show');
+        ->name('verifications.drivers.show');
     Route::post('/verifications/vehicle-docs/{document}/review', [VerificationQueueController::class, 'reviewVehicleDoc'])
-        ->name('sysadmin.verifications.vehicle_docs.review');
+        ->name('verifications.vehicle_docs.review');
     Route::post('/verifications/driver-docs/{document}/review', [VerificationQueueController::class, 'reviewDriverDoc'])
-        ->name('sysadmin.verifications.driver_docs.review');
+        ->name('verifications.driver_docs.review');
 
     // Leads
-    Route::get('/leads', [ContactLeadController::class,'index'])->name('sysadmin.leads.index');
-    Route::get('/leads/{lead}', [ContactLeadController::class,'show'])->name('sysadmin.leads.show');
-    Route::post('/leads/{lead}/status', [ContactLeadController::class,'updateStatus'])->name('sysadmin.leads.status');
+    Route::get('/leads', [ContactLeadController::class,'index'])->name('leads.index');
+    Route::get('/leads/{lead}', [ContactLeadController::class,'show'])->name('leads.show');
+    Route::post('/leads/{lead}/status', [ContactLeadController::class,'updateStatus'])->name('leads.status');
 
     // Reporte (placeholder habilitado si ya existe controller)
     Route::get('/tenants/{tenant}/reports/commissions', [TenantCommissionReportController::class, 'index'])
-        ->name('sysadmin.tenants.reports.commissions');
+        ->name('tenants.reports.commissions');
 
     // =====================================
     // Cities (SysAdmin)
     // =====================================
-    Route::get('/cities', [CityController::class, 'index'])->name('sysadmin.cities.index');
-    Route::get('/cities/create', [CityController::class, 'create'])->name('sysadmin.cities.create');
-    Route::post('/cities', [CityController::class, 'store'])->name('sysadmin.cities.store');
-    Route::get('/cities/{city}', [CityController::class, 'show'])->name('sysadmin.cities.show');
-    Route::get('/cities/{city}/edit', [CityController::class, 'edit'])->name('sysadmin.cities.edit');
-    Route::put('/cities/{city}', [CityController::class, 'update'])->name('sysadmin.cities.update');
-    Route::delete('/cities/{city}', [CityController::class, 'destroy'])->name('sysadmin.cities.destroy');
+    Route::get('/cities', [CityController::class, 'index'])->name('cities.index');
+    Route::get('/cities/create', [CityController::class, 'create'])->name('cities.create');
+    Route::post('/cities', [CityController::class, 'store'])->name('cities.store');
+    Route::get('/cities/{city}', [CityController::class, 'show'])->name('cities.show');
+    Route::get('/cities/{city}/edit', [CityController::class, 'edit'])->name('cities.edit');
+    Route::put('/cities/{city}', [CityController::class, 'update'])->name('cities.update');
+    Route::delete('/cities/{city}', [CityController::class, 'destroy'])->name('cities.destroy');
 
 
     // =====================================
     // City Places (SysAdmin)
     // =====================================
-    Route::get('/city-places', [CityPlaceController::class, 'index'])->name('sysadmin.city-places.index');
-    Route::get('/city-places/create', [CityPlaceController::class, 'create'])->name('sysadmin.city-places.create');
-    Route::post('/city-places', [CityPlaceController::class, 'store'])->name('sysadmin.city-places.store');
-    Route::get('/city-places/{city_place}', [CityPlaceController::class, 'show'])->name('sysadmin.city-places.show');
-    Route::get('/city-places/{city_place}/edit', [CityPlaceController::class, 'edit'])->name('sysadmin.city-places.edit');
-    Route::put('/city-places/{city_place}', [CityPlaceController::class, 'update'])->name('sysadmin.city-places.update');
-    Route::delete('/city-places/{city_place}', [CityPlaceController::class, 'destroy'])->name('sysadmin.city-places.destroy');
+    Route::get('/city-places', [CityPlaceController::class, 'index'])->name('city-places.index');
+    Route::get('/city-places/create', [CityPlaceController::class, 'create'])->name('city-places.create');
+    Route::post('/city-places', [CityPlaceController::class, 'store'])->name('city-places.store');
+    Route::get('/city-places/{city_place}', [CityPlaceController::class, 'show'])->name('city-places.show');
+    Route::get('/city-places/{city_place}/edit', [CityPlaceController::class, 'edit'])->name('city-places.edit');
+    Route::put('/city-places/{city_place}', [CityPlaceController::class, 'update'])->name('city-places.update');
+    Route::delete('/city-places/{city_place}', [CityPlaceController::class, 'destroy'])->name('city-places.destroy');
 
 
       Route::get('ride-issues', [\App\Http\Controllers\SysAdmin\RideIssueSysAdminController::class, 'index'])->name('ride_issues.index');
@@ -704,41 +716,41 @@ Route::prefix('sysadmin')->middleware(['auth','sysadmin'])->group(function () {
 
         
         Route::get('/generacion', [SysRidesGenerationReportController::class, 'index'])
-            ->name('sysadmin.rides.generation.index');
+            ->name('rides.generation.index');
 
         Route::get('/generacion.csv', [SysRidesGenerationReportController::class, 'exportCsv'])
-            ->name('sysadmin.rides.generation.csv');
+            ->name('rides.generation.csv');
    
 
 
 Route::post('/tenants/{tenant}/billing/actions/recheck', [TenantConsoleController::class, 'recheck'])
-    ->name('sysadmin.tenants.billing.actions.recheck');
+    ->name('tenants.billing.actions.recheck');
 
 Route::post('/tenants/{tenant}/billing/actions/pause', [TenantConsoleController::class, 'pause'])
-    ->name('sysadmin.tenants.billing.actions.pause');
+    ->name('tenants.billing.actions.pause');
 
 Route::post('/tenants/{tenant}/billing/actions/activate', [TenantConsoleController::class, 'activate'])
-    ->name('sysadmin.tenants.billing.actions.activate');
+    ->name('tenants.billing.actions.activate');
 
 Route::post('/tenants/{tenant}/billing/actions/cancel', [TenantConsoleController::class, 'cancel'])
-    ->name('sysadmin.tenants.billing.actions.cancel');
+    ->name('tenants.billing.actions.cancel');
 
 // Cerrar turnos abiertos (emergencia)
 Route::post('/tenants/{tenant}/billing/actions/close-open-shifts', [TenantConsoleController::class, 'closeOpenShifts'])
-    ->name('sysadmin.tenants.billing.actions.close_open_shifts');
+    ->name('tenants.billing.actions.close_open_shifts');
 
 
 // =====================================================
 // Wallet / Transferencias (crédito manual y ajustes)
 // =====================================================
 Route::post('/tenants/{tenant}/billing/wallet/credit', [TenantConsoleWalletController::class, 'credit'])
-    ->name('sysadmin.tenants.billing.wallet.credit');
+    ->name('tenants.billing.wallet.credit');
 
 Route::post('/tenants/{tenant}/billing/wallet/debit', [TenantConsoleWalletController::class, 'debit'])
-    ->name('sysadmin.tenants.billing.wallet.debit');
+    ->name('tenants.billing.wallet.debit');
 
 Route::post('/tenants/{tenant}/billing/wallet/adjust', [TenantConsoleWalletController::class, 'adjust'])
-    ->name('sysadmin.tenants.billing.wallet.adjust');
+    ->name('tenants.billing.wallet.adjust');
 
 
 // =====================================================
@@ -746,38 +758,38 @@ Route::post('/tenants/{tenant}/billing/wallet/adjust', [TenantConsoleWalletContr
 // =====================================================
 // Importante: en controller valida que $invoice->tenant_id === $tenant->id
 Route::post('/tenants/{tenant}/billing/invoices/{invoice}/mark-paid', [TenantConsoleInvoiceController::class, 'markPaid'])
-    ->name('sysadmin.tenants.billing.invoices.mark_paid');
+    ->name('tenants.billing.invoices.mark_paid');
 
 Route::post('/tenants/{tenant}/billing/invoices/{invoice}/mark-pending', [TenantConsoleInvoiceController::class, 'markPending'])
-    ->name('sysadmin.tenants.billing.invoices.mark_pending');
+    ->name('tenants.billing.invoices.mark_pending');
 
 Route::post('/tenants/{tenant}/billing/invoices/{invoice}/void', [TenantConsoleInvoiceController::class, 'void'])
-    ->name('sysadmin.tenants.billing.invoices.void');
+    ->name('tenants.billing.invoices.void');
 
 
 // =====================================================
 // Usuarios del tenant (filtrados por tenant_id)
 // =====================================================
 Route::get('/tenants/{tenant}/billing/users', [TenantConsoleUserController::class, 'index'])
-    ->name('sysadmin.tenants.billing.users.index');
+    ->name('tenants.billing.users.index');
 
 Route::get('/tenants/{tenant}/billing/users/{user}', [TenantConsoleUserController::class, 'show'])
-    ->name('sysadmin.tenants.billing.users.show');
+    ->name('tenants.billing.users.show');
 
 Route::post('/tenants/{tenant}/billing/users/{user}/verify-email', [TenantConsoleUserController::class, 'verifyEmail'])
-    ->name('sysadmin.tenants.billing.users.verify_email');
+    ->name('tenants.billing.users.verify_email');
 
 Route::post('/tenants/{tenant}/billing/users/{user}/unverify-email', [TenantConsoleUserController::class, 'unverifyEmail'])
-    ->name('sysadmin.tenants.billing.users.unverify_email');
+    ->name('tenants.billing.users.unverify_email');
 
 Route::post('/tenants/{tenant}/billing/users/{user}/set-password', [TenantConsoleUserController::class, 'setPassword'])
-    ->name('sysadmin.tenants.billing.users.set_password');
+    ->name('tenants.billing.users.set_password');
 
 Route::post('/tenants/{tenant}/billing/users/{user}/send-reset-link', [TenantConsoleUserController::class, 'sendResetLink'])
-    ->name('sysadmin.tenants.billing.users.send_reset_link');
+    ->name('tenants.billing.users.send_reset_link');
 
 Route::post('/tenants/{tenant}/billing/users/{user}/revoke-tokens', [TenantConsoleUserController::class, 'revokeTokens'])
-    ->name('sysadmin.tenants.billing.users.revoke_tokens');
+    ->name('tenants.billing.users.revoke_tokens');
 
 
 // =====================================================
@@ -785,56 +797,56 @@ Route::post('/tenants/{tenant}/billing/users/{user}/revoke-tokens', [TenantConso
 // =====================================================
 
 Route::get('/billing-plans', [BillingPlanController::class, 'index'])
-    ->name('sysadmin.billing-plans.index');
+    ->name('billing-plans.index');
 
 Route::get('/billing-plans/create', [BillingPlanController::class, 'create'])
-    ->name('sysadmin.billing-plans.create');
+    ->name('billing-plans.create');
 
 Route::post('/billing-plans', [BillingPlanController::class, 'store'])
-    ->name('sysadmin.billing-plans.store');
+    ->name('billing-plans.store');
 
 Route::get('/billing-plans/{billing_plan}/edit', [BillingPlanController::class, 'edit'])
-    ->name('sysadmin.billing-plans.edit');
+    ->name('billing-plans.edit');
 
 Route::put('/billing-plans/{billing_plan}', [BillingPlanController::class, 'update'])
-    ->name('sysadmin.billing-plans.update');
+    ->name('billing-plans.update');
 
 Route::delete('/billing-plans/{billing_plan}', [BillingPlanController::class, 'destroy'])
-    ->name('sysadmin.billing-plans.destroy');
+    ->name('billing-plans.destroy');
 
 
 
 //tenant  topup
 Route::get('/topups/transfer', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'index'])
-  ->name('sysadmin.topups.transfer.index');
+  ->name('topups.transfer.index');
 
 Route::get('/topups/transfer/{topup}', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'show'])
-  ->name('sysadmin.topups.transfer.show');
+  ->name('topups.transfer.show');
 
 Route::post('/topups/transfer/{topup}/approve', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'approve'])
-  ->name('sysadmin.topups.transfer.approve');
+  ->name('topups.transfer.approve');
 
 Route::post('/topups/transfer/{topup}/reject', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'reject'])
-  ->name('sysadmin.topups.transfer.reject');
+  ->name('topups.transfer.reject');
 
 //partner topup  
 
   Route::get('/topups/partner-transfer', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'index'])
-  ->name('sysadmin.topups.partner_transfer.index');
+  ->name('topups.partner_transfer.index');
 
 Route::get('/topups/partner-transfer/{topup}', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'show'])
-  ->name('sysadmin.topups.partner_transfer.show');
+  ->name('topups.partner_transfer.show');
 
 Route::post('/topups/partner-transfer/{topup}/approve', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'approve'])
-  ->name('sysadmin.topups.partner_transfer.approve');
+  ->name('topups.partner_transfer.approve');
 
 Route::post('/topups/partner-transfer/{topup}/reject', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'reject'])
-  ->name('sysadmin.topups.partner_transfer.reject');
+  ->name('topups.partner_transfer.reject');
 
 Route::prefix('tenants/{tenant}')->group(function () {
 
    Route::get('partners/{partner}/billing', [TenantPartnerBillingController::class, 'show'])
-          ->name('sysadmin.partners.billing.show');
+          ->name('partners.billing.show');
  });
 
 Route::post('partners/{partner}/topups/manual', [PartnerManualTopupController::class, 'store'])
@@ -848,7 +860,8 @@ Route::post('partners/{partner}/topups/manual', [PartnerManualTopupController::c
             Route::get('{topup}',  [PartnerManualTopupController::class, 'show'])->name('show');
         });
  
-
+ Route::get('/app-config',  [AppRemoteConfigController::class, 'index'])->name('app_config.index');
+    Route::post('/app-config', [AppRemoteConfigController::class, 'update'])->name('app_config.update');
 // =====================================================
 // Shifts (control manual total)
 // =====================================================
@@ -856,11 +869,11 @@ Route::post('partners/{partner}/topups/manual', [PartnerManualTopupController::c
 
 
 Route::post('/tenants/{tenant}/billing/vehicles/{vehicle}/toggle-active', [TenantConsoleVehicleController::class, 'toggleActive'])
-    ->name('sysadmin.tenants.billing.vehicles.toggle_active');
+    ->name('tenants.billing.vehicles.toggle_active');
 });
 
 
-
+ });
 
 
 // =====================================================

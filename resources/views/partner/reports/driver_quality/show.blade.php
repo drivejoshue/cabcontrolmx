@@ -58,10 +58,7 @@
         <a class="btn btn-outline-secondary" href="{{ route('partner.reports.driver_quality.index', request()->query()) }}">
           <i class="ti ti-arrow-left me-1"></i> Volver
         </a>
-        <a class="btn btn-outline-secondary"
-           href="{{ route('partner.reports.driver_quality.export', request()->query() + ['type' => 'both']) }}">
-          <i class="ti ti-download me-1"></i> Exportar CSV
-        </a>
+      
       </div>
     </div>
   </div>

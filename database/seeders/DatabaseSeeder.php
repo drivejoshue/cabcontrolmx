@@ -12,6 +12,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             BillingPlanSeeder::class,
              ProviderProfileSeeder::class,
+             \Database\Seeders\AppRemoteConfigSeeder::class,
         ]);
     }
 }

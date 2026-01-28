@@ -44,14 +44,6 @@
         <input type="date" class="form-control" name="to" value="{{ request('to') }}">
       </div>
 
-      <div class="col-md-2">
-        <label class="form-label">Campo fecha</label>
-        <select class="form-select" name="date_field">
-          @foreach($dateFieldOptions as $k => $lbl)
-            <option value="{{ $k }}" @selected(request('date_field','requested_at')===$k)>{{ $lbl }}</option>
-          @endforeach
-        </select>
-      </div>
 
       <div class="col-md-2">
         <label class="form-label">Activo</label>

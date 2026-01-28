@@ -11,7 +11,11 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Middleware\HandleCors;
 use Illuminate\Session\TokenMismatchException;
 
-return Application::configure(basePath: dirname(__DIR__))
+use Illuminate\Cache\RateLimiting\Limit;
+
+use Illuminate\Support\Facades\RateLimiter;
+
+$app = Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
         commands: __DIR__.'/../routes/console.php',
@@ -25,20 +29,19 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->append(HandleCors::class);
 
         $middleware->alias([
-            'admin'           => EnsureUserIsAdmin::class,
-            'sysadmin'        => EnsureUserIsSysAdmin::class,
-            'tenant.onboarded'=> EnsureTenantOnboarded::class,
-            'tenant.ready' => \App\Http\Middleware\EnsureTenantReady::class,
+            'admin'                 => EnsureUserIsAdmin::class,
+            'sysadmin'              => EnsureUserIsSysAdmin::class,
+            'tenant.onboarded'      => EnsureTenantOnboarded::class,
+            'tenant.ready'          => \App\Http\Middleware\EnsureTenantReady::class,
             'tenant.billing_ok_api' => \App\Http\Middleware\TenantBillingOkApi::class,
-            'dispatch'  => \App\Http\Middleware\EnsureUserCanDispatch::class,
-            'tenant.balance' => \App\Http\Middleware\EnsureTenantSufficientBalance::class,
-            'staff' => \App\Http\Middleware\EnsureStaff::class,
-            'public.key' => \App\Http\Middleware\PublicApiKeyMiddleware::class,
-            'orbana.core' => \App\Http\Middleware\OrbanaCoreOnly::class,
-            'partner.ctx' => \App\Http\Middleware\EnsurePartnerContext::class,
-            'partner.billing.gate' => \App\Http\Middleware\PartnerBillingGate::class,
-
-
+            'dispatch'              => \App\Http\Middleware\EnsureUserCanDispatch::class,
+            'tenant.balance'        => \App\Http\Middleware\EnsureTenantSufficientBalance::class,
+            'staff'                 => \App\Http\Middleware\EnsureStaff::class,
+            'public.key'            => \App\Http\Middleware\PublicApiKeyMiddleware::class,
+            'orbana.core'           => \App\Http\Middleware\OrbanaCoreOnly::class,
+            'partner.ctx'           => \App\Http\Middleware\EnsurePartnerContext::class,
+            'partner.billing.gate'  => PartnerBillingGate::class,
+            'sysadmin.stepup'       => \App\Http\Middleware\EnsureSysAdminStepUp::class,
         ]);
     })
     ->withProviders([
@@ -50,7 +53,6 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $exceptions->render(function (TokenMismatchException $e, $request) {
 
-            // Para fetch/AJAX y APIs: responde JSON 419 en vez de HTML "Page Expired"
             if ($request->expectsJson()) {
                 return response()->json([
                     'ok'  => false,
@@ -58,13 +60,10 @@ return Application::configure(basePath: dirname(__DIR__))
                 ], 419);
             }
 
-            // Web: limpia sesión y manda a login (evita quedarse atorado)
             try {
                 $request->session()->invalidate();
                 $request->session()->regenerateToken();
-            } catch (\Throwable $t) {
-                // si ya no hay sesión activa, ignorar
-            }
+            } catch (\Throwable $t) {}
 
             if (\Illuminate\Support\Facades\Route::has('login')) {
                 return redirect()->route('login')
@@ -77,3 +76,14 @@ return Application::configure(basePath: dirname(__DIR__))
 
     })
     ->create();
+
+// ✅ registra el limiter DESPUÉS de crear la app
+$app->booted(function () {
+    RateLimiter::for('sysadmin-stepup', function ($request) {
+        $u = $request->user();
+        $key = 'sysadmin-stepup|'.($u?->id ?? 'guest').'|'.$request->ip();
+        return Limit::perMinute(5)->by($key);
+    });
+});
+
+return $app;

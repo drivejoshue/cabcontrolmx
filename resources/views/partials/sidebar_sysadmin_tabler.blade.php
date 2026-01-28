@@ -183,7 +183,18 @@ $isActive = function ($patterns): bool {
     <span class="nav-link-title">Lugares sugeridos</span>
   </a>
 </li>
-       
+       <li class="nav-item">
+  <a class="nav-link {{ request()->routeIs('sysadmin.app_config.*') ? 'active' : '' }}"
+     href="{{ route('sysadmin.app_config.index') }}">
+    <span class="nav-link-icon d-md-none d-lg-inline-block">
+      <i class="ti ti-settings"></i>
+    </span>
+    <span class="nav-link-title">
+      App Config
+    </span>
+  </a>
+</li>
+
       </ul>
     </div>
   </div>

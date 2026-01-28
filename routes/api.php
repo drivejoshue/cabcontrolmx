@@ -123,6 +123,7 @@ Route::middleware('throttle:public-contact')->group(function () {
 });
 
 
+Route::get('/public/app-config', [\App\Http\Controllers\Api\PublicAppConfigController::class, 'show']);
 
 
 Route::prefix('passenger')->group(function () {

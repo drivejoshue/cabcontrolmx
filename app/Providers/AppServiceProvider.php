@@ -16,11 +16,19 @@ use App\Services\TenantBillingService;
 use App\Services\TenantWalletService;
 use App\Models\Tenant;
 
+
 class AppServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
         Paginator::useBootstrapFive();
+
+        RateLimiter::for('sysadmin-stepup', function (Request $request) {
+                $u = $request->user();
+                return Limit::perMinute(5)
+                    ->by('sysadmin-stepup|'.($u?->id ?? 'guest').'|'.$request->ip());
+            });
+
 
         RateLimiter::for('signup', function (Request $request) {
             $email = (string) $request->input('owner_email', '');

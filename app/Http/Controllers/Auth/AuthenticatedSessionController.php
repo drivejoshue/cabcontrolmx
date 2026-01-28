@@ -81,6 +81,15 @@ class AuthenticatedSessionController extends Controller
             $request->session()->forget('partner_id');
         }
 
+        $request->session()->forget(['sysadmin_mfa_ok_at', 'sysadmin_mfa_ok_level']);
+
+        // Opcional: si es sysadmin, forzar que lo primero sea stepup (si su home cae en /sysadmin)
+        if ($isSysadmin) {
+            // si quieres obligarlo SIEMPRE:
+             return redirect()->route('sysadmin.stepup.show');
+        }
+
+
         // ✅ Redirect único y consistente (NO uses route('dashboard') fijo)
         return redirect()->intended($u->preferredWebHomePath());
     }

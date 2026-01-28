@@ -50,6 +50,10 @@ class User extends Authenticatable implements MustVerifyEmail
             'tenant_id'          => 'integer',
             'default_partner_id' => 'integer',
 
+            'sysadmin_totp_secret' => 'encrypted',
+    'sysadmin_totp_enabled_at' => 'datetime',
+    'sysadmin_totp_confirmed_at' => 'datetime',
+
             // Tu columna role (string) casteada a enum
             'role'               => \App\Enums\UserRole::class,
         ];
