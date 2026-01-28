@@ -481,7 +481,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    @forelse($assignments ?? [] as $a)
+                    @forelse($assignmentHistory  ?? [] as $a)
                       <tr>
                         <td>
                           <a class="text-decoration-none" href="{{ route('partner.drivers.show',$a->driver_id) }}">

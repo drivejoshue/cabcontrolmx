@@ -178,14 +178,58 @@ class PartnerVehicleController extends BasePartnerController
             ->with('ok','Vehículo creado (borrador). Siguiente paso: subir documentos.');
     }
 
-    public function show(int $id)
-    {
-        $tenantId  = $this->tenantId();
-        $partnerId = $this->partnerId();
-        $v = $this->findVehicleOr404($tenantId, $partnerId, $id);
+ public function show(int $id)
+{
+    $tenantId  = $this->tenantId();
+    $partnerId = $this->partnerId();
 
-        return view('partner.vehicles.show', compact('v'));
-    }
+    $v = $this->findVehicleOr404($tenantId, $partnerId, $id);
+
+    // Vigentes (end_at NULL)
+    $currentDrivers = DB::table('driver_vehicle_assignments as a')
+        ->join('drivers as d', function ($j) use ($tenantId) {
+            $j->on('d.id', '=', 'a.driver_id')
+              ->where('d.tenant_id', '=', $tenantId);
+        })
+        ->where('a.tenant_id', $tenantId)
+        ->where('a.vehicle_id', (int)$v->id)
+        ->whereNull('a.end_at')
+        ->orderByDesc('a.start_at')
+        ->select([
+            'a.id as assignment_id',
+            'a.driver_id',
+            'a.start_at',
+            'd.name',
+            'd.phone',
+            'd.foto_path',
+        ])
+        ->get();
+
+    // Histórico (end_at NOT NULL)
+    $assignmentHistory = DB::table('driver_vehicle_assignments as a')
+        ->join('drivers as d', function ($j) use ($tenantId) {
+            $j->on('d.id', '=', 'a.driver_id')
+              ->where('d.tenant_id', '=', $tenantId);
+        })
+        ->where('a.tenant_id', $tenantId)
+        ->where('a.vehicle_id', (int)$v->id)
+        ->orderByDesc(DB::raw('COALESCE(a.end_at, a.start_at)'))
+        ->select([
+            'a.id as assignment_id',
+            'a.driver_id',
+            'a.start_at',
+            'a.end_at',
+            'd.name',
+            'd.phone',
+            'd.foto_path',
+        ])
+        ->limit(200)
+        ->get();
+
+    return view('partner.vehicles.show', compact('v','currentDrivers','assignmentHistory'));
+}
+
+
 
     public function edit(int $id)
     {
@@ -310,25 +354,7 @@ class PartnerVehicleController extends BasePartnerController
                     return back()->with('ok','El vehículo ya está activo.');
                 }
 
-                // // ✅ (Recomendado) exigir verificación
-                // if (($v->verification_status ?? 'pending') !== 'verified') {
-                //     return back()->withErrors([
-                //         'active' => 'No puedes activar: el vehículo aún no está verificado.'
-                //     ]);
-                // }
-
-                // ✅ (Recomendado) exigir que tenga conductor asignado
-                // $hasOpenAssignment = DB::table('driver_vehicle_assignments')
-                //     ->where('tenant_id', $tenantId)
-                //     ->where('vehicle_id', (int)$v->id)
-                //     ->whereNull('end_at')
-                //     ->exists();
-
-                // if (!$hasOpenAssignment) {
-                //     return back()->withErrors([
-                //         'active' => 'No puedes activar: primero asigna un conductor.'
-                //     ]);
-                // }
+              
 
                 // ✅ Gate + saldo SOLO aquí (activar = iniciar cobro)
                 $tenant = \App\Models\Tenant::with('billingProfile')->findOrFail($tenantId);
@@ -362,14 +388,7 @@ class PartnerVehicleController extends BasePartnerController
                         'updated_at' => $activatedAt,
                     ]);
 
-                // Billing event: único punto canónico
-                PartnerBillingUIService::onVehicleActivated(
-                    tenantId: $tenantId,
-                    partnerId: $partnerId,
-                    vehicleId: (int)$id,
-                    activatedAt: $activatedAt,
-                    actorUserId: auth()->id()
-                );
+               
 
                 return back()->with('ok','Vehículo activado. A partir de hoy cuenta para cobro.');
             });
@@ -378,66 +397,5 @@ class PartnerVehicleController extends BasePartnerController
         }
     }
 
-    public function assignDriver(Request $r, int $id)
-    {
-        $tenantId  = $this->tenantId();
-        $partnerId = $this->partnerId();
-
-        $data = $r->validate([
-            'driver_id'       => ['required','integer'],
-            'start_at'        => ['nullable','date'],
-            'note'            => ['nullable','string','max:255'],
-            'close_conflicts' => ['nullable','boolean'],
-        ]);
-
-        $vehicle = $this->findVehicleOr404($tenantId, $partnerId, $id);
-
-        $driver = DB::table('drivers')
-            ->where('tenant_id', $tenantId)
-            ->where('partner_id', $partnerId)
-            ->where('id', (int)$data['driver_id'])
-            ->first();
-
-        if (!$driver) {
-            return back()->withErrors(['driver_id' => 'Conductor inválido o no pertenece a tu cuenta.'])->withInput();
-        }
-
-        $startAt = $data['start_at'] ?? now();
-
-        DB::beginTransaction();
-        try {
-            if (!empty($data['close_conflicts'])) {
-                DB::table('driver_vehicle_assignments')
-                    ->where('tenant_id', $tenantId)
-                    ->where('driver_id', $driver->id)
-                    ->whereNull('end_at')
-                    ->update(['end_at' => $startAt, 'updated_at' => now()]);
-
-                DB::table('driver_vehicle_assignments')
-                    ->where('tenant_id', $tenantId)
-                    ->where('vehicle_id', $vehicle->id)
-                    ->whereNull('end_at')
-                    ->update(['end_at' => $startAt, 'updated_at' => now()]);
-            }
-
-            DB::table('driver_vehicle_assignments')->insert([
-                'tenant_id'  => $tenantId,
-                'driver_id'  => $driver->id,
-                'vehicle_id' => $vehicle->id,
-                'start_at'   => $startAt,
-                'end_at'     => null,
-                'note'       => $data['note'] ?? null,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-
-            DB::commit();
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            return back()->withErrors(['assign' => 'No se pudo asignar: ' . $e->getMessage()])->withInput();
-        }
-
-        return redirect()->route('partner.vehicles.show', ['id' => $vehicle->id])
-            ->with('ok', 'Chofer asignado (no activa cobro).');
-    }
+   
 }

@@ -497,37 +497,38 @@ class PartnerDriverController extends BasePartnerController
             return back()->withErrors(['vehicle_id' => 'Vehículo inválido o no pertenece a tu cuenta.'])->withInput();
         }
 
-        $startAt = $data['start_at'] ?? now();
+       $startAt = $data['start_at'] ?? now();
+$close   = $r->boolean('close_conflicts', true);
 
-        DB::beginTransaction();
-        try {
-            if (!empty($data['close_conflicts'])) {
-                DB::table('driver_vehicle_assignments')
-                    ->where('tenant_id', $tenantId)
-                    ->where('driver_id', $id)
-                    ->whereNull('end_at')
-                    ->update(['end_at' => $startAt, 'updated_at' => now()]);
+DB::beginTransaction();
+try {
+    if ($close) {
+        DB::table('driver_vehicle_assignments')
+            ->where('tenant_id', $tenantId)
+            ->where('driver_id', $id)
+            ->whereNull('end_at')
+            ->update(['end_at' => $startAt, 'updated_at' => now()]);
 
-                DB::table('driver_vehicle_assignments')
-                    ->where('tenant_id', $tenantId)
-                    ->where('vehicle_id', $vehicle->id)
-                    ->whereNull('end_at')
-                    ->update(['end_at' => $startAt, 'updated_at' => now()]);
-            }
+        DB::table('driver_vehicle_assignments')
+            ->where('tenant_id', $tenantId)
+            ->where('vehicle_id', $vehicle->id)
+            ->whereNull('end_at')
+            ->update(['end_at' => $startAt, 'updated_at' => now()]);
+    }
 
-            DB::table('driver_vehicle_assignments')->insert([
-                'tenant_id'  => $tenantId,
-                'driver_id'  => $id,
-                'vehicle_id' => $vehicle->id,
-                'start_at'   => $startAt,
-                'end_at'     => null,
-                'note'       => $data['note'] ?? null,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+    DB::table('driver_vehicle_assignments')->insert([
+        'tenant_id'  => $tenantId,
+        'driver_id'  => $id,
+        'vehicle_id' => $vehicle->id,
+        'start_at'   => $startAt,
+        'end_at'     => null,
+        'note'       => $data['note'] ?? null,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
 
-            DB::commit();
-        } catch (\Throwable $e) {
+    DB::commit();
+} catch (\Throwable $e) {
             DB::rollBack();
             return back()->withErrors(['assign' => 'No se pudo asignar: ' . $e->getMessage()])->withInput();
         }
@@ -535,24 +536,30 @@ class PartnerDriverController extends BasePartnerController
         return back()->with('ok', 'Vehículo asignado.');
     }
 
-    public function closeAssignment(int $assignmentId)
-    {
-        $tenantId = $this->tenantId();
+   public function closeAssignment(int $assignmentId)
+{
+    $tenantId  = $this->tenantId();
+    $partnerId = $this->partnerId();
 
-        $a = DB::table('driver_vehicle_assignments')
-            ->where('tenant_id', $tenantId)
-            ->where('id', $assignmentId)
-            ->first();
+    $a = DB::table('driver_vehicle_assignments as a')
+        ->join('vehicles as v', function ($j) use ($tenantId, $partnerId) {
+            $j->on('v.id','=','a.vehicle_id')
+              ->where('v.tenant_id','=',$tenantId)
+              ->where('v.partner_id','=',$partnerId);
+        })
+        ->where('a.tenant_id', $tenantId)
+        ->where('a.id', $assignmentId)
+        ->select('a.*')
+        ->first();
 
-        abort_if(!$a, 404);
+    abort_if(!$a, 404);
 
-        DB::table('driver_vehicle_assignments')
-            ->where('id', $assignmentId)
-            ->update([
-                'end_at'     => now(),
-                'updated_at' => now(),
-            ]);
+    DB::table('driver_vehicle_assignments')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $assignmentId)
+        ->update(['end_at' => now(), 'updated_at' => now()]);
 
-        return back()->with('ok', 'Asignación cerrada.');
-    }
+    return back()->with('ok', 'Asignación cerrada.');
+}
+
 }
