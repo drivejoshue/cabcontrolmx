@@ -10,12 +10,12 @@ use App\Services\PartnerTopupReviewService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use App\Services\Partner\PartnerInboxService;
 
 class PartnerManualTopupController extends Controller
 {
     public function store(Request $r, Partner $partner, PartnerTopupReviewService $review)
     {
-        // tenant_id sale del partner (no lo pedimos en el form)
         $tenantId  = (int) $partner->tenant_id;
         $partnerId = (int) $partner->id;
 
@@ -25,7 +25,7 @@ class PartnerManualTopupController extends Controller
             'amount'   => ['required','numeric','min:1','max:500000'],
             'currency' => ['nullable','string','size:3'],
             'notes'    => ['nullable','string','max:500'],
-            'bank_ref' => ['nullable','string','max:120'], // opcional: folio interno
+            'bank_ref' => ['nullable','string','max:120'],
         ]);
 
         $amount   = round((float)$data['amount'], 2);
@@ -33,7 +33,6 @@ class PartnerManualTopupController extends Controller
         $notes    = $data['notes'] ?? null;
         $bankRef  = $data['bank_ref'] ?? null;
 
-        // Ref autogenerada: única por tenant+partner (uq_partner_topups_partner_extref)
         $externalRef = 'PTM-' . strtoupper(bin2hex(random_bytes(6)));
 
         try {
@@ -44,24 +43,16 @@ class PartnerManualTopupController extends Controller
                 $topup = PartnerTopup::create([
                     'tenant_id'  => $tenantId,
                     'partner_id' => $partnerId,
-
-                    'provider' => 'manual',
-                    'method'   => 'manual',
-
+                    'provider'   => 'manual',
+                    'method'     => 'manual',
                     'provider_account_slot' => null,
-
-                    'amount'   => $amount,
-                    'currency' => $currency,
-
-                    // si quieres guardar una referencia interna
-                    'bank_ref' => $bankRef,
-
-                    'status'        => 'pending_review',
+                    'amount'     => $amount,
+                    'currency'   => $currency,
+                    'bank_ref'   => $bankRef,
+                    'status'     => 'pending_review',
                     'review_status' => null,
                     'review_notes'  => null,
-
                     'external_reference' => $externalRef,
-
                     'meta' => [
                         'source' => 'sysadmin_manual',
                         'created_by' => [
@@ -72,12 +63,30 @@ class PartnerManualTopupController extends Controller
                     ],
                 ]);
 
-                // 2) Acreditar con el MISMO flujo (partner + tenant wallet)
+                // 2) Acreditar con el flujo canónico
                 $review->approveAndCredit(
                     tenantId: $tenantId,
                     topupId: (int)$topup->id,
                     reviewerId: (int)Auth::id(),
                     notes: $notes ?: 'Topup manual (SysAdmin)'
+                );
+
+                // 3) Inbox (SIEMPRE usando datos del topup)
+                PartnerInboxService::notify(
+                    tenantId:  (int)$topup->tenant_id,
+                    partnerId: (int)$topup->partner_id,
+                    type:      'topup_approved',
+                    level:     'success',
+                    title:     'Recarga aprobada',
+                    body:      "Tu recarga manual fue aprobada y acreditada al wallet. Ref: " . ($topup->bank_ref ?: $externalRef),
+                    entityType:'partner_topup',
+                    entityId:  (int)$topup->id,
+                    data: [
+                        'amount' => (float)$topup->amount,
+                        'method' => (string)$topup->method,
+                        'ref'    => (string)($topup->bank_ref ?? ''),
+                        'external_reference' => (string)$topup->external_reference,
+                    ]
                 );
             });
 
