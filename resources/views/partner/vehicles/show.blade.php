@@ -292,13 +292,7 @@
   // Recomendación UI: exigir verificado + chofer asignado antes de permitir activar
   // (aunque el backend debe ser el guardián real)
   $uiBlockReason = null;
-  if ($canActivateByUi) {
-    if ($vs !== 'verified') {
-      $uiBlockReason = 'Para activar se requiere verificación en estado VERIFIED.';
-    } elseif (!$hasCurrentDrivers) {
-      $uiBlockReason = 'Para activar se requiere al menos 1 chofer asignado vigente.';
-    }
-  }
+  
 @endphp
 
 <div class="card mb-3">
@@ -343,22 +337,25 @@
           class="btn btn-success"
           data-bs-toggle="modal"
           data-bs-target="#modalActivateVehicle"
-          {{ $uiBlockReason ? 'disabled' : '' }}
+          
         >
           <i data-feather="check-circle"></i> Activar vehículo
         </button>
 
-        @if($uiBlockReason)
-          <div class="small text-danger mt-1">
-            <i data-feather="alert-triangle"></i>
-            {{ $uiBlockReason }}
-          </div>
-        @else
-          <div class="small text-muted mt-1">
-            <i data-feather="info"></i>
-            Se pedirá confirmación explícita antes de activar.
-          </div>
-        @endif
+       @if($vs !== 'verified')
+  <div class="small text-muted mt-2">
+    <i data-feather="info"></i>
+    Aún no verificado. Puedes activar de todas formas; la verificación se completa después.
+  </div>
+@endif
+
+@if(!$hasCurrentDrivers)
+  <div class="small text-muted mt-1">
+    <i data-feather="info"></i>
+    Aún sin chofer asignado. Puedes activar y asignar después.
+  </div>
+@endif
+
       @else
         <button
           type="button"

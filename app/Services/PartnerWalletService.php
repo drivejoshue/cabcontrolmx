@@ -162,14 +162,23 @@ public static function applyTopup(PartnerTopup $topup, ?int $creditedByUserId = 
             ->exists();
 
         if ($already) {
-            // Si ya existe movimiento, aseguramos que el topup quede marcado credited
+    $pwmId = (int) DB::table('partner_wallet_movements')
+        ->where('tenant_id', (int)$t->tenant_id)
+        ->where('partner_id', (int)$t->partner_id)
+        ->where('external_ref', $ext)
+        ->value('id');
+
             if ($t->status !== 'credited') {
                 $t->status = 'credited';
                 $t->credited_at = $t->credited_at ?? now();
-                $t->save();
             }
+            if (empty($t->apply_wallet_movement_id) && $pwmId > 0) {
+                $t->apply_wallet_movement_id = $pwmId;
+            }
+            $t->save();
             return;
         }
+
 
         $amount = (float)$t->amount;
         if ($amount <= 0) {
@@ -286,4 +295,7 @@ public static function applyTopup(PartnerTopup $topup, ?int $creditedByUserId = 
             ]);
         });
     }
+
+
+    
 }

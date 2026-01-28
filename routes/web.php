@@ -79,7 +79,7 @@ use App\Http\Controllers\SysAdmin\TenantDocumentsReviewController;
 
 use App\Http\Controllers\SysAdmin\TenantPartnerBillingController;
 use App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController;
-
+use App\Http\Controllers\SysAdmin\PartnerManualTopupController;
 // Debug/events
 use App\Events\TestEvent;
 
@@ -804,7 +804,7 @@ Route::delete('/billing-plans/{billing_plan}', [BillingPlanController::class, 'd
 
 
 
-
+//tenant  topup
 Route::get('/topups/transfer', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'index'])
   ->name('sysadmin.topups.transfer.index');
 
@@ -817,6 +817,7 @@ Route::post('/topups/transfer/{topup}/approve', [\App\Http\Controllers\SysAdmin\
 Route::post('/topups/transfer/{topup}/reject', [\App\Http\Controllers\SysAdmin\TransferTopupReviewController::class, 'reject'])
   ->name('sysadmin.topups.transfer.reject');
 
+//partner topup  
 
   Route::get('/topups/partner-transfer', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'index'])
   ->name('sysadmin.topups.partner_transfer.index');
@@ -830,28 +831,23 @@ Route::post('/topups/partner-transfer/{topup}/approve', [\App\Http\Controllers\S
 Route::post('/topups/partner-transfer/{topup}/reject', [\App\Http\Controllers\SysAdmin\PartnerTransferTopupReviewController::class, 'reject'])
   ->name('sysadmin.topups.partner_transfer.reject');
 
-
-
- Route::prefix('tenants/{tenant}')->group(function () {
+Route::prefix('tenants/{tenant}')->group(function () {
 
    Route::get('partners/{partner}/billing', [TenantPartnerBillingController::class, 'show'])
-          ->name('sysadmin.tenants.partners.billing.show');
+          ->name('sysadmin.partners.billing.show');
+ });
 
-    // Route::get('partner-topups', [\App\Http\Controllers\SysAdmin\PartnerTopupReviewController::class, 'index'])
-    //         ->name('sysadmin.tenants.billing.partners._topups_table');
+Route::post('partners/{partner}/topups/manual', [PartnerManualTopupController::class, 'store'])
+    ->name('partners.topups.manual.store');
 
-    // Route::get('partner-topups', [PartnerTopupReviewController::class, 'index'])
-    //         ->name('sysadmin.tenants.partner_topups.index');
+//partner topup manual 
 
-    //   Route::get('partner-topups/{topup}', [\App\Http\Controllers\SysAdmin\PartnerTopupReviewController::class, 'show'])
-    //     ->name('sysadmin.tenants.partner_topups.show');
-
-    //   Route::post('partner-topups/{topup}/approve', [\App\Http\Controllers\SysAdmin\PartnerTopupReviewController::class, 'approve'])
-    //     ->name('sysadmin.tenants.partner_topups.approve');
-
-    //   Route::post('partner-topups/{topup}/reject', [\App\Http\Controllers\SysAdmin\PartnerTopupReviewController::class, 'reject'])
-    //     ->name('sysadmin.tenants.partner_topups.reject');
-    });
+ Route::prefix('topups/manual')->name('topups.manual.')->group(function () {
+            Route::get('create', [PartnerManualTopupController::class, 'create'])->name('create');
+            Route::post('/',       [PartnerManualTopupController::class, 'store'])->name('store');
+            Route::get('{topup}',  [PartnerManualTopupController::class, 'show'])->name('show');
+        });
+ 
 
 // =====================================================
 // Shifts (control manual total)

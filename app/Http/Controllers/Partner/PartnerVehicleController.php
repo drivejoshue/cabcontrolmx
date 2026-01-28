@@ -310,25 +310,25 @@ class PartnerVehicleController extends BasePartnerController
                     return back()->with('ok','El vehículo ya está activo.');
                 }
 
-                // ✅ (Recomendado) exigir verificación
-                if (($v->verification_status ?? 'pending') !== 'verified') {
-                    return back()->withErrors([
-                        'active' => 'No puedes activar: el vehículo aún no está verificado.'
-                    ]);
-                }
+                // // ✅ (Recomendado) exigir verificación
+                // if (($v->verification_status ?? 'pending') !== 'verified') {
+                //     return back()->withErrors([
+                //         'active' => 'No puedes activar: el vehículo aún no está verificado.'
+                //     ]);
+                // }
 
                 // ✅ (Recomendado) exigir que tenga conductor asignado
-                $hasOpenAssignment = DB::table('driver_vehicle_assignments')
-                    ->where('tenant_id', $tenantId)
-                    ->where('vehicle_id', (int)$v->id)
-                    ->whereNull('end_at')
-                    ->exists();
+                // $hasOpenAssignment = DB::table('driver_vehicle_assignments')
+                //     ->where('tenant_id', $tenantId)
+                //     ->where('vehicle_id', (int)$v->id)
+                //     ->whereNull('end_at')
+                //     ->exists();
 
-                if (!$hasOpenAssignment) {
-                    return back()->withErrors([
-                        'active' => 'No puedes activar: primero asigna un conductor.'
-                    ]);
-                }
+                // if (!$hasOpenAssignment) {
+                //     return back()->withErrors([
+                //         'active' => 'No puedes activar: primero asigna un conductor.'
+                //     ]);
+                // }
 
                 // ✅ Gate + saldo SOLO aquí (activar = iniciar cobro)
                 $tenant = \App\Models\Tenant::with('billingProfile')->findOrFail($tenantId);

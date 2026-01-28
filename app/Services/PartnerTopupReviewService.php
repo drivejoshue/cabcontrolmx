@@ -1,6 +1,5 @@
 <?php
 
-
 namespace App\Services;
 
 use App\Models\PartnerTopup;
@@ -19,7 +18,7 @@ class PartnerTopupReviewService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            // Idempotencia
+            // Idempotencia fuerte
             if (($t->status ?? '') === 'credited' || !empty($t->credited_at) || !empty($t->apply_wallet_movement_id)) {
                 return ['ok' => true, 'already' => true, 'status' => $t->status];
             }
@@ -37,63 +36,27 @@ class PartnerTopupReviewService
                 ]);
             }
 
-            $currency = $t->currency ?: 'MXN';
-            $ext = $t->external_reference ?: ('PT-'.$t->id);
-
-            // 1) Creditar wallet del partner (subwallet)
-            // Ajusta si tu PartnerWalletService::credit devuelve ID/modelo.
-            $partnerMov = \App\Services\PartnerWalletService::credit(
-                tenantId: (int)$tenantId,
-                partnerId: (int)$t->partner_id,
-                amount: number_format($amount, 2, '.', ''),
-                currency: $currency,
-                type: 'topup',
-                refType: 'partner_topups',
-                refId: (int)$t->id,
-                externalRef: 'partner_topup:' . $ext,
-                notes: 'Recarga aprobada por SysAdmin',
-                meta: [
-                    'provider' => $t->provider,
-                    'method' => $t->method,
-                    'bank_ref' => $t->bank_ref,
-                ]
-            );
-
-            $partnerMovId = is_object($partnerMov) ? (int)($partnerMov->id ?? 0) : (int)$partnerMov;
-
-            // 2) Creditar tenant wallet (wallet madre) - para que exista settlement real
-            /** @var \App\Services\TenantWalletService $tw */
-            $tw = app(\App\Services\TenantWalletService::class);
-            $tw->ensureWallet($tenantId);
-
-            // Ideal: método específico para auditar origen "partner_topup"
-            $tenantMovId = $tw->creditTopup(
-                tenantId: $tenantId,
-                amount: (float)$amount,
-                refType: 'partner_topups',
-                refId: (int)$t->id,
-                externalRef: 'tenant_credit_from_partner_topup:' . $ext,
-                notes: 'Ingreso por recarga de partner #' . (int)$t->partner_id,
-                currency: $currency
-            );
-
-            $meta = is_array($t->meta) ? $t->meta : (array)($t->meta ? json_decode((string)$t->meta, true) : []);
-            $meta['tenant_wallet_movement_id'] = $tenantMovId;
-            $meta['partner_wallet_movement_id'] = $partnerMovId;
-
-            // Update topup
-            $t->status = 'credited';
+            // ✅ Marcar revisión (approved) ANTES de aplicar, para trazabilidad
+            $t->status        = 'approved';
             $t->review_status = 'approved';
-            $t->review_notes = $notes;
-            $t->reviewed_by = $reviewerId;
-            $t->reviewed_at = now();
-            $t->credited_at = now();
-            $t->paid_at = $t->paid_at ?: now();
-            $t->apply_wallet_movement_id = $partnerMovId ?: null;
-            $t->meta = $meta;
+            $t->review_notes  = $notes;
+            $t->reviewed_by   = $reviewerId;
+            $t->reviewed_at   = now();
             $t->save();
 
-            return ['ok' => true, 'credited' => true, 'tenant_mov' => $tenantMovId, 'partner_mov' => $partnerMovId];
+            // ✅ Aplicar dinero (tenant wallet + partner wallet) y marcar credited
+            // applyTopup ya maneja lock/idempotencia por external_ref y también marca credited.
+            \App\Services\PartnerWalletService::applyTopup($t, $reviewerId);
+
+            // Refrescar
+            $t->refresh();
+
+            return [
+                'ok' => true,
+                'credited' => (($t->status ?? '') === 'credited'),
+                'partner_mov' => (int)($t->apply_wallet_movement_id ?? 0),
+                'status' => $t->status,
+            ];
         });
     }
 
@@ -116,14 +79,17 @@ class PartnerTopupReviewService
                 return ['ok' => true, 'already' => true, 'status' => 'rejected'];
             }
 
-            $t->status = 'rejected';
+            $t->status        = 'rejected';
             $t->review_status = 'rejected';
-            $t->review_notes = $notes;
-            $t->reviewed_by = $reviewerId;
-            $t->reviewed_at = now();
+            $t->review_notes  = $notes;
+            $t->reviewed_by   = $reviewerId;
+            $t->reviewed_at   = now();
             $t->save();
 
             return ['ok' => true, 'rejected' => true];
         });
     }
+
+
+
 }

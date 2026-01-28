@@ -881,13 +881,15 @@
               @php $st = strtolower((string)($p->status ?? 'active')); @endphp
               <span class="badge bg-{{ $st==='active' ? 'success' : 'secondary' }}">{{ strtoupper($st) }}</span>
             </td>
-            <td class="text-end">
-              <a class="btn btn-outline-primary btn-xs"
-             href="{{ route('sysadmin.tenants.partners.billing.show', ['tenant' => $tenant->id, 'partner' => $p->id]) }}"
+           <td class="text-end">
+  <div class="d-inline-flex gap-1">
+    <a class="btn btn-outline-primary btn-xs"
+       href="{{ route('sysadmin.partners.billing.show', ['tenant' => $tenant->id, 'partner' => $p->id]) }}">
+      Ver billing
+    </a>
+  </div>
+</td>
 
-                Ver billing
-              </a>
-            </td>
           </tr>
         @empty
           <tr><td colspan="6" class="text-muted">Sin partners.</td></tr>

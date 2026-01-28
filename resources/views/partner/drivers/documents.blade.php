@@ -81,7 +81,7 @@
       @if(!$requiredOk)
         <div class="alert alert-info mt-3 mb-0">
           Sube los documentos requeridos. Cuando estén completos y correctos,
-          Pasaran por un proso de validacion y verificacion de identidad para seguridad de los usuarios.
+          Pasaran por un proceso de validacion y verificacion de identidad para seguridad de los usuarios.
         </div>
       @else
         <div class="alert alert-success mt-3 mb-0">

@@ -8,6 +8,8 @@ use App\Models\Partner;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Services\PartnerWalletService;
+use Illuminate\Support\Facades\Auth;
+
 
 class TenantPartnerBillingController extends Controller
 {
@@ -35,7 +37,7 @@ class TenantPartnerBillingController extends Controller
             ->limit(50)
             ->get();
 
-        return view('sysadmin.tenants.billing.partners.show', [
+        return view('sysadmin.partners.show', [
             'tenant'    => $tenant,
             'partner'   => $partner,
             'wallet'    => $wallet,
@@ -43,4 +45,9 @@ class TenantPartnerBillingController extends Controller
             'topups'    => $topups,
         ]);
     }
+
+
+
+
+
 }

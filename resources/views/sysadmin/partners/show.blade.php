@@ -3,6 +3,8 @@
 @section('title', 'Partner · Billing · '.$partner->name.' · Tenant #'.$tenant->id)
 
 @section('content')
+
+
 <div class="container-fluid">
 
   <div class="d-flex justify-content-between align-items-center mb-3">
@@ -32,10 +34,55 @@
           <div class="text-muted small">updated: {{ $wallet->updated_at ?? '—' }}</div>
 
           <hr>
-          <div class="small text-muted">
-            Nota: el bloqueo por saldo aplica al tenant/partner según tu lógica,
-            la validación manual (3 avisos) es operativa, no automática.
-          </div>
+
+          {{-- ✅ Topup manual (SysAdmin) --}}
+<div class="mt-3">
+  <div class="small text-muted mb-2">
+    <strong>Topup manual</strong> · crea un registro y acredita saldo inmediatamente
+  </div>
+
+  <form method="POST"
+        action="{{ route('partners.topups.manual.store', $partner) }}"
+        onsubmit="return confirm('¿Crear y acreditar este topup manual?');">
+    @csrf
+
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-4">
+        <label class="form-label small">Monto (MXN)</label>
+        <input type="number" step="0.01" min="1" name="amount"
+               class="form-control form-control-sm"
+               value="{{ old('amount') }}" required>
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label small">Folio/Ref (opcional)</label>
+        <input type="text" name="bank_ref"
+               class="form-control form-control-sm"
+               value="{{ old('bank_ref') }}"
+               placeholder="Ej: AJUSTE-ENE-01">
+      </div>
+
+      <div class="col-12 col-md-4">
+        <label class="form-label small">Notas (opcional)</label>
+        <input type="text" name="notes"
+               class="form-control form-control-sm"
+               value="{{ old('notes') }}"
+               placeholder="Motivo / auditoría">
+      </div>
+
+      <input type="hidden" name="currency" value="MXN">
+
+      <div class="col-12 d-flex gap-2 mt-2">
+        <button class="btn btn-primary btn-sm">Abonar saldo</button>
+        <span class="text-muted small align-self-center">
+          Se registrará como <code>provider=manual</code> y quedará <code>credited</code>.
+        </span>
+      </div>
+    </div>
+  </form>
+</div>
+
+          
         </div>
       </div>
     </div>
