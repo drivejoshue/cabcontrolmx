@@ -20,6 +20,31 @@
             return (string)$v;
         }
     };
+      $forecastLabels = [
+    'balance_now' => 'Saldo actual',
+    'vehicles_today' => 'Vehículos hoy',
+    'today' => 'Fecha',
+    'daily_rate_this_month' => 'Tarifa diaria (mes actual)',
+    'daily_cost_est' => 'Costo diario estimado',
+    'days_left_in_month' => 'Días restantes del mes',
+    'remaining_cost_est' => 'Costo restante estimado (mes)',
+    'end_month_balance_est' => 'Saldo estimado fin de mes',
+    'next_month_start' => 'Inicio del siguiente mes',
+    'days_next_month' => 'Días del siguiente mes',
+    'daily_rate_next_month' => 'Tarifa diaria (siguiente mes)',
+    'next_month_cost_est' => 'Costo estimado (siguiente mes)',
+    'recommended_topup_for_next_month' => 'Recarga recomendada (siguiente mes)',
+    'currency' => 'Moneda',
+  ];
+
+  $formatAsMoney = [
+    'balance_now',
+    'daily_cost_est',
+    'remaining_cost_est',
+    'end_month_balance_est',
+    'next_month_cost_est',
+    'recommended_topup_for_next_month',
+  ];
 @endphp
 
 <div class="d-flex align-items-start justify-content-between mb-3">
@@ -203,7 +228,12 @@
                   @foreach($forecast as $k => $v)
                     <div class="col-6 col-xl-4">
                       <div class="bg-body-tertiary border rounded p-2 h-100">
-                        <div class="text-muted small">{{ \Illuminate\Support\Str::headline((string)$k) }}</div>
+                      @php
+  $label = $forecastLabels[$k] ?? \Illuminate\Support\Str::headline((string)$k);
+  $isMoney = in_array($k, $formatAsMoney, true);
+@endphp
+
+<div class="text-muted small">{{ $label }}</div>
                         <div class="fw-semibold" id="forecast-{{ \Illuminate\Support\Str::slug((string)$k) }}">
                           @if(is_numeric($v))
                             {{ $money($v) }}

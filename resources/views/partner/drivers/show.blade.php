@@ -83,26 +83,28 @@
       </div>
     </div>
 
-    <div class="d-flex gap-2">
-      <a href="{{ route('partner.drivers.documents.index',['id'=>$driver->id]) }}" class="btn btn-outline-primary">
-        <i data-feather="file-text"></i> Documentos y verificación
-      </a>
-      <a href="{{ route('partner.drivers.edit',$driver->id) }}" class="btn btn-primary">
-        <i data-feather="edit-2"></i> Editar
-      </a>
-      <a href="{{ route('partner.drivers.index') }}" class="btn btn-outline-secondary">
-        <i data-feather="arrow-left"></i> Volver
-      </a>
+   <div class="d-flex gap-2">
+  <a href="{{ route('partner.drivers.documents.index',['id'=>$driver->id]) }}" class="btn btn-outline-primary">
+    <i data-feather="file-text"></i> Documentos y verificación
+  </a>
+  <a href="{{ route('partner.drivers.edit',$driver->id) }}" class="btn btn-primary">
+    <i data-feather="edit-2"></i> Editar
+  </a>
+  <a href="{{ route('partner.drivers.index') }}" class="btn btn-outline-secondary">
+    <i data-feather="arrow-left"></i> Volver
+  </a>
 
-      <form method="post"
-            action="{{ route('partner.drivers.destroy',$driver->id) }}"
-            onsubmit="return confirm('¿Desactivar conductor? Se bloqueará el acceso a la app.');">
-        @csrf @method('DELETE')
-        <button class="btn btn-outline-danger">
-          <i data-feather="trash-2"></i> Desactivar
-        </button>
-      </form>
-    </div>
+  {{-- Botón que abre modal --}}
+  <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deactivateDriverModal">
+    <i data-feather="trash-2"></i> Desactivar
+  </button>
+
+  {{-- Form real (submit desde el modal) --}}
+  <form id="deactivateDriverForm" method="post" action="{{ route('partner.drivers.destroy',$driver->id) }}">
+    @csrf @method('DELETE')
+  </form>
+</div>
+
   </div>
 
   @if(session('ok'))
@@ -501,13 +503,7 @@
           <div class="text-muted small mt-1">Si lo dejas vacío, se usa la fecha/hora actual.</div>
         </div>
 
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" id="chkCloseConf" name="close_conflicts" value="1" checked>
-          <label class="form-check-label" for="chkCloseConf">Cerrar asignaciones vigentes en conflicto</label>
-          <div class="text-muted small mt-1">
-            Recomendado para evitar que el mismo vehículo o conductor quede asignado en dos lugares a la vez.
-          </div>
-        </div>
+        
 
         <div class="mt-2">
           <label class="form-label">Nota (opcional)</label>
@@ -579,6 +575,35 @@
     </div>
   </div>
 @endif
+<div class="modal fade" id="deactivateDriverModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Desactivar conductor</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+
+      <div class="modal-body">
+        <p class="mb-2">
+          ¿Confirmas desactivar a <strong>{{ $driver->name }}</strong>?
+        </p>
+        <div class="text-muted small">
+          Se bloqueará el acceso a la app. Puedes reactivarlo después.
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+          Cancelar
+        </button>
+
+        <button type="button" class="btn btn-danger" id="btnConfirmDeactivate">
+          Sí, desactivar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 
 @endsection
 
@@ -611,5 +636,17 @@
     const m = bootstrap.Modal.getOrCreateInstance(el);
     m.show();
   }
+</script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const btn = document.getElementById('btnConfirmDeactivate');
+  const form = document.getElementById('deactivateDriverForm');
+  if (!btn || !form) return;
+
+  btn.addEventListener('click', function () {
+    form.submit();
+  });
+});
 </script>
 @endpush

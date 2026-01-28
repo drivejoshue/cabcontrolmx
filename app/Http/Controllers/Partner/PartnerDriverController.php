@@ -498,34 +498,34 @@ class PartnerDriverController extends BasePartnerController
         }
 
        $startAt = $data['start_at'] ?? now();
-$close   = $r->boolean('close_conflicts', true);
+        $close   = $r->boolean('close_conflicts', true);
 
-DB::beginTransaction();
-try {
-    if ($close) {
-        DB::table('driver_vehicle_assignments')
-            ->where('tenant_id', $tenantId)
-            ->where('driver_id', $id)
-            ->whereNull('end_at')
-            ->update(['end_at' => $startAt, 'updated_at' => now()]);
+        DB::beginTransaction();
+        try {
+            if ($close) {
+                DB::table('driver_vehicle_assignments')
+                    ->where('tenant_id', $tenantId)
+                    ->where('driver_id', $id)
+                    ->whereNull('end_at')
+                    ->update(['end_at' => $startAt, 'updated_at' => now()]);
 
-        DB::table('driver_vehicle_assignments')
-            ->where('tenant_id', $tenantId)
-            ->where('vehicle_id', $vehicle->id)
-            ->whereNull('end_at')
-            ->update(['end_at' => $startAt, 'updated_at' => now()]);
-    }
+                DB::table('driver_vehicle_assignments')
+                    ->where('tenant_id', $tenantId)
+                    ->where('vehicle_id', $vehicle->id)
+                    ->whereNull('end_at')
+                    ->update(['end_at' => $startAt, 'updated_at' => now()]);
+            }
 
-    DB::table('driver_vehicle_assignments')->insert([
-        'tenant_id'  => $tenantId,
-        'driver_id'  => $id,
-        'vehicle_id' => $vehicle->id,
-        'start_at'   => $startAt,
-        'end_at'     => null,
-        'note'       => $data['note'] ?? null,
-        'created_at' => now(),
-        'updated_at' => now(),
-    ]);
+            DB::table('driver_vehicle_assignments')->insert([
+                'tenant_id'  => $tenantId,
+                'driver_id'  => $id,
+                'vehicle_id' => $vehicle->id,
+                'start_at'   => $startAt,
+                'end_at'     => null,
+                'note'       => $data['note'] ?? null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
 
     DB::commit();
 } catch (\Throwable $e) {
