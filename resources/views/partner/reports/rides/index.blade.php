@@ -24,9 +24,12 @@
   </div>
 
   <div class="d-flex gap-2">
-    <a class="btn btn-outline-secondary" href="{{ route('partner.reports.rides.exportCsv', request()->query()) }}">
-      <i class="ti ti-download me-1"></i> Exportar CSV
-    </a>
+   <a class="btn btn-outline-primary"
+   href="{{ route('partner.reports.rides.exportPdf', request()->query()) }}">
+    <i class="ti ti-file-type-pdf"></i>
+    Exportar PDF
+</a>
+
   </div>
 </div>
 

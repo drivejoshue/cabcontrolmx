@@ -104,10 +104,10 @@
             </div>
           </a>
           <div class="dropdown-menu dropdown-menu-end dropdown-menu-arrow">
-            <span class="dropdown-item-text text-muted small">Opciones (próximamente)</span>
+            <span class="dropdown-item-text text-muted small">Opciones</span>
             <div class="dropdown-divider"></div>
             <a class="dropdown-item disabled" href="javascript:void(0)">Mi perfil</a>
-            <a class="dropdown-item disabled" href="javascript:void(0)">Documentos</a>
+            
           </div>
         </div>
 

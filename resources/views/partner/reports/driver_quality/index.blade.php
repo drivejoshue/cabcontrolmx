@@ -15,10 +15,11 @@
       </div>
 
       <div class="col-auto ms-auto d-flex gap-2">
-        <a class="btn btn-outline-secondary"
-           href="{{ route('partner.reports.driver_quality.export', request()->query() + ['type' => 'both']) }}">
-          <i class="ti ti-download me-1"></i> Exportar CSV
-        </a>
+       <a class="btn btn-outline-primary"
+   href="{{ route('partner.reports.driver_quality.exportPdf', request()->query()) }}">
+  Exportar PDF
+</a>
+
       </div>
     </div>
   </div>

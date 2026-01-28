@@ -24,8 +24,8 @@
 
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary"
-       href="{{ route('partner.reports.vehicles.exportCsv', $qs) }}">
-      <i class="ti ti-download me-1"></i> Export CSV
+       href="{{ route('partner.reports.vehicles.exportPdf', $qs) }}">
+      <i class="ti ti-download me-1"></i> Export Pdf
     </a>
   </div>
 </div>

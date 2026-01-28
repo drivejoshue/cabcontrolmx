@@ -955,18 +955,28 @@ Route::middleware(['web', 'auth', 'verified', 'partner.ctx', 'partner.billing.ga
 
       // Rides
       Route::get('/rides', [PartnerRidesReportController::class, 'index'])->name('rides.index');
-      Route::get('/rides/export-csv', [PartnerRidesReportController::class, 'exportCsv'])->name('rides.exportCsv');
+    Route::get('/rides/export-pdf', [PartnerRidesReportController::class, 'exportPdf'])
+    ->name('rides.exportPdf');
+
+
       Route::get('/rides/{ride}', [PartnerRidesReportController::class, 'show'])
         ->whereNumber('ride')->name('rides.show');
 
       // Driver Quality
       Route::get('/driver-quality', [PartnerDriverQualityReportController::class, 'index'])->name('driver_quality.index');
-      Route::get('/driver-quality/export.csv', [PartnerDriverQualityReportController::class, 'exportCsv'])->name('driver_quality.export');
+     Route::get('/driver-quality/export-pdf', [PartnerDriverQualityReportController::class, 'exportPdf'])
+    ->name('driver_quality.exportPdf');
+
       Route::get('/driver-quality/{driver}', [PartnerDriverQualityReportController::class, 'show'])->name('driver_quality.show');
 
       // Vehicles
       Route::get('/vehicles', [PartnerVehiclesReportController::class, 'index'])->name('vehicles.index');
-      Route::get('/vehicles/export-csv', [PartnerVehiclesReportController::class, 'exportCsv'])->name('vehicles.exportCsv');
+     
+
+      Route::get('/vehicles/pdf', [PartnerVehiclesReportController::class, 'exportPdf'])
+    ->name('vehicles.exportPdf');
+
+
       Route::get('/vehicles/{vehicle}', [PartnerVehiclesReportController::class, 'show'])
         ->whereNumber('vehicle')->name('vehicles.show');
     });

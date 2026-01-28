@@ -8,9 +8,11 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Str;
 
 class PartnerDriverQualityReportController extends Controller
-{
+{ 
     private function tenantId(): int
     {
         $tid = (int) auth()->user()->tenant_id;
@@ -37,10 +39,12 @@ class PartnerDriverQualityReportController extends Controller
      * Fecha final efectiva del ride: finished_at o canceled_at.
      * Usamos esto para “reporte histórico de rides finalizados/cancelados”.
      */
-    private function ridesFinalWindowExpr(): string
-    {
-        return "COALESCE(r.finished_at, r.canceled_at)";
-    }
+  private function ridesFinalWindowExpr(string $alias = 'r'): string
+{
+    // Usa SIEMPRE el alias real del join a rides
+    return "COALESCE($alias.finished_at, $alias.canceled_at)";
+}
+
 
     private function baseDrivers(Request $r)
     {
@@ -91,7 +95,7 @@ class PartnerDriverQualityReportController extends Controller
             ->select('id');
 
         // Nota: usamos rides como fuente de “ventana temporal” (fecha final del ride)
-        $finalExpr = $this->ridesFinalWindowExpr();
+        $finalExpr = $this->ridesFinalWindowExpr('r');
 
         $q = DB::table('ratings as ra')
             ->join('rides as r', function ($j) {
@@ -144,7 +148,8 @@ class PartnerDriverQualityReportController extends Controller
             ->where('partner_id', $partnerId)
             ->select('id');
 
-        $finalExpr = $this->ridesFinalWindowExpr();
+       $finalExpr = $this->ridesFinalWindowExpr('r');
+
 
         $q = DB::table('ride_issues as ri')
             ->join('rides as r', function ($j) {
@@ -218,6 +223,7 @@ class PartnerDriverQualityReportController extends Controller
                 drivers.id, drivers.name, drivers.phone, drivers.email,
                 COALESCE(ra.ratings_count,0) as ratings_count,
                 COALESCE(ra.rating_avg,0) as rating_avg,
+
                 ra.last_rating_at,
 
                 COALESCE(ia.issues_count,0) as issues_count,
@@ -557,115 +563,570 @@ private function dateSeries(string $from, string $to): array {
     return $out;
 }
 
-    public function exportCsv(Request $r): StreamedResponse
-    {
-        $r->validate([
-            'from' => ['nullable','date'],
-            'to'   => ['nullable','date'],
-            'type' => ['nullable','in:ratings,issues,both'],
+  
 
-            'min_rating' => ['nullable','integer','min:1','max:5'],
 
-            'issue_status'        => ['nullable','in:open,in_review,resolved,closed'],
-            'severity'            => ['nullable','in:low,normal,high,critical'],
-            'category'            => ['nullable','in:safety,overcharge,route,driver_behavior,passenger_behavior,vehicle,lost_item,payment,app_problem,other'],
-            'forward_to_platform' => ['nullable','in:0,1'],
-        ]);
 
-        $tenantId  = $this->tenantId();
-        $partnerId = $this->partnerId();
-        [$from, $to] = $this->resolveDateRange($r);
-        $type = $r->input('type', 'both');
 
-        $finalExpr = $this->ridesFinalWindowExpr();
 
-        $driverIds = Driver::query()
+public function exportPdf(Request $r)
+{
+    $r->validate([
+        'from' => ['nullable','date'],
+        'to'   => ['nullable','date'],
+
+        'driver_id' => ['nullable','integer'],
+        'q'         => ['nullable','string','max:120'],
+
+        'min_rating' => ['nullable','integer','min:1','max:5'],
+
+        'issue_status'        => ['nullable','in:open,in_review,resolved,closed'],
+        'severity'            => ['nullable','in:low,normal,high,critical'],
+        'category'            => ['nullable','in:safety,overcharge,route,driver_behavior,passenger_behavior,vehicle,lost_item,payment,app_problem,other'],
+        'forward_to_platform' => ['nullable','in:0,1'],
+
+        'export_scope' => ['nullable','in:limit,all'],
+        'limit_rows'   => ['nullable','integer','min:100','max:5000'],
+        'force'        => ['nullable','in:0,1'],
+        'only_with'    => ['nullable','in:ratings,issues,any'],
+    ]);
+
+    $tenantId  = $this->tenantId();
+    $partnerId = $this->partnerId();
+
+    // Partner branding
+    $partner = DB::table('partners')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $partnerId)
+        ->first();
+
+    abort_if(!$partner, 404, 'Partner no encontrado.');
+
+    $partnerBrand = [
+        'name'          => $partner->name ?? ('Partner #'.$partnerId),
+        'city'          => $partner->city ?? '',
+        'state'         => $partner->state ?? '',
+        'contact_phone' => $partner->contact_phone ?? '',
+        'contact_email' => $partner->contact_email ?? '',
+        'legal_name'    => $partner->legal_name ?? '',
+        'rfc'           => $partner->rfc ?? '',
+    ];
+
+    [$from, $to] = $this->resolveDateRange($r);
+
+    $filters = [
+        'from' => $from,
+        'to'   => $to,
+        'driver_id' => $r->input('driver_id'),
+        'q'         => trim((string)$r->input('q')),
+        'min_rating'=> $r->input('min_rating'),
+        'issue_status' => $r->input('issue_status'),
+        'severity'     => $r->input('severity'),
+        'category'     => $r->input('category'),
+        'forward_to_platform' => $r->filled('forward_to_platform') ? (int)$r->input('forward_to_platform') : null,
+        'only_with' => $r->input('only_with'),
+    ];
+
+    $policy = $this->reportExportPolicy($r);
+
+    // =========================
+    // 1) Base drivers + aggs
+    // =========================
+    $driversQ = $this->baseDrivers($r);
+
+    $ra = $this->ratingsAgg($r);
+    $ia = $this->issuesAgg($r);
+
+    $drivers = $driversQ
+        ->leftJoinSub($ra, 'ra', fn($j) => $j->on('drivers.id','=','ra.driver_id'))
+        ->leftJoinSub($ia, 'ia', fn($j) => $j->on('drivers.id','=','ia.driver_id'))
+        ->selectRaw("
+            drivers.id, drivers.name, drivers.phone, drivers.email,
+
+            COALESCE(ra.ratings_count,0) as ratings_count,
+            COALESCE(ra.rating_avg,0) as rating_avg,
+            COALESCE(ra.r1,0) as r1,
+            COALESCE(ra.r2,0) as r2,
+            COALESCE(ra.r3,0) as r3,
+            COALESCE(ra.r4,0) as r4,
+            COALESCE(ra.r5,0) as r5,
+            ra.last_rating_at,
+
+            COALESCE(ia.issues_count,0) as issues_count,
+            COALESCE(ia.issues_openish,0) as issues_openish,
+            COALESCE(ia.sev_critical,0) as sev_critical,
+            COALESCE(ia.sev_high,0) as sev_high,
+            COALESCE(ia.sev_normal,0) as sev_normal,
+            COALESCE(ia.sev_low,0) as sev_low,
+            ia.last_issue_at,
+            ia.avg_resolve_hours
+        ");
+
+    if ($only = $r->input('only_with')) {
+        if ($only === 'ratings') $drivers->whereRaw('COALESCE(ra.ratings_count,0) > 0');
+        elseif ($only === 'issues') $drivers->whereRaw('COALESCE(ia.issues_count,0) > 0');
+        elseif ($only === 'any') $drivers->whereRaw('(COALESCE(ra.ratings_count,0) > 0 OR COALESCE(ia.issues_count,0) > 0)');
+    }
+
+    $drivers = $drivers
+        ->orderByDesc('issues_openish')
+        ->orderByDesc('sev_critical')
+        ->orderByDesc('ratings_count');
+
+    $totalFiltered = (clone $drivers)->count();
+
+    $applyLimit = ($policy['scope'] === 'limit');
+    if ($applyLimit) {
+        $drivers = $drivers->limit($policy['limitRows']);
+    } else {
+        if ($totalFiltered > $policy['limitRows'] && !$policy['force']) {
+            abort(422, "El reporte tiene {$totalFiltered} registros. Para exportar TODO agrega ?force=1 o usa ?export_scope=limit&limit_rows={$policy['limitRows']}.");
+        }
+        if ($totalFiltered > 15000) {
+            abort(422, "El reporte excede 15000 registros ({$totalFiltered}). Ajusta filtros o exporta por rangos.");
+        }
+    }
+
+    $rows = $drivers->get();
+
+    // =========================
+    // 2) KPIs correctos (NO dependen del recorte $rows)
+    // =========================
+   $finalExpr = $this->ridesFinalWindowExpr('r2');
+
+    $driverIds = Driver::query()
+        ->where('tenant_id', $tenantId)
+        ->where('partner_id', $partnerId)
+        ->select('id');
+
+    $minRating = $r->input('min_rating');
+    $minRating = is_numeric($minRating) ? (int)$minRating : null;
+    if ($minRating !== null && ($minRating < 1 || $minRating > 5)) $minRating = null;
+
+    // Ratings global (sobre filtros, sin limit)
+   $ratingsAggAll = DB::table('ratings as ra')
+    ->join('rides as r2', 'ra.ride_id','=','r2.id')
+    ->where('ra.tenant_id', $tenantId)
+    ->where('ra.rated_type','driver')
+    ->whereIn('ra.rated_id', $driverIds)
+    ->where('r2.tenant_id', $tenantId)
+    ->whereIn('r2.status', ['finished','canceled'])
+    ->whereRaw("$finalExpr BETWEEN ? AND ?", [$from.' 00:00:00', $to.' 23:59:59']);
+
+    if ($r->filled('driver_id')) $ratingsAggAll->where('ra.rated_id', (int)$r->input('driver_id'));
+    if ($minRating !== null) $ratingsAggAll->where('ra.rating','>=',$minRating);
+
+    $ratingsTotals = (clone $ratingsAggAll)->selectRaw("
+        COUNT(*) as cnt,
+        AVG(ra.rating) as avg_rating
+    ")->first();
+
+    // Issues global
+   $issuesAggAll = DB::table('ride_issues as ri')
+    ->join('rides as r2', 'ri.ride_id','=','r2.id')
+    ->where('ri.tenant_id', $tenantId)
+    ->whereIn('ri.driver_id', $driverIds)
+    ->where('r2.tenant_id', $tenantId)
+    ->whereIn('r2.status', ['finished','canceled'])
+    ->whereRaw("$finalExpr BETWEEN ? AND ?", [$from.' 00:00:00', $to.' 23:59:59']);
+
+
+    if ($r->filled('driver_id')) $issuesAggAll->where('ri.driver_id', (int)$r->input('driver_id'));
+    if ($st = $r->input('issue_status')) $issuesAggAll->where('ri.status',$st);
+    if ($sev= $r->input('severity')) $issuesAggAll->where('ri.severity',$sev);
+    if ($cat= $r->input('category')) $issuesAggAll->where('ri.category',$cat);
+    if ($r->filled('forward_to_platform')) $issuesAggAll->where('ri.forward_to_platform', (int)$r->input('forward_to_platform') ? 1 : 0);
+
+    $issuesTotals = (clone $issuesAggAll)->selectRaw("
+        COUNT(*) as cnt,
+        SUM(ri.status IN ('open','in_review')) as openish
+    ")->first();
+
+    $kpi = [
+        'drivers_total' => (int) Driver::query()
             ->where('tenant_id', $tenantId)
             ->where('partner_id', $partnerId)
-            ->select('id');
+            ->count(),
+        'drivers_in_report' => (int) $totalFiltered,
 
-        $minRating = $r->input('min_rating');
-        $minRating = is_numeric($minRating) ? (int)$minRating : null;
-        if ($minRating !== null && ($minRating < 1 || $minRating > 5)) $minRating = null;
+        'ratings_total' => (int)($ratingsTotals->cnt ?? 0),
+        'rating_avg_weighted' => (float)($ratingsTotals->avg_rating ?? 0),
 
-        $fileName = "partner_driver_quality_{$type}_" . date('Ymd_His') . ".csv";
+        'issues_total' => (int)($issuesTotals->cnt ?? 0),
+        'issues_openish_total' => (int)($issuesTotals->openish ?? 0),
+    ];
 
-        return response()->streamDownload(function () use ($type, $tenantId, $from, $to, $driverIds, $r, $finalExpr, $minRating) {
-            $out = fopen('php://output', 'w');
+    // =========================
+    // 3) Detalle (tablas) - con hard limits
+    // =========================
+   $DETAIL_LIMIT = min(800, (int)$policy['limitRows']);
 
-            fputcsv($out, [
-                'row_type','tenant_id','driver_id','ride_id','ride_final_at',
-                'created_at',
-                // rating
-                'rating','comment','punctuality','courtesy','vehicle_condition','driving_skills',
-                // issue
-                'issue_id','category','title','status','severity','forward_to_platform','resolved_at','closed_at',
-            ]);
+$ratingsRows = (clone $ratingsAggAll)
+    ->join('drivers as d', 'ra.rated_id','=','d.id')
+    ->selectRaw("
+        ra.id,
+        ra.ride_id,
+        ra.rated_id as driver_id,
+        d.name as driver_name,
+        ra.rating,
+        ra.comment,
+        ra.created_at,
+        $finalExpr as ride_final_at
+    ")
+    ->orderByDesc('ra.id')
+    ->limit($DETAIL_LIMIT)
+    ->get()
+    ->map(function($x){
+        $x->comment = Str::limit((string)$x->comment, 120);
+        return $x;
+    });
 
-            if ($type === 'ratings' || $type === 'both') {
-                $q = DB::table('ratings as ra')
-                    ->join('rides as r', 'ra.ride_id','=','r.id')
-                    ->where('ra.tenant_id', $tenantId)
-                    ->where('ra.rated_type','driver')
-                    ->whereIn('ra.rated_id', $driverIds)
-                    ->where('r.tenant_id', $tenantId)
-                    ->whereIn('r.status', ['finished','canceled'])
-                    ->whereRaw("$finalExpr BETWEEN ? AND ?", [$from.' 00:00:00', $to.' 23:59:59'])
-                    ->orderBy('ra.id');
 
-                if ($minRating !== null) $q->where('ra.rating','>=',$minRating);
+    $issuesRows = (clone $issuesAggAll)
+        ->join('drivers as d', function($j){
+            $j->on('ri.driver_id','=','d.id');
+        })
+        ->selectRaw("
+            ri.id,
+            ri.ride_id,
+            ri.driver_id,
+            d.name as driver_name,
+            ri.category,
+            ri.title,
+            ri.status,
+            ri.severity,
+            ri.forward_to_platform,
+            ri.created_at,
+            ri.resolved_at,
+            $finalExpr as ride_final_at
+        ")
+        ->orderByDesc('ri.id')
+        ->limit($DETAIL_LIMIT)
+        ->get()
+        ->map(function($x){
+            $x->title = Str::limit((string)$x->title, 120);
+            return $x;
+        });
 
-                $q->select([
-                    'ra.rated_id as driver_id',
-                    'ra.ride_id',
-                    'ra.created_at',
-                    'ra.rating','ra.comment','ra.punctuality','ra.courtesy','ra.vehicle_condition','ra.driving_skills',
-                    DB::raw("$finalExpr as ride_final_at"),
-                ])->chunk(2000, function($rows) use ($out, $tenantId) {
-                    foreach ($rows as $x) {
-                        fputcsv($out, [
-                            'rating',$tenantId,$x->driver_id,$x->ride_id,$x->ride_final_at,
-                            $x->created_at,
-                            $x->rating,$x->comment,$x->punctuality,$x->courtesy,$x->vehicle_condition,$x->driving_skills,
-                            null,null,null,null,null,null,null,null,
-                        ]);
-                    }
-                });
-            }
+    // =========================
+    // 4) Charts (con color)
+    // =========================
+    $charts = $this->buildDriverQualityChartsPngColored($rows, [
+        'accent' => '#00CCFF', // Orbana blue
+        'ink'    => '#0b1220',
+        'muted'  => '#64748b',
+        'soft'   => '#eef2ff',
+    ]);
 
-            if ($type === 'issues' || $type === 'both') {
-                $q = DB::table('ride_issues as ri')
-                    ->join('rides as r', 'ri.ride_id','=','r.id')
-                    ->where('ri.tenant_id', $tenantId)
-                    ->whereIn('ri.driver_id', $driverIds)
-                    ->where('r.tenant_id', $tenantId)
-                    ->whereIn('r.status', ['finished','canceled'])
-                    ->whereRaw("$finalExpr BETWEEN ? AND ?", [$from.' 00:00:00', $to.' 23:59:59'])
-                    ->orderBy('ri.id');
+    $brand = [
+        'name'      => 'Orbana',
+        'accent'    => '#0b1220',
+        'logo_path' => public_path('images/logo.png'),
+    ];
 
-                if ($st = $r->input('issue_status')) $q->where('ri.status',$st);
-                if ($sev= $r->input('severity')) $q->where('ri.severity',$sev);
-                if ($cat= $r->input('category')) $q->where('ri.category',$cat);
-                if ($r->filled('forward_to_platform')) $q->where('ri.forward_to_platform', (int)$r->input('forward_to_platform') ? 1 : 0);
+    $generatedAt = now()->format('Y-m-d H:i');
 
-                $q->select([
-                    'ri.driver_id','ri.ride_id','ri.id as issue_id',
-                    'ri.created_at','ri.category','ri.title','ri.status','ri.severity','ri.forward_to_platform',
-                    'ri.resolved_at','ri.closed_at',
-                    DB::raw("$finalExpr as ride_final_at"),
-                ])->chunk(2000, function($rows) use ($out, $tenantId) {
-                    foreach ($rows as $x) {
-                        fputcsv($out, [
-                            'issue',$tenantId,$x->driver_id,$x->ride_id,$x->ride_final_at,
-                            $x->created_at,
-                            null,null,null,null,null,null,
-                            $x->issue_id,$x->category,$x->title,$x->status,$x->severity,$x->forward_to_platform,$x->resolved_at,$x->closed_at,
-                        ]);
-                    }
-                });
-            }
+    $pdf = Pdf::loadView('partner.reports.driver_quality.pdf', [
+        'tenantId'     => $tenantId,
+        'partnerId'    => $partnerId,
+        'partnerBrand' => $partnerBrand,
 
-            fclose($out);
-        }, $fileName, ['Content-Type' => 'text/csv; charset=UTF-8']);
+        'filters'      => $filters,
+        'policy'       => $policy,
+        'totalFiltered'=> $totalFiltered,
+
+        'kpi'          => $kpi,
+        'rows'         => $rows,
+
+        'ratingsRows'  => $ratingsRows,
+        'issuesRows'   => $issuesRows,
+        'detailLimit'  => $DETAIL_LIMIT,
+
+        'charts'       => $charts,
+        'brand'        => $brand,
+        'generatedAt'  => $generatedAt,
+    ])->setPaper('a4','portrait');
+
+    $filename = 'partner_driver_quality_'.$partnerId.'_'.date('Ymd_His').'.pdf';
+    return $pdf->download($filename);
+}
+
+
+/**
+ * Policy simple para PDF.
+ */
+private function reportExportPolicy(Request $r): array
+{
+    $scope = $r->input('export_scope', 'limit'); // default limit
+    $scope = in_array($scope, ['limit','all'], true) ? $scope : 'limit';
+
+    $limit = (int)($r->input('limit_rows') ?: 1200);
+    if ($limit < 100) $limit = 100;
+    if ($limit > 5000) $limit = 5000;
+
+    $force = (int)($r->input('force') ?: 0) === 1;
+
+    return [
+        'scope' => $scope,
+        'limitRows' => $limit,
+        'force' => $force,
+    ];
+}
+
+/**
+ * Genera 2 charts simples como PNG embebible:
+ * - ratings_dist (barras)
+ * - issues_severity (barras)
+ *
+ * Retorna: ['ratings_png' => 'data:image/png;base64,...', 'issues_png' => ...]
+ */
+private function buildDriverQualityChartsPngColored($rows, array $pal = []): array
+{
+    $accent = $pal['accent'] ?? '#00CCFF';
+    $muted  = $pal['muted']  ?? '#64748b';
+
+    // Issues por severidad (sumando de $rows)
+    $sev = [
+        'critical' => (int)$rows->sum('sev_critical'),
+        'high'     => (int)$rows->sum('sev_high'),
+        'normal'   => (int)$rows->sum('sev_normal'),
+        'low'      => (int)$rows->sum('sev_low'),
+    ];
+
+    $issuesSevPng = $this->simpleBarChartPng(
+        title: 'Issues por severidad',
+        labels: array_keys($sev),
+        values: array_values($sev),
+        barHex: $accent,
+        axisHex: $muted
+    );
+
+    // Distribución ratings 1..5 (sumando r1..r5)
+    $dist = [
+        1 => (int)$rows->sum('r1'),
+        2 => (int)$rows->sum('r2'),
+        3 => (int)$rows->sum('r3'),
+        4 => (int)$rows->sum('r4'),
+        5 => (int)$rows->sum('r5'),
+    ];
+
+    $ratingsDistPng = $this->simpleBarChartPng(
+        title: 'Distribución de ratings',
+        labels: array_map('strval', array_keys($dist)),
+        values: array_values($dist),
+        barHex: $accent,
+        axisHex: $muted
+    );
+
+    return [
+        'issues_sev_png'   => $issuesSevPng,
+        'ratings_dist_png' => $ratingsDistPng,
+    ];
+}
+
+private function simpleBarChartPng(
+    string $title,
+    array $labels,
+    array $values,
+    string $barHex = '#00CCFF',
+    string $axisHex = '#64748b'
+): ?string {
+    if (!function_exists('imagecreatetruecolor')) return null;
+
+    $w = 1100; $h = 420;
+    $im = imagecreatetruecolor($w, $h);
+
+    // background blanco
+    $white = imagecolorallocate($im, 255, 255, 255);
+    imagefill($im, 0, 0, $white);
+
+    // colores
+    [$br,$bg,$bb] = sscanf($barHex, "#%02x%02x%02x");
+    [$ar,$ag,$ab] = sscanf($axisHex, "#%02x%02x%02x");
+
+    // barra con alpha suave
+    $bar = imagecolorallocatealpha($im, $br, $bg, $bb, 35);
+    $barStroke = imagecolorallocate($im, $br, $bg, $bb);
+    $axis = imagecolorallocate($im, $ar, $ag, $ab);
+    $grid = imagecolorallocatealpha($im, $ar, $ag, $ab, 85);
+    $text = imagecolorallocate($im, 15, 23, 42);
+
+    // layout
+    $padL = 60; $padR = 30; $padT = 40; $padB = 70;
+    $plotW = $w - $padL - $padR;
+    $plotH = $h - $padT - $padB;
+
+    // título
+    imagestring($im, 5, $padL, 12, $title, $text);
+
+    $max = max(1, max($values));
+    $n = max(1, count($values));
+    $gap = 16;
+    $barW = (int)(($plotW - ($gap * ($n - 1))) / $n);
+
+    // grid + axis
+    imageline($im, $padL, $padT + $plotH, $padL + $plotW, $padT + $plotH, $axis);
+    imageline($im, $padL, $padT, $padL, $padT + $plotH, $axis);
+
+    for ($i=1; $i<=4; $i++) {
+        $y = (int)($padT + $plotH - ($plotH * ($i/4)));
+        imageline($im, $padL, $y, $padL + $plotW, $y, $grid);
     }
+
+    for ($i=0; $i<$n; $i++) {
+        $x1 = $padL + $i * ($barW + $gap);
+        $v = (int)$values[$i];
+        $bh = (int) round(($v / $max) * $plotH);
+
+        $y1 = $padT + $plotH - $bh;
+        $x2 = $x1 + $barW;
+        $y2 = $padT + $plotH;
+
+        imagefilledrectangle($im, $x1, $y1, $x2, $y2, $bar);
+        imagerectangle($im, $x1, $y1, $x2, $y2, $barStroke);
+
+        // value
+        imagestring($im, 3, $x1 + 4, max($padT, $y1 - 14), (string)$v, $axis);
+        // label
+        $lab = (string)$labels[$i];
+        imagestring($im, 3, $x1 + 2, $padT + $plotH + 10, $lab, $axis);
+    }
+
+    ob_start();
+    imagepng($im);
+    $bin = ob_get_clean();
+    imagedestroy($im);
+
+    return 'data:image/png;base64,' . base64_encode($bin);
+}
+
+
+
+/**
+ * Chart barras múltiples.
+ */
+private function chartBar(string $title, array $data, int $w = 820, int $h = 240): ?string
+{
+    $padL = 60; $padR = 20; $padT = 34; $padB = 44;
+
+    $im = imagecreatetruecolor($w, $h);
+
+    // Colores suaves (NO negro)
+    $white = imagecolorallocate($im, 255,255,255);
+    $ink   = imagecolorallocate($im, 15,23,42);
+    $muted = imagecolorallocate($im, 100,116,139);
+    $grid  = imagecolorallocate($im, 226,232,240);
+
+    // Orbana #00CCFF (0,204,255) + un tono más oscuro para borde
+    $barFill = imagecolorallocate($im, 0,204,255);
+    $barEdge = imagecolorallocate($im, 0,140,175);
+
+    imagefilledrectangle($im, 0,0, $w,$h, $white);
+
+    // Title
+    imagestring($im, 5, 10, 10, $title, $ink);
+
+    // Axis
+    $x0 = $padL; $y0 = $padT; $x1 = $w-$padR; $y1 = $h-$padB;
+    imageline($im, $x0, $y1, $x1, $y1, $grid); // baseline
+    imageline($im, $x0, $y0, $x0, $y1, $grid);
+
+    // Light horizontal grid (3 lines)
+    for ($k=1;$k<=3;$k++){
+        $yy = (int)($y1 - ($k/4)*($y1-$y0));
+        imageline($im, $x0, $yy, $x1, $yy, $grid);
+    }
+
+    $vals = array_map(fn($v)=>(float)$v, array_values($data));
+    $max = max(1.0, max($vals));
+
+    $n = max(1, count($data));
+    $plotW = ($x1-$x0);
+    $slot = $plotW / $n;
+    $barW = max(14, (int)($slot * 0.55));
+
+    $i = 0;
+    foreach ($data as $label => $value) {
+        $v = (float)$value;
+
+        $bx0 = (int)($x0 + $i*$slot + ($slot-$barW)/2);
+        $bx1 = $bx0 + $barW;
+
+        $barH = (int)(($y1-$y0) * ($v / $max));
+        $by1 = $y1;
+        $by0 = $by1 - $barH;
+
+        // Bar (fill + edge)
+        imagefilledrectangle($im, $bx0, $by0, $bx1, $by1, $barFill);
+        imagerectangle($im, $bx0, $by0, $bx1, $by1, $barEdge);
+
+        // Value above bar
+        $txt = (string)((int)$v);
+        imagestring($im, 3, $bx0, max($y0, $by0-14), $txt, $muted);
+
+        // Label
+        $lbl = (string)$label;
+        imagestring($im, 3, $bx0, $y1+12, $lbl, $muted);
+
+        $i++;
+    }
+
+    ob_start();
+    imagepng($im);
+    $png = ob_get_clean();
+    imagedestroy($im);
+
+    return 'data:image/png;base64,'.base64_encode($png);
+}
+
+
+/**
+ * Chart barra única con max configurable (útil para rating 0..5).
+ */
+private function chartBarSingle(string $title, array $data, float $maxScale): ?string
+{
+    $w = 820; $h = 200;
+    $padL = 60; $padR = 20; $padT = 30; $padB = 40;
+
+    $im = imagecreatetruecolor($w, $h);
+    $white = imagecolorallocate($im, 255,255,255);
+    $ink   = imagecolorallocate($im, 15,23,42);
+    $muted = imagecolorallocate($im, 100,116,139);
+    $line  = imagecolorallocate($im, 226,232,240);
+    $bar   = imagecolorallocate($im, 11,18,32);
+
+    imagefilledrectangle($im, 0,0, $w,$h, $white);
+    imagestring($im, 5, 10, 8, $title, $ink);
+
+    imageline($im, $padL, $padT, $padL, $h-$padB, $line);
+    imageline($im, $padL, $h-$padB, $w-$padR, $h-$padB, $line);
+
+    $plotW = ($w-$padL-$padR);
+    $barW = (int)($plotW * 0.45);
+
+    $i = 0;
+    foreach ($data as $label => $value) {
+        $v = (float)$value;
+        $barH = (int)(($h-$padT-$padB) * min(1.0, ($v / max(0.01,$maxScale))));
+        $x0 = $padL + 60;
+        $x1 = $x0 + $barW;
+        $y1 = $h - $padB;
+        $y0 = $y1 - $barH;
+
+        imagefilledrectangle($im, $x0, $y0, $x1, $y1, $bar);
+
+        imagestring($im, 4, $x0, $y0-16, (string)$v.' / '.$maxScale, $muted);
+        imagestring($im, 3, $x0, $h-$padB+10, (string)$label, $muted);
+
+        $i++;
+    }
+
+    ob_start();
+    imagepng($im);
+    $png = ob_get_clean();
+    imagedestroy($im);
+
+    return 'data:image/png;base64,'.base64_encode($png);
+}
+
 }

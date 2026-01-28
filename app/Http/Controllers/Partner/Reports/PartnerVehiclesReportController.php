@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Str;
 
 class PartnerVehiclesReportController extends Controller
 {
@@ -375,4 +377,283 @@ public function show(Request $request, int $vehicle)
             fclose($out);
         }, $fileName, ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
+
+
+
+private function resolveDateRange(Request $r, int $monthsBack = 3): array
+{
+    $to   = $r->input('to') ?: Carbon::today()->toDateString();
+    $from = $r->input('from') ?: Carbon::today()->subMonths($monthsBack)->toDateString();
+    if ($from > $to) [$from, $to] = [$to, $from];
+    return [$from, $to];
+}
+
+/**
+ * dateExpr para rides con alias r (finished/canceled/ambos)
+ */
+private function rideFinalExpr(string $status, string $alias = 'r'): string
+{
+    return $status === 'canceled'
+        ? "$alias.canceled_at"
+        : ($status === 'finished' ? "$alias.finished_at" : "COALESCE($alias.finished_at, $alias.canceled_at)");
+}
+
+/**
+ * Policy simple para PDF.
+ */
+private function reportExportPolicy(Request $r): array
+{
+    $scope = $r->input('export_scope', 'limit');
+    $scope = in_array($scope, ['limit','all'], true) ? $scope : 'limit';
+
+    $limit = (int)($r->input('limit_rows') ?: 1200);
+    if ($limit < 100) $limit = 100;
+    if ($limit > 5000) $limit = 5000;
+
+    $force = (int)($r->input('force') ?: 0) === 1;
+
+    return [
+        'scope' => $scope,
+        'limitRows' => $limit,
+        'force' => $force,
+    ];
+}
+
+
+public function exportPdf(Request $request)
+{
+    $request->validate([
+        'from' => ['nullable','date'],
+        'to'   => ['nullable','date'],
+
+        // filtros vehicles
+        'active' => ['nullable'],
+        'verification_status' => ['nullable','string'],
+        'q' => ['nullable','string','max:120'],
+
+        // reporte por rides
+        'status' => ['nullable','in:finished,canceled,'], // '' permitido (ambos)
+        'export_scope' => ['nullable','in:limit,all'],
+        'limit_rows'   => ['nullable','integer','min:100','max:5000'],
+        'force'        => ['nullable','in:0,1'],
+    ]);
+
+    $tenantId  = $this->tenantId();
+    $partnerId = $this->partnerId();
+
+    [$from, $to] = $this->resolveDateRange($request, 3);
+
+    $status = $request->input('status', 'finished');
+    if (!in_array($status, ['finished','canceled',''], true)) $status = 'finished';
+
+    $policy = $this->reportExportPolicy($request);
+
+    // =========================
+    // Partner branding (opcional)
+    // =========================
+    $partner = DB::table('partners')
+        ->where('tenant_id', $tenantId)
+        ->where('id', $partnerId)
+        ->first();
+
+    $partnerBrand = [
+        'name'          => $partner->name ?? ('Partner #'.$partnerId),
+        'city'          => $partner->city ?? '',
+        'state'         => $partner->state ?? '',
+        'contact_phone' => $partner->contact_phone ?? '',
+        'contact_email' => $partner->contact_email ?? '',
+        'legal_name'    => $partner->legal_name ?? '',
+        'rfc'           => $partner->rfc ?? '',
+    ];
+
+    // =========================
+    // 1) Base vehicles + agg por rides (ventana por fecha final)
+    // =========================
+    $vehiclesQ = $this->baseVehicleQuery($request);
+
+    $dateExpr = $this->rideFinalExpr($status, 'r');
+
+    // Subquery rides por vehicle (alias r)
+    $ridesAgg = DB::table('rides as r')
+        ->where('r.tenant_id', $tenantId)
+        ->whereIn('r.vehicle_id', Vehicle::query()
+            ->where('tenant_id', $tenantId)
+            ->where('partner_id', $partnerId)
+            ->select('id')
+        )
+        ->when($status === '', fn($q) => $q->whereIn('r.status', ['finished','canceled']),
+              fn($q) => $q->where('r.status', $status))
+        ->whereRaw("$dateExpr IS NOT NULL")
+        ->whereRaw("$dateExpr BETWEEN ? AND ?", [$from.' 00:00:00', $to.' 23:59:59'])
+        ->groupBy('r.vehicle_id')
+        ->selectRaw("
+            r.vehicle_id,
+            COUNT(*) as rides_total,
+            SUM(r.status='finished') as rides_finished,
+            SUM(r.status='canceled') as rides_canceled,
+
+            SUM(CASE WHEN r.status='finished' THEN COALESCE(r.distance_m,0) ELSE 0 END) as distance_m_sum,
+            SUM(CASE WHEN r.status='finished' THEN COALESCE(r.duration_s,0) ELSE 0 END) as duration_s_sum,
+            SUM(CASE WHEN r.status='finished' THEN COALESCE(r.agreed_amount,r.total_amount,r.quoted_amount,0) ELSE 0 END) as amount_sum,
+
+            AVG(CASE WHEN r.status='finished' THEN r.distance_m END) as avg_distance_m,
+            AVG(CASE WHEN r.status='finished' THEN r.duration_s END) as avg_duration_s
+        ");
+
+    $rowsQ = $vehiclesQ
+        ->leftJoinSub($ridesAgg, 'ra', fn($j) => $j->on('vehicles.id','=','ra.vehicle_id'))
+        ->selectRaw("
+            vehicles.id, vehicles.economico, vehicles.plate, vehicles.brand, vehicles.model, vehicles.type,
+            vehicles.color, vehicles.year, vehicles.active, vehicles.verification_status,
+
+            COALESCE(ra.rides_total,0) as rides_total,
+            COALESCE(ra.rides_finished,0) as rides_finished,
+            COALESCE(ra.rides_canceled,0) as rides_canceled,
+            COALESCE(ra.amount_sum,0) as amount_sum,
+            COALESCE(ra.distance_m_sum,0) as distance_m_sum,
+            COALESCE(ra.duration_s_sum,0) as duration_s_sum,
+            ra.avg_distance_m as avg_distance_m,
+            ra.avg_duration_s as avg_duration_s
+        ")
+        ->orderByDesc('rides_total')
+        ->orderBy('vehicles.economico');
+
+    $totalFiltered = (clone $rowsQ)->count();
+
+    // aplicar policy
+    $applyLimit = ($policy['scope'] === 'limit');
+    if ($applyLimit) {
+        $rowsQ->limit($policy['limitRows']);
+    } else {
+        if ($totalFiltered > $policy['limitRows'] && !$policy['force']) {
+            abort(422, "El reporte tiene {$totalFiltered} registros. Para exportar TODO agrega ?force=1 o usa ?export_scope=limit&limit_rows={$policy['limitRows']}.");
+        }
+        if ($totalFiltered > 15000) {
+            abort(422, "El reporte excede 15000 registros ({$totalFiltered}). Ajusta filtros o exporta por rangos.");
+        }
+    }
+
+    $rows = $rowsQ->get();
+
+    // =========================
+    // 2) KPIs globales (NO dependen de limit)
+    // =========================
+    $vehiclesTotal = (int) Vehicle::query()
+        ->where('tenant_id', $tenantId)
+        ->where('partner_id', $partnerId)
+        ->count();
+
+    $ridesTotals = DB::table('rides as r')
+        ->where('r.tenant_id', $tenantId)
+        ->whereIn('r.vehicle_id', Vehicle::query()
+            ->where('tenant_id', $tenantId)
+            ->where('partner_id', $partnerId)
+            ->select('id')
+        )
+        ->when($status === '', fn($q) => $q->whereIn('r.status', ['finished','canceled']),
+              fn($q) => $q->where('r.status', $status))
+        ->whereRaw("$dateExpr IS NOT NULL")
+        ->whereRaw("$dateExpr BETWEEN ? AND ?", [$from.' 00:00:00', $to.' 23:59:59'])
+        ->selectRaw("
+            COUNT(*) as rides_total,
+            SUM(r.status='finished') as rides_finished,
+            SUM(r.status='canceled') as rides_canceled,
+            SUM(CASE WHEN r.status='finished' THEN COALESCE(r.agreed_amount,r.total_amount,r.quoted_amount,0) ELSE 0 END) as amount_sum,
+            SUM(CASE WHEN r.status='finished' THEN COALESCE(r.distance_m,0) ELSE 0 END) as distance_m_sum,
+            SUM(CASE WHEN r.status='finished' THEN COALESCE(r.duration_s,0) ELSE 0 END) as duration_s_sum
+        ")
+        ->first();
+
+    $kpi = [
+        'vehicles_total'     => $vehiclesTotal,
+        'vehicles_in_report' => (int)$totalFiltered,
+
+        'rides_total'    => (int)($ridesTotals->rides_total ?? 0),
+        'rides_finished' => (int)($ridesTotals->rides_finished ?? 0),
+        'rides_canceled' => (int)($ridesTotals->rides_canceled ?? 0),
+
+        'amount_sum'     => (float)($ridesTotals->amount_sum ?? 0),
+        'km_sum'         => (float)(($ridesTotals->distance_m_sum ?? 0) / 1000.0),
+        'hours_sum'      => (float)(($ridesTotals->duration_s_sum ?? 0) / 3600.0),
+    ];
+
+    // =========================
+    // 3) Detalle de rides (hard limit)
+    // =========================
+    $DETAIL_LIMIT = min(900, (int)$policy['limitRows']);
+
+    $ridesRows = DB::table('rides as r')
+        ->leftJoin('drivers as d', function($j) use ($tenantId){
+            $j->on('d.id','=','r.driver_id')->where('d.tenant_id','=',$tenantId);
+        })
+        ->leftJoin('vehicles as v', function($j) use ($tenantId){
+            $j->on('v.id','=','r.vehicle_id')->where('v.tenant_id','=',$tenantId);
+        })
+        ->where('r.tenant_id', $tenantId)
+        ->whereIn('r.vehicle_id', Vehicle::query()
+            ->where('tenant_id', $tenantId)
+            ->where('partner_id', $partnerId)
+            ->select('id')
+        )
+        ->when($status === '', fn($q) => $q->whereIn('r.status', ['finished','canceled']),
+              fn($q) => $q->where('r.status', $status))
+        ->whereRaw("$dateExpr IS NOT NULL")
+        ->whereRaw("$dateExpr BETWEEN ? AND ?", [$from.' 00:00:00', $to.' 23:59:59'])
+        ->orderByDesc(DB::raw($dateExpr))
+        ->limit($DETAIL_LIMIT)
+        ->selectRaw("
+            r.id,
+            r.status,
+            $dateExpr as ride_final_at,
+            r.driver_id,
+            COALESCE(d.name, CONCAT('Chofer #', r.driver_id)) as driver_name,
+            r.vehicle_id,
+            COALESCE(v.economico, CONCAT('Veh #', r.vehicle_id)) as vehicle_economico,
+            COALESCE(r.agreed_amount,r.total_amount,r.quoted_amount,0) as amount,
+            r.distance_m,
+            r.duration_s
+        ")
+        ->get();
+
+    // =========================
+    // 4) Render PDF
+    // =========================
+    $filters = [
+        'from' => $from,
+        'to'   => $to,
+        'status' => $status,
+        'active' => $request->get('active'),
+        'verification_status' => $request->get('verification_status'),
+        'q' => trim((string)$request->get('q')),
+    ];
+
+    $brand = [
+        'name'      => 'Orbana',
+        'accent'    => '#00CCFF', // tu acento
+        'logo_path' => public_path('images/logo.png'),
+    ];
+
+    $generatedAt = now()->format('Y-m-d H:i');
+
+    $pdf = Pdf::loadView('partner.reports.vehicles.pdf', [
+        'tenantId'     => $tenantId,
+        'partnerId'    => $partnerId,
+        'partnerBrand' => $partnerBrand,
+        'filters'      => $filters,
+        'policy'       => $policy,
+        'totalFiltered'=> $totalFiltered,
+        'kpi'          => $kpi,
+        'rows'         => $rows,
+        'ridesRows'    => $ridesRows,
+        'detailLimit'  => $DETAIL_LIMIT,
+        'brand'        => $brand,
+        'generatedAt'  => $generatedAt,
+    ])->setPaper('a4','portrait');
+
+    $filename = 'partner_vehicles_'.$partnerId.'_'.date('Ymd_His').'.pdf';
+    return $pdf->download($filename);
+}
+
+
+
 }
