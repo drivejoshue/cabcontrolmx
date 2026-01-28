@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\PartnerTopup;
 use App\Models\PartnerWallet;
 use Illuminate\Support\Facades\DB;
+use App\Services\Partner\PartnerInboxService;
+
 
 class PartnerWalletService
 {
@@ -114,23 +116,21 @@ public static function applyTopup(PartnerTopup $topup, ?int $creditedByUserId = 
 {
     DB::transaction(function () use ($topup, $creditedByUserId) {
 
-        // 0) Lock del topup (evita doble approve simultáneo)
         /** @var PartnerTopup|null $t */
         $t = PartnerTopup::whereKey($topup->id)->lockForUpdate()->first();
         if (!$t) return;
 
         // Idempotencia fuerte
         if ($t->credited_at || $t->status === 'credited') {
+            // ✅ Aun si ya estaba credited, asegúrate de que exista la notificación (por migraciones/bugs previos)
+            self::ensureTopupInboxNotification($t);
             return;
         }
 
-        // Si quieres estrictamente solo pending_review:
         if ($t->status !== 'pending_review' && $t->status !== 'approved') {
-            // evita acreditar topups en estados raros
             return;
         }
 
-        // Lock wallet partner
         $wallet = PartnerWallet::where('tenant_id', $t->tenant_id)
             ->where('partner_id', $t->partner_id)
             ->lockForUpdate()
@@ -143,18 +143,15 @@ public static function applyTopup(PartnerTopup $topup, ?int $creditedByUserId = 
             $wallet = PartnerWallet::where('id', $wallet->id)->lockForUpdate()->first();
         }
 
-        // Moneda consistente
         $walletCurrency = strtoupper((string)($wallet->currency ?? 'MXN'));
         if ($walletCurrency !== $currency) {
             throw new \RuntimeException("Moneda no coincide. Wallet={$walletCurrency}, topup={$currency}");
         }
 
-        // External ref canónico (SIEMPRE no-null)
         $ext = $t->mp_payment_id ?: ($t->external_reference ?: null);
         $ext = is_string($ext) ? trim($ext) : null;
         if (!$ext) $ext = 'partner_topup:' . (int)$t->id;
 
-        // Idempotencia por external_ref (sub-ledger partner)
         $already = DB::table('partner_wallet_movements')
             ->where('tenant_id', (int)$t->tenant_id)
             ->where('partner_id', (int)$t->partner_id)
@@ -162,34 +159,33 @@ public static function applyTopup(PartnerTopup $topup, ?int $creditedByUserId = 
             ->exists();
 
         if ($already) {
-    $pwmId = (int) DB::table('partner_wallet_movements')
-        ->where('tenant_id', (int)$t->tenant_id)
-        ->where('partner_id', (int)$t->partner_id)
-        ->where('external_ref', $ext)
-        ->value('id');
+            $pwmId = (int) DB::table('partner_wallet_movements')
+                ->where('tenant_id', (int)$t->tenant_id)
+                ->where('partner_id', (int)$t->partner_id)
+                ->where('external_ref', $ext)
+                ->value('id');
 
-            if ($t->status !== 'credited') {
-                $t->status = 'credited';
-                $t->credited_at = $t->credited_at ?? now();
-            }
+            $t->status = 'credited';
+            $t->credited_at = $t->credited_at ?? now();
             if (empty($t->apply_wallet_movement_id) && $pwmId > 0) {
                 $t->apply_wallet_movement_id = $pwmId;
             }
             $t->save();
+
+            // ✅ y asegura inbox
+            self::ensureTopupInboxNotification($t);
+
             return;
         }
-
 
         $amount = (float)$t->amount;
         if ($amount <= 0) {
             throw new \RuntimeException('Monto inválido para topup.');
         }
 
-        // 1) Creditar TenantWallet (caja real / escrow)
         /** @var TenantWalletService $tw */
         $tw = app(TenantWalletService::class);
 
-        // IMPORTANTE: creditTopupWithRef debe ser idempotente por externalRef
         $tw->creditTopupWithRef(
             tenantId: (int)$t->tenant_id,
             amount: $amount,
@@ -200,7 +196,6 @@ public static function applyTopup(PartnerTopup $topup, ?int $creditedByUserId = 
             currency: $currency
         );
 
-        // 2) Movement partner wallet (sub-ledger / reservado del partner)
         $current = (string)number_format((float)$wallet->balance, 2, '.', '');
         $add     = (string)number_format($amount, 2, '.', '');
         $newBal  = bcadd($current, $add, 2);
@@ -226,12 +221,48 @@ public static function applyTopup(PartnerTopup $topup, ?int $creditedByUserId = 
         $wallet->last_topup_at = now();
         $wallet->save();
 
-        // 3) Marcar topup
         $t->status = 'credited';
         $t->credited_at = now();
         $t->apply_wallet_movement_id = $pwmId;
         $t->save();
+
+        // ✅ Inbox canónico
+        self::ensureTopupInboxNotification($t);
     });
+}
+
+/**
+ * Crea notificación idempotente para topups acreditados.
+ */
+private static function ensureTopupInboxNotification(PartnerTopup $t): void
+{
+    // ya existe?
+    $exists = DB::table('partner_notifications')
+        ->where('tenant_id', (int)$t->tenant_id)
+        ->where('partner_id', (int)$t->partner_id)
+        ->where('type', 'topup_approved')
+        ->where('entity_type', 'partner_topup')
+        ->where('entity_id', (int)$t->id)
+        ->exists();
+
+    if ($exists) return;
+
+    // si no existe, créala
+    \App\Services\Partner\PartnerInboxService::notify(
+        tenantId: (int)$t->tenant_id,
+        partnerId: (int)$t->partner_id,
+        type: 'topup_approved',
+        level: 'success',
+        title: 'Recarga aprobada',
+        body: 'Tu recarga fue aprobada y acreditada al wallet.',
+        entityType: 'partner_topup',
+        entityId: (int)$t->id,
+        data: [
+            'amount' => (float)$t->amount,
+            'method' => (string)($t->method ?? $t->provider ?? 'unknown'),
+            'ref'    => (string)($t->bank_ref ?? $t->external_reference ?? ''),
+        ]
+    );
 }
 
 
